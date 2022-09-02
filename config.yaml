@@ -1,0 +1,11 @@
+DEFAULT:
+  key: Vd6k2McQmh2q0QbjROMYmJwZsz0a
+  secret: Xn7zRFi5Lws8EpGkmbvnzAT8tmMa
+  nat_output: D:\MSG\MSG_nat\batch_3
+SHAPE:
+  africa: ./shapefiles/afr_g2014_2013_0/afr_g2014_2013_0.shp
+  ethiopia:
+SOIL_MOI:
+  output: D:\shareVM\soil_moisture\eumetsat
+PRECIP:
+  imerg_path: D:\shareVM\IMERG\daily
