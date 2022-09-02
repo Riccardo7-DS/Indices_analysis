@@ -3,12 +3,12 @@ import os
 from shapely.geometry import Polygon, mapping
 from glob import glob
 import xarray as xr
-from functions.function_clns import load_config, cut_file
+import functions.function_clns as fcts
 
 def process_data():
     CONFIG_PATH = r"./config.yaml"
 
-    config = load_config(CONFIG_PATH)
+    config = fcts.load_config(CONFIG_PATH)
     list_files = glob(os.path.join(config['PRECIP']['imerg_path'],'*.nc'))
     ds = xr.open_mfdataset(list_files, chunks={"lat": -1, "lon": -1, "time": 12})
     shapefile_path = config['shapefiles']['africa']
@@ -19,11 +19,7 @@ def process_data():
     gdf = gpd.read_file(shapefile_path)
     
     ### Clip file
-    clipped = cut_file(ds, subset)
+    clipped = fcts.cut_file(ds, subset)
     output_file = os.path.join(config['PRECIP']['imerg_path'],'imerg_final_clipped_sek.nc')
     clipped.to_netcdf(output_file)
-
-
-if __name__ == "__main__":
-    process_data()
     
