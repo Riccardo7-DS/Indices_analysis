@@ -8,10 +8,10 @@ CONFIG_PATH = r"./config.yaml"
 config = load_config(CONFIG_PATH)
 ds = xr.open_dataset(os.path.join(config['PRECIP']['imerg_path'],'imerg_final_clipped_sek.nc'))
 #print(ds)
-
+##### COmpute the max time
 time_max = ds["time"].where(ds==ds.max("time")).max("time")
 print('The most recent time date is:', time_max['spatial_ref'].values)
 
-
+##### COmpute the min time
 time_min = ds["time"].where(ds==ds.min("time")).min("time")
 print('The oldest time date is:', time_min['spatial_ref'].values)
