@@ -9,6 +9,5 @@ def load_config(CONFIG_PATH):
 def cut_file(xr_df, gdf):
     xr_df.rio.set_spatial_dims(x_dim='lat', y_dim='lon', inplace=True)
     xr_df.rio.write_crs("epsg:4326", inplace=True)
-    xr_df = xr_df.drop_vars('rfe_filled')
     clipped = xr_df.rio.clip(gdf.geometry.apply(mapping), gdf.crs, drop=True)
     return clipped
