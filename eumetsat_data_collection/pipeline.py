@@ -86,6 +86,31 @@ def check_status(customisation):
             print(f"INACTIVE, doubling status polling time to {sleep_time} (max 10 mins)")
         time.sleep(sleep_time)
 
+
+def delete_old_job():
+
+    CONFIG_PATH = r"./config.yaml"
+
+    # Function to load yaml configuration file
+    config = function_clns.load_config(CONFIG_PATH)
+    # Insert your personal key and secret into the single quotes
+    consumer_key = config['DEFAULT']['key']
+    consumer_secret = config['DEFAULT']['secret']
+
+    credentials = (consumer_key, consumer_secret)
+
+    token = eumdac.AccessToken(credentials)
+    print(f"This token '{token}' expires {token.expiration}")
+    datatailor = eumdac.DataTailor(token)
+     # Delete all jobs older than one month
+
+    delete_datetime = datetime.combine(date.today() - timedelta(days=1), time_dt(0, 0))
+
+    for customisation in datatailor.customisations:
+        if customisation.creation_time <= delete_datetime:
+            print(f'Delete customisation {customisation} from {customisation.creation_time}.')
+            customisation.delete()
+
 def datatailor_loop():
 
     CONFIG_PATH = r"./config.yaml"
@@ -140,15 +165,15 @@ def datatailor_loop():
         print(f"{chain}")
 
 
-    download_dir = r'D:\MSG\MSG_nat\batch_3'
+    download_dir = r'D:\MSG\MSG_nat\batch_2'
 
-    start_date = '2013-02-26 11:45:00'
-    end_date= '2021-01-01 11:45:00'
+    start_date = '2007-01-01 08:45:00'
+    end_date= '2009-01-01 11:45:00'
 
     start_dt = datetime.strptime(start_date, '%Y-%m-%d %H:%M:%S')
     end_dt = datetime.strptime(end_date, '%Y-%m-%d %H:%M:%S')
     delta = timedelta(days=1)
-    time_window = timedelta(minutes=30)
+    time_window = timedelta(hours=6)
 
     while start_dt <= end_dt:  
         limit_dt = start_dt + time_window
@@ -182,4 +207,5 @@ def datatailor_loop():
 
 
 if __name__ == "__main__":
+    #delete_old_job()
     datatailor_loop()

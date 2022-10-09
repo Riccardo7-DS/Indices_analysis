@@ -22,7 +22,7 @@ import re
 import xskillscore as xs
 
 def downsample(ds):
-    monthly = ds.resample(time='5D', skipna=True).mean()
+    monthly = ds.resample(time='5D', skipna=True).mean() #### Change here to change the timeframe over which to make the data imputation
     return monthly
 
 def clean_ndvi(ds):
@@ -58,17 +58,16 @@ def extract_apply_cloudmask(ds, ds_cl):
 
 def plot_cloud_correction(mask_clouds_p, res_xr_p, time):
     mask_clouds_p['ndvi'].sel(time=time,  method = 'nearest').plot()
-    plt.title('NDVI image with max pixel value cloud correction')
+    plt.title('NDVI image with cloud mask')
     plt.show()
     res_xr_p['ndvi'].sel(time=time,  method = 'nearest').plot()
-    plt.title('NDVI image with cloud mask')
+    plt.title('NDVI image with max pixel value cloud correction')
     plt.show()
 
 
 def compute_difference(mask_clouds, mask_clouds_p, res_xr_p, res_xr, time):
     #### Difference in absolute value
     res = mask_clouds_p['ndvi'].sel(time=time,  method = 'nearest') - res_xr_p['ndvi'].sel(time=time,  method = 'nearest')
-    #mask_clouds['ndvi'].sum(res_xr['ndvi'])
     diff = mask_clouds['ndvi'] - res_xr['ndvi']
     diff_p = mask_clouds_p['ndvi'] - res_xr_p['ndvi']
     abs(diff).mean('time', skipna=True).plot()
@@ -77,7 +76,6 @@ def compute_difference(mask_clouds, mask_clouds_p, res_xr_p, res_xr, time):
     plt.show()
 
 def compute_correlation(mask_clouds_p, res_xr_p):
-    #### Check correlation
     ndvi_= res_xr_p['ndvi'].chunk(dict(time=-1))
     mask_= mask_clouds_p['ndvi'].chunk(dict(time=-1))
     xs.pearson_r(ndvi_, mask_, dim='time', skipna=True).plot()
@@ -96,10 +94,21 @@ if __name__=="__main__":
     #### Cloudmask dataset
     cloud_path = config['NDVI']['cloud_path']
     ds_cl = xr.open_mfdataset(os.path.join(cloud_path,'*.nc'))
+    
+    mask_clouds_p, res_xr_p,  mask_clouds, res_xr = extract_apply_cloudmask(ds, ds_cl)
 
+    mask_clouds_p['ndvi'].plot()
+    plt.show()
 
     time = '2009-12-05'
-    mask_clouds_p, res_xr_p,  mask_clouds, res_xr = extract_apply_cloudmask(ds, ds_cl)
-    plot_cloud_correction(mask_clouds_p, res_xr_p, time)
-    compute_correlation(mask_clouds_p, res_xr_p)
+    ### Plot and compare methods
+    #plot_cloud_correction(mask_clouds_p, res_xr_p, time)
+
+    #### Check correlation
+    #compute_correlation(mask_clouds_p, res_xr_p)
+    
+    ### Export dataset
+    output_file = os.path.join(ndvi_dir, 'processed_msg.nc')
+    mask_clouds_p.to_netcdf(output_file)
+
 

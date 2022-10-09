@@ -22,11 +22,7 @@ import zipfile
 
 
 
-extension = ".zip"
-  # change directory from working dir to dir with files
-
-
-def unpack_all_in_dir(_dir):
+def unpack_all_in_dir(_dir, extension = ".zip"):
     for item in os.listdir(_dir):  # loop through items in dir
         abs_path = os.path.join(_dir, item)  # absolute path of dir or file
         if item.endswith(extension):  # check for ".zip" extension
@@ -46,7 +42,7 @@ def storing_cleaning_seviri(start_dt):
     config = function_clns.load_config(CONFIG_PATH)
     #time_config = function_clns.load_config(TIME_PATH)
 
-    time_window = timedelta(hours=5)
+    time_window = timedelta(minutes=30)
 
     limit_dt = start_dt + time_window
 
@@ -61,8 +57,8 @@ def storing_cleaning_seviri(start_dt):
 
 
     #### Chose the product of interest
-    collectionID ='EO:EUM:DAT:METOP:H25'
-    
+    collectionID ='EO:EUM:DAT:MSG:HRSEVIRI'     ####soil moisture: EO:EUM:DAT:METOP:H25
+
 
     datastore = eumdac.DataStore(token)
     datastore.collections
@@ -73,7 +69,7 @@ def storing_cleaning_seviri(start_dt):
     # Add vertices for polygon, wrapping back to the start point.
     geometry = [[15,32.8],[2.9,32.8],[2.9,48],[48,15], [15,32.8]]  ###ethiopia coordinates
 
-    download_dir = config['SOIL_MOI']['output']
+    download_dir = config['NDVI']['seviri_download']
     
     # Retrieve datasets that match our filter
     product = selected_collection.search(
@@ -93,9 +89,8 @@ def storing_cleaning_seviri(start_dt):
 
 if __name__ == "__main__":
 
-    start_date = '2008-06-01 10:00:00'
-    end_date='2008-06-07 10:00:00'
-    #end_date= '2011-01-01 14:00:00'
+    start_date = '2008-12-31 11:45:00'
+    end_date='2009-01-01 11:45:00'
 #
     start_dt = datetime.strptime(start_date, '%Y-%m-%d %H:%M:%S')
     end_dt = datetime.strptime(end_date, '%Y-%m-%d %H:%M:%S')
@@ -108,5 +103,5 @@ if __name__ == "__main__":
 
     CONFIG_PATH = r"./config.yaml"
     config = function_clns.load_config(CONFIG_PATH)
-    download_dir = config['SOIL_MOI']['output']
+    download_dir = config['NDVI']['seviri_download']
     unpack_all_in_dir(download_dir)

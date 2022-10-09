@@ -13,7 +13,7 @@ from glob import glob
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup, SoupStrainer
-
+import re
 
 def cut_file(xr_df, gdf):
     xr_df = xr_df.drop_vars(['lon_bnds','lat_bnds'])
@@ -43,9 +43,22 @@ download_dir = r'D:\MSG\AVHRR'
 target_dir = r'D:\MSG\AVHRR\processed'
 
 
+def cropping_loop():
+    download_dir = r'D:\MSG\AVHRR\batch_1'
+    target_dir = r'D:\MSG\AVHRR\processed'
+    regex = re.compile("AVHRR-Land_v005_AVH13C1_NOAA-18_2007(.*)")
+    files = [f for f in os.listdir(download_dir) if f.endswith('.nc')]
+    selected = filter(regex.match, files)
+    for file in selected:
+        print('Cropping file ', str(file))
+        xr_df = xr.open_dataset(os.path.join(download_dir, file), engine='netcdf4',decode_coords=False)
+        df = cut_file(xr_df, gdf)
+        df.to_netcdf(os.path.join(target_dir, file))
+        xr_df.close()
+
 def data_collection():
 
-    years = [2003, 2004, 2006, 2007, 2010]
+    years = [2005, 2008, 2009, 2010]
 
     for idx in years:
         URL = 'https://www.ncei.noaa.gov/data/land-normalized-difference-vegetation-index/access/{}/'.format(idx)
@@ -85,4 +98,4 @@ def data_collection():
         
 
 if __name__== '__main__':
-    data_collection()
+    cropping_loop()

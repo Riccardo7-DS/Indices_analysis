@@ -2,11 +2,6 @@
 
 
 
-from IPython.display import Image
-Image(r"C:\Users\Riccardo\Desktop\PhD docs\Drought prediction\formula_anomaly NDVI.PNG")
-
-
-
 ###nomral anomaly
 def lta_anomaly(ds):
     climatology = ds.groupby("time.month").mean("time")  ###12 months only, average per month
@@ -50,29 +45,4 @@ def ref_anomaly_(ds):
 
 
 
-ds_an = lta_anomaly(res_xr)
-ds_d_an = daily_anomaly(res_xr)
-ds_an_ref = ref_anomaly(res_xr)
 
-
-
-ds_an.sel(time=time, method = 'nearest')['ndvi_lta'].plot()
-plt.show()
-
-ds_an_ref.sel(time=time, method = 'nearest')['ndvi_ref'].plot()
-plt.show()
-
-
-
-
-ds_an_ref.mean('time')['ndvi_ref'].plot()
-
-
-# ### Formulas
-
-ds_lta = lta_anomaly_(res_xr)
-ds_lta.mean('time').plot()
-
-
-ds_ref = ref_anomaly_(res_xr)
-ds_ref.mean('time').plot()
