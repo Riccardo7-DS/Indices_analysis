@@ -112,8 +112,8 @@ class spiObject(object):
     def calculate_points_xr(self):   #### check when wet/dry condition is met
         self.xr= self.xr.assign(wet = self.xr[self.abbrev].where(self.xr[self.abbrev]>=self.fl_lim, 0),\
                 dry = self.xr[self.abbrev].where(self.xr[self.abbrev]<=self.dr_lim,0))
-        self.xr = self.xr.assign(wet = self.xr[self.abbrev].where(self.xr.wet==0,1),\
-                dry = self.xr[self.abbrev].where(self.xr.dry==0,1))
+        self.xr = self.xr.assign(wet = self.xr['wet'].where(self.xr.wet==0,1),\
+                dry = self.xr['dry'].where(self.xr.dry==0,1))
         self.xr['dry_cond'] = self.xr['dry'].rolling(time=self.freq).sum()
         self.xr['wet_cond'] = self.xr['wet'].rolling(time=self.freq).sum()
         d = self.xr.dims
