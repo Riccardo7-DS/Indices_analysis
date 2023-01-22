@@ -1,5 +1,0 @@
-eumetsat_data_collection
-functions
-precipitation
-soil_moisture
-vegetation

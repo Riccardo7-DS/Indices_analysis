@@ -1,4 +1,4 @@
 *config.yaml
 .ipynb_checkpoints/
 __pycache__/
-
+*.egg-info
