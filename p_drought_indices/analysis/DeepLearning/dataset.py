@@ -13,6 +13,7 @@ class PrecipDataset(Dataset):
     Parameters
     ..........
     root (String) - Path to the dataset if it is already downloaded. If not downloaded, it will be downloaded in the given path.
+    length_spi - the latency of the SPI product
     history_length (Int) - Length of history data in sequence of each sample
     prediction_length (Int) - Length of prediction data in sequence of each sample
     years (List, Optional) - Dataset will be downloaded for the given years
@@ -92,3 +93,56 @@ class PrecipDataset(Dataset):
     def __getitem__(self, index: int):
         sample = {"x_data": self.X_data[index], "y_data": self.Y_data[index]}
         return sample
+
+
+import glob
+import tensorflow as tf
+
+def load_nc_dir_with_generator(dir_):
+    def gen():
+        for file in glob.glob(os.path.join(dir_, "*.nc")):
+            ds = xr.open_dataset(file, engine='netcdf4')
+            yield {key: tf.convert_to_tensor(val) for key, val in ds.items()}
+
+
+    sample = next(iter(gen()))
+
+    return tf.data.Dataset.from_generator(
+        gen,
+        output_signature={
+            key: tf.TensorSpec(val.shape, dtype=val.dtype)
+            for key, val in sample.items()
+        }
+    )
+
+
+def load_nc_dir_with_map_and_xarray(dir_):
+    def open_path(path_tensor: tf.Tensor):
+        ds = xr.open_dataset(path_tensor.numpy().decode())
+        return tf.convert_to_tensor(ds["a"])
+    return tf.data.Dataset.list_files(os.path.join(dir_, "*.nc")).map(
+        lambda path: tf.py_function(open_path, [path], Tout=tf.float64),
+        )
+
+def load_nc_dir_cached_to_tfrecord(dir_):
+    """Save data to tfRecord, open it, and deserialize
+    
+    Note that tfrecords are not that complicated! The simply store some
+    bytes, and you can serialize data into those bytes however you find
+    convenient. In this case, I serialie with `tf.io.serialize_tensor` and 
+    deserialize with `tf.io.parse_tensor`. No need for `tf.train.Example` or any
+    of the other complexities mentioned in the official tutorial.
+
+    """
+    generator_tfds = load_nc_dir_with_generator(dir_)
+    writer = tf.data.experimental.TFRecordWriter("local.tfrecord")
+    writer.write(generator_tfds.map(lambda x: tf.io.serialize_tensor(x["a"])))
+
+    return tf.data.TFRecordDataset("local.tfrecord").map(
+        lambda x: tf.io.parse_tensor(x, tf.float64))
+
+
+def load_nc_dir_after_save(dir_):
+    generator_tfds = load_nc_dir_with_generator(dir_)
+    tf.data.experimental.save(generator_tfds, "local_ds")
+    return tf.data.experimental.load("local_ds")
