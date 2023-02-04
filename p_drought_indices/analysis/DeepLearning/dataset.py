@@ -3,8 +3,6 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
-from geotorchai.utility.exceptions import InvalidParametersException
-from geotorchai.utility._download_utils import _download_cdsapi_files
 import xarray as xr
 import re
 from typing import Union
@@ -27,7 +25,7 @@ class PrecipDataset(Dataset):
         assert length_spi in [30, 60, 90, 180]
 
         if length_spi != None:
-            self.name = [f for f in os.listdir(root) if f.endswith('.nc') and length_spi in f][0]
+            self.name = [f for f in os.listdir(root) if f.endswith('.nc') and str(length_spi) and ('gamma') in f][0]
             _abbrev = re.search('(.*)(spi_gamma_\d+)(.nc)', self.name)
             self.freq = length_spi
             #self.name = os.path.basename(os.path.normpath(self.path))
@@ -41,14 +39,12 @@ class PrecipDataset(Dataset):
         data_dir = os.path.join(root, self.name)
 
         arr = xr.open_dataset(data_dir)
+        arr = arr.transpose('time','lat','lon')
         self.full_data = arr[self.abbrev].values
 
-        self.dims = self.full_data.dims
-        
-
-        self.timesteps = self.full_data.shape[self.dims.index('time')]
-        self.grid_height = self.full_data.shape[self.dims.index('lat')]
-        self.grid_width = self.full_data.shape[self.dims.index('lon')]
+        self.timesteps = self.full_data.shape[0]
+        self.grid_height = self.full_data.shape[1]
+        self.grid_width = self.full_data.shape[2]
 
         self.full_data = self.full_data.reshape((self.timesteps, 1, self.grid_height, self.grid_width))
 
@@ -77,12 +73,13 @@ class PrecipDataset(Dataset):
     def _generate_sequence_data(self, history_length, prediction_length):
         self.X_data = []
         self.Y_data = []
-        total_length = self.full_data.shape[self.dims.index('time')]
+        total_length = self.full_data.shape[0]
         for end_idx in range(history_length + prediction_length, total_length):
             predict_frames = self.full_data[end_idx-prediction_length:end_idx]
             history_frames = self.full_data[end_idx-prediction_length-history_length:end_idx-prediction_length]
             self.X_data.append(history_frames)
             self.Y_data.append(predict_frames)
+        print(self.X_data)
         self.X_data = np.stack(self.X_data)
         self.Y_data = np.stack(self.Y_data)
         
