@@ -22,3 +22,4 @@ def subsetting_pipeline(CONFIG_PATH, xr_df, countries = ['Ethiopia','Kenya', 'So
     if invert==True:
         subset = subset['geometry'].map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
     return cut_file(xr_df, subset)
+

@@ -13,6 +13,8 @@ import yaml
 import os
 import numpy as np
 import re
+from typing import Union
+from xarray import Dataset, DataArray
 
 ##### Credits to https://github.com/MiniXC
 
@@ -55,20 +57,30 @@ def sparse2dict(M, x_corner, y_corner, cellsize, name):
     return sparse_dict
 
 
-def soil_res_merra(countries, df=None, invert =True):
+def get_soil_vars(CONFIG_PATH, countries:list, xr_df:Union[DataArray, Dataset]=None, df:Union[pd.DataFrame, None]=None, invert =True):
     """
-    ds: dataset to get initial raster and to sample vars
+    df: pandas dataframe to get initial raster and to sample vars
     """
-    CONFIG_PATH = r"config.yaml"
     config = load_config(CONFIG_PATH)
     path = config['DEFAULT']['ancillary']
     chunks={'time':'500MB'}
 
-    if df is None:
+    if ((df is None) & (xr_df is None)):
+        print('Using the default MERRA-2 grid for querying FAO HWSD')
         ds = xr.open_dataset(os.path.join(config['MERRA2']['path'], 'nasapower_vars.nc'), chunks=chunks)
         elev_df = ds[['lat','lon']].to_dataframe().reset_index()
-    else:
+        
+    elif ((df is not None) & (xr_df is not None)):
+        raise ValueError('Need to specify only one input between the pandas and xarray datasets')
+
+    elif ((df is not None) & (xr_df is None)):
+        print('Using provided pandas dataframe for querying FAO HWSD')
         elev_df = df.reset_index()[['lat','lon','time']]
+    else:
+        ds = xr_df.copy()
+        print('Using provided xarray dataframe for querying FAO HWSD')
+        elev_df = ds[['lat','lon']].to_dataframe().reset_index()
+        
     if invert ==True:
         elev_df.rename(columns={'lat':'lon','lon':'lat'},inplace=True)
 
