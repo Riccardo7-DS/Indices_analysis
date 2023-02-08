@@ -7,6 +7,12 @@ import xarray as xr
 from osgeo import gdal
 import matplotlib.pyplot as plt
 
+
+def visualize_map(land_proj):
+    Map = geemap.Map(center=(5, 40), zoom=5)
+    Map.addLayer(land_proj, {}, 'Land cover')
+    Map
+
 def export_land_cover(CONFIG_PATH, target_resolution:str, export_path =r'../data/images'):
 
     assert target_resolution in ['IMERG','CHIRPS']
