@@ -6,7 +6,40 @@ import os
 import xarray as xr
 from osgeo import gdal
 import matplotlib.pyplot as plt
+import pandas as pd
 
+def get_description(df:pd.DataFrame(), column:str):
+    values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
+                        50:	'Urban',60:	'Bare',70:	'Snow and ice',80:	'Permanent water bodies',90:	'Herbaceous wetland',100: 'Moss and lichen',111: 'Closed forest, evergreen needle leaf',
+                        112: 'Closed forest, evergreen broad leaf',115: 'Closed forest, mixed',125: 'Open forest, mixed',113: 'Closed forest, deciduous needle leaf',
+                        114: 'Closed forest, deciduous broad leaf',116: 'Closed forest, not matching any of the others',121: 'Open forest, evergreen needle leaf',122: 'Open forest, evergreen broad leaf',
+                        123: 'Open forest, deciduous needle leaf',124: 'Open forest, deciduous broad leaf',126: 'Open forest, not matching any of the others',200: 'Oceans, seas'}
+
+    df['description'] = df[column].replace(values_land_cover.keys(),values_land_cover.values())
+    return df
+
+def get_level_colors(ds_cover):
+    df = ds_cover.to_dataframe()
+    df = df.reset_index()
+    df = df.dropna(subset=['Band1'])
+    df['Band1'] = df['Band1'].astype(int)
+
+    values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
+                        50:	'Urban',60:	'Bare',70:	'Snow and ice',80:	'Permanent water bodies',90:	'Herbaceous wetland',100: 'Moss and lichen',111: 'Closed forest, evergreen needle leaf',
+                        112: 'Closed forest, evergreen broad leaf',115: 'Closed forest, mixed',125: 'Open forest, mixed',113: 'Closed forest, deciduous needle leaf',
+                        114: 'Closed forest, deciduous broad leaf',116: 'Closed forest, not matching any of the others',121: 'Open forest, evergreen needle leaf',122: 'Open forest, evergreen broad leaf',
+                        123: 'Open forest, deciduous needle leaf',124: 'Open forest, deciduous broad leaf',126: 'Open forest, not matching any of the others',200: 'Oceans, seas'}
+
+    colors = {0:'#282828',20:'#FFBB22',30:'#FFFF4C',40:'#F096FF',50:'#FA0000',60:'#B4B4B4',70:'#F0F0F0',80:'#0032C8',90:'#0096A0',100:'#FAE6A0',111:'#58481F',112:'#009900',113:'#70663E',
+    114:'#00CC00',115:'#4E751F',116:'#007800',121:'#666000',122:'#8DB400',123:'#8D7400',124:'#A0DC00',125:'#929900',126:'#648C00',200:'#000080'}
+
+    df['colors'] = df['Band1'].replace(colors.keys(),colors.values())
+    df['description'] = df['Band1'].replace(values_land_cover.keys(),values_land_cover.values())
+
+    cmap = df.sort_values('Band1')['colors'].unique().tolist()
+    cmap = [c.lower() for c in cmap]
+    levels = df.sort_values('Band1')['Band1'].unique().tolist()
+    return cmap, levels
 
 def visualize_map(land_proj):
     Map = geemap.Map(center=(5, 40), zoom=5)

@@ -109,11 +109,11 @@ def generate_dataset():
     df = res_w.drop(['crs','spatial_ref']).to_dataframe()
     df = df.dropna(how='all')
 
-    from p_drought_indices.ancillary_vars.FAO_HWSD import soil_res_merra
+    from p_drought_indices.ancillary_vars.FAO_HWSD import get_soil_vars
 
     ### load ancillary data on soil, land
     countries = ['Kenya','Ethiopia','Somalia']
-    xr_X = soil_res_merra(countries, df = df, invert=False)
+    xr_X = get_soil_vars(countries, df = df, invert=False)
 
     ### generate final dataframe and save it
     final_df = xr_X.to_dataframe().dropna(how='all').merge(df, left_index=True, right_index=True)

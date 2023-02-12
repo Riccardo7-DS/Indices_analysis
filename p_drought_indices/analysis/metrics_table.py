@@ -24,6 +24,10 @@ import time
 import numpy as np
 import re
 from p_drought_indices.vegetation.NDVI_indices import compute_svi, compute_vci
+from p_drought_indices.ancillary_vars.esa_landuse import get_level_colors, get_description
+from rasterio.enums import Resampling
+
+
 
 CONFIG_PATH = r"../config.yaml"
 
@@ -45,6 +49,8 @@ class MetricTable(object):
             self.countries = config['AREA']['3countr']
         else:
             self.countries = countries
+
+        self.chunks = {'time':'600MB'}
         self.spi_tresh = spi_tresh
         self.vci_tresh = vci_tresh
         file_obs  = [f for f in os.listdir(obs_directory) if f.endswith('.nc') and var_obs in f]
@@ -57,19 +63,42 @@ class MetricTable(object):
         self.spi_freq = int(re.search(r'\d+',self.name_fcst).group())
         self.abbrev_fcst = re.search('(.*)(spi_gamma_\d+)(.nc)', self.name_fcst).group(2)
         self.product_fcst = re.search('(.*)(_spi_gamma_\d+)(.nc)', self.name_fcst).group(1)
+        ### resample datasets to same spatial and temporal resolution
+        self._load_process_datasets()    
+        ### add landcover and df for cover data
+        self._get_land_cover()
+        self.df_cover = pd.DataFrame()
 
-        self.dataset = self._load_process_datasets()
-        ####compute metrics over lat-lon
-        accuracy_t, far_t, pod_t, fb_t, rmse_t, mse_t = self._get_eval_metrics()
+
+    def compute_metrics(self, dataset=None):
+        if dataset is None:
+            ####compute metrics over lat-lon for default dataset
+            accuracy_t, far_t, pod_t, fb_t, rmse_t, mse_t = self._get_eval_metrics()
+        else:
+            accuracy_t, far_t, pod_t, fb_t, rmse_t, mse_t = self._get_eval_metrics(dataset)
+
         ##### compute metrics over time
-        accuracy_s, far_s, pod_s, fb_s, rmse_s, mse_s = self._get_eval_metrics(dim=['time'])
+        #accuracy_s, far_s, pod_s, fb_s, rmse_s, mse_s = self._get_eval_metrics(dim=['time'])
         #self.plot_indices(far_s, pod_s, accuracy_s, rmse_s, save=True)
 #
         ##### gather the statistics
         metrics_df = pd.DataFrame([float(accuracy_t.mean(['time']).values), float(far_t.mean(['time']).values), float(pod_t.mean(['time']).values), float(rmse_t.mean(['time'])), \
             float(mse_t.mean(['time']).values), self.product_fcst, self.name_obs,  self.abbrev_fcst]).T
         metrics_df.columns=['accuracy_m', 'far_m','pod_m', 'rmse_m', 'mse_m', 'product', 'veg_idx','precp_idx']
-        self.table_res = metrics_df
+        return metrics_df
+
+    def compute_metrics_soil(self):
+        metric_all = pd.DataFrame()
+        for cat in self.land_categories:
+            sub_data = self.dataset.where(self.dataset['land']==cat)
+            metrics_df = self.compute_metrics(sub_data)
+            metrics_df['land_cat'] = cat
+            metrics_df = get_description(metrics_df, 'land_cat')
+            metric_all = pd.concat([metric_all, metrics_df], ignore_index=True)
+        self.df_cover = pd.concat([self.df_cover, metric_all], ignore_index=True)
+
+    def add_cover(self):
+        self._get_land_cover()
 
     def _load_process_datasets(self):
         ##### load xr for forecasted variable and change dimensions name due to error in preprocessing
@@ -83,12 +112,12 @@ class MetricTable(object):
         ds_final = self._prep_dataset(ds_obs, transpose=True)
 
         #### subset the dataset and the datarray
-        target_new = date_compat_check(ds_final, xr_fcst_final)
-        res_xr = date_compat_check(ds_final, xds_fcst)
+        target_new = date_compat_check(target_xr =xr_fcst_final , xr_df= ds_final)
+        res_xr = date_compat_check(target_xr =xds_fcst, xr_df = ds_final)
 
         #### reproject it and get variables
         ds = self._reproject_get_vars(res_xr, ds_final, target_new)
-        return transpose_dataset(ds,'time', 'lat','lon')
+        self.dataset = transpose_dataset(ds,'time', 'lat','lon')
 
     def _prep_dataset(self, ds, transpose=False):
         if transpose==True:
@@ -99,36 +128,38 @@ class MetricTable(object):
         
     def _reproject_get_vars(self, res_xr, ds_final, target_new):
         ### Reproject datarray
-        target_new = self._prep_dataset(target_new, transpose=True)
-        xds_repr_match = ds_final.rio.reproject_match(target_new)
+        target_other = self._prep_dataset(target_new, transpose=True)
+        xds_repr_match = ds_final.rio.reproject_match(target_other,  resampling=Resampling.bilinear)
         xr_regrid = xds_repr_match.rename({'x':'lat','y':'lon'})
-        masked_data = xr_regrid.where(target_new.notnull())
         null_var = xr.where(target_new.notnull(), 1,np.NaN)
-        condition_var = xr.where(target_new<=-2,1,0)
+        condition_var = xr.where(target_new<=-self.spi_tresh,1,0)
         res_vars = condition_var.where(null_var==1)
         ### assign calculated variables to xarray dataset and subset vars
         res_xr = res_xr.assign(drt_precp = res_vars,\
-                drt_veg = xr.where(masked_data <=self.vci_tresh, 1, 0), target_new = target_new)
+                drt_veg = xr.where(xr_regrid <=self.vci_tresh, 1, 0), target_new = target_new)
+        res_xr['drt_veg'] = res_xr['drt_veg'].where(res_xr['target_new'].notnull())
         #res_xr['drt_precp'] = subsetting_pipeline(CONFIG_PATH, res_xr['drt_precp'], countries=self.countries)
-        res_xr['drt_veg'] = subsetting_pipeline(CONFIG_PATH, res_xr['drt_veg'], countries=self.countries)
+        #res_xr['drt_veg'] = subsetting_pipeline(CONFIG_PATH, res_xr['drt_veg'], countries=self.countries)
         return res_xr
 
-    def _get_eval_metrics(self, drt_obs:str='drt_veg', drt_forec:str = 'drt_precp', dim:list=["lat","lon"]):
+    def _get_eval_metrics(self, dataset= None, drt_obs:str='drt_veg', drt_forec:str = 'drt_precp', dim:list=["lat","lon"]):
         """
         This is a function to calculate the target metrics for an xarray over a desired dimension, by default over lat/lon.
         The standard name for the observation is 'drt_veg' whereas for the forecast is 'drt_precp'
         Returns accuracy, far, pod, bias ration, rmse, mse.
         """
+        if dataset is None:
+            dataset = self.dataset
         dichotomous_category_edges = np.array([0, 0.5, 1])  # "dichotomous" mean two-category
         dichotomous_contingency = xs.Contingency(
-            self.dataset[drt_obs], self.dataset[drt_forec], dichotomous_category_edges, dichotomous_category_edges, dim=dim
+            dataset[drt_obs], dataset[drt_forec], dichotomous_category_edges, dichotomous_category_edges, dim=dim
             )
         accuracy = dichotomous_contingency.accuracy()
         far = dichotomous_contingency.false_alarm_rate()#.mean().values
         pod = dichotomous_contingency.hit_rate()#.mean().values
         fb  = dichotomous_contingency.bias_score()
-        rmse = xs.rmse(self.dataset[drt_obs], self.dataset[drt_forec],skipna=True, dim=dim)
-        mse = xs.mse(self.dataset[drt_obs], self.dataset[drt_forec],skipna=True, dim=dim)
+        rmse = xs.rmse(dataset[drt_obs], dataset[drt_forec],skipna=True, dim=dim)
+        mse = xs.mse(dataset[drt_obs], dataset[drt_forec],skipna=True, dim=dim)
         return accuracy, far, pod, fb, rmse, mse
 
     def plot_indices(self, far, pod, accuracy, rmse, save=True):
@@ -162,3 +193,18 @@ class MetricTable(object):
             file_name = 'rmse_{t}_{b}_{g}.png'.format(t= t, b= b, g=g)
             plt.savefig(os.path.join(config['DEFAULT']['image_path'], file_name))
         plt.show()
+
+    def _get_land_cover(self, ds_path= r'../data/images/esa_cover.nc'):
+        ds_cover = xr.open_dataset(ds_path)
+        ds_cover = subsetting_pipeline(CONFIG_PATH, ds_cover, invert=False)
+        #### get categories and levels with colors to plot the land cover dataset
+        cmap, levels = get_level_colors(ds_cover)
+        self.land_categories = ds_cover.to_dataframe()['Band1'].dropna().astype(int).unique().tolist()
+        #### reproject land cover ds in the format of the precipitation dataset
+        res = ds_cover['Band1'].rio.reproject_match(self.dataset[self.abbrev_fcst])
+        res = res.rename({'x':'lon','y':'lat'})
+        #### generate empty time dimension and expand it
+        time_dim = self.dataset['time'].values
+        time_da = xr.DataArray(time_dim, [('time', time_dim)])
+        res = res.expand_dims(time=time_da)
+        self.dataset = self.dataset.assign(land = res)

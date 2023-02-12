@@ -47,6 +47,7 @@ def regridding_product(var, product_directory, product_dir_target):
     return xds_repr_match
 
 def date_compat_check(xr_df, target_xr):
+    "the target dataset is the dataset to be reformatted"
     min_target = target_xr['time'].min().values
     max_target = target_xr['time'].max().values
     min_xr = xr_df['time'].min().values
