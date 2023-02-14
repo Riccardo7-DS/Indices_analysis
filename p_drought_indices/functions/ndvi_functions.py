@@ -8,6 +8,8 @@ from p_drought_indices.functions.function_clns import load_config
 import xskillscore as xs
 from datetime import datetime
 import xarray as xr
+import numpy as np
+from xarray import DataArray, Dataset
 
 def downsample(ds):
     monthly = ds.resample(time='5D', skipna=True).mean() #### Change here to change the timeframe over which to make the data imputation
@@ -16,6 +18,16 @@ def downsample(ds):
 def clean_ndvi(ds):
     ds = ds.where('ndvi'!=0.00)
     return ds
+
+def find_ndvi_outliers(datarray:DataArray):
+    list_1 = datarray.where(datarray>1, drop=True).to_dataframe().dropna().reset_index()['time'].unique()
+    list_2 = datarray.where(datarray<-1, drop=True).to_dataframe().dropna().reset_index()['time'].unique()
+    return np.unique(np.concatenate((list_1, list_2), axis=0))
+
+def clean_outliers(dataset:Dataset):
+    list_out = find_ndvi_outliers(dataset['ndvi'])
+    return dataset.drop_sel(time= list_out)
+
 
 def compute_ndvi(xr_df):
     return xr_df.assign(ndvi=(xr_df['channel_2'] - xr_df['channel_1']) / (xr_df['channel_2'] + xr_df['channel_1']))

@@ -67,35 +67,45 @@ class MetricTable(object):
         self._load_process_datasets()    
         ### add landcover and df for cover data
         self._get_land_cover()
-        self.df_cover = pd.DataFrame()
 
-
-    def compute_metrics(self, dataset=None):
+    def _compute_metrics(self, freq, dataset=None):
         if dataset is None:
             ####compute metrics over lat-lon for default dataset
-            accuracy_t, far_t, pod_t, fb_t, rmse_t, mse_t = self._get_eval_metrics()
+            accuracy, far, pod, fb, rmse, mse = self._get_eval_metrics()
         else:
-            accuracy_t, far_t, pod_t, fb_t, rmse_t, mse_t = self._get_eval_metrics(dataset)
+            accuracy, far, pod, fb, rmse, mse = self._get_eval_metrics(dataset)
+        
+        if freq=="daily":
+            metrics_df = pd.DataFrame([accuracy.values, far.values, pod.values, rmse.values, \
+            mse.values, dataset['time'].values]).T
 
-        ##### compute metrics over time
-        #accuracy_s, far_s, pod_s, fb_s, rmse_s, mse_s = self._get_eval_metrics(dim=['time'])
-        #self.plot_indices(far_s, pod_s, accuracy_s, rmse_s, save=True)
-#
-        ##### gather the statistics
-        metrics_df = pd.DataFrame([float(accuracy_t.mean(['time']).values), float(far_t.mean(['time']).values), float(pod_t.mean(['time']).values), float(rmse_t.mean(['time'])), \
-            float(mse_t.mean(['time']).values), self.product_fcst, self.name_obs,  self.abbrev_fcst]).T
-        metrics_df.columns=['accuracy_m', 'far_m','pod_m', 'rmse_m', 'mse_m', 'product', 'veg_idx','precp_idx']
-        return metrics_df
+            metrics_df['product'] = self.product_fcst 
+            metrics_df['veg_idx'] = self.name_obs
+            metrics_df['precp_idx'] = self.abbrev_fcst
+            metrics_df.columns=['accuracy', 'far','pod', 'rmse', 'mse','time', 'product', 'veg_idx','precp_idx' ]
+            return metrics_df
+        elif freq=="all":
+            metrics_df = pd.DataFrame([float(accuracy.mean(['time']).values), float(far.mean(['time']).values), float(pod.mean(['time']).values), float(rmse.mean(['time'])), \
+                float(mse.mean(['time']).values), self.product_fcst, self.name_obs,  self.abbrev_fcst]).T
+            metrics_df.columns=['accuracy_m', 'far_m','pod_m', 'rmse_m', 'mse_m', 'product', 'veg_idx','precp_idx']
+            return metrics_df
+        else:
+            raise NotImplementedError
 
-    def compute_metrics_soil(self):
+    def compute_metrics_soil(self, freq="daily"):
+        assert freq in ['daily','all']
+        self.df_cover = self._metrics_soil(freq=freq)
+
+    def _metrics_soil(self, freq):
         metric_all = pd.DataFrame()
         for cat in self.land_categories:
             sub_data = self.dataset.where(self.dataset['land']==cat)
-            metrics_df = self.compute_metrics(sub_data)
+            metrics_df = self._compute_metrics(dataset = sub_data, freq=freq)
             metrics_df['land_cat'] = cat
+            metrics_df['country'] = ' '.join(self.countries)
             metrics_df = get_description(metrics_df, 'land_cat')
             metric_all = pd.concat([metric_all, metrics_df], ignore_index=True)
-        self.df_cover = pd.concat([self.df_cover, metric_all], ignore_index=True)
+        return metric_all
 
     def add_cover(self):
         self._get_land_cover()

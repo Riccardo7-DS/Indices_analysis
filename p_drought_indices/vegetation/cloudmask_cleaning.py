@@ -18,15 +18,15 @@ import re
 import xskillscore as xs
 import yaml
 from p_drought_indices.functions.function_clns import load_config, cut_file
-from ..functions.ndvi_functions import compute_ndvi, clean_ndvi, downsample
+from p_drought_indices.functions.ndvi_functions import compute_ndvi, clean_ndvi, downsample
+from xarray import DataArray
 
 
-
-def extract_apply_cloudmask(ds, ds_cl):
+def extract_apply_cloudmask(ds, ds_cl, downsample=False):
     ### normalize time in order for the two datasets to match
     ds_cl['time'] = ds_cl.indexes['time'].normalize()
     ds['time'] = ds.indexes['time'].normalize()
-
+    
     #### reproject cloud mask to base dataset
     reproj_cloud = ds_cl['cloud_mask'].rio.reproject_match(ds['channel_1'])
     ds_cl_rp = reproj_cloud.rename({'y':'lat', 'x':'lon'})
@@ -35,21 +35,35 @@ def extract_apply_cloudmask(ds, ds_cl):
     ds_subset = ds.where(ds_cl_rp==1) #ds = ds.where(ds.time == ds_cl.time)
     ### recompute corrected ndvi
     res_xr = compute_ndvi(ds_subset)
-    #### downsample to 5 days
-    res_xr_p = downsample(res_xr)
-    
+
     ### mask all the values equal to 0 (clouds)
     mask_clouds = clean_ndvi(ds)
     ### recompute corrected ndvi
     mask_clouds = compute_ndvi(mask_clouds)
-    #### downsampled df
-    mask_clouds_p = downsample(mask_clouds)
 
-    return mask_clouds_p, res_xr_p,  mask_clouds, res_xr ### return 1) cleaned dataset with clouds 
+    #### downsample to 5 days
+    if downsample==True:
+        "Starting downsampling the Dataset"
+        res_xr_p = downsample(res_xr)
+        #### downsampled df
+        mask_clouds_p = downsample(mask_clouds)
+        return mask_clouds_p, res_xr_p,  mask_clouds, res_xr ### return 1) cleaned dataset with clouds 
                                                          ### 2) imputation with max over n days
                                                          ### 3) cloudmask dataset original sample
                                                          ### 4) cloudmask dataset downsampled
+    else:
+        return mask_clouds, res_xr
 
+def apply_whittaker(datarray:DataArray, prediction="P1D", time_dim="time"):
+    from fusets import WhittakerTransformer
+    from fusets._xarray_utils import _extract_dates, _output_dates, _topydate
+    result = WhittakerTransformer().fit_transform(datarray.load(),smoothing_lambda=1,time_dimension=time_dim, prediction_period=prediction)
+    dates = _extract_dates(datarray)
+    expected_dates = _output_dates(prediction,dates[0],dates[-1])
+    datarray['time'] = datarray.indexes['time'].normalize()
+    datarray = datarray.assign_coords(time = datarray.indexes['time'].normalize())
+    result['time'] = [np.datetime64(i) for i in expected_dates]
+    return result
 
 def plot_cloud_correction(mask_clouds_p, res_xr_p, time):
     mask_clouds_p['ndvi'].sel(time=time,  method = 'nearest').plot()
