@@ -6,7 +6,7 @@ import os
 import shutil
 from shapely.geometry import Polygon, mapping
 import xarray as xr
-import geopandas as gpd
+import geopandas as gpds
 from glob import glob
 import os
 import time
@@ -244,8 +244,8 @@ if __name__ == "__main__":
     CONFIG_PATH = r'./config.yaml'
     # Function to load yaml configuration file
     config = load_config(CONFIG_PATH)
-    product_code = config['SEVIRI']['cloud']
-    start_date = '2019-06-19 12:00:00'
-    end_date= '2021-01-01 12:00:00'
+    product_code = config['SEVIRI']['HRV']
+    start_date = '2010-11-02 12:00:00'
+    end_date= '2011-03-02 12:00:00'
 
     datatailor_loop(CONFIG_PATH, product_code, start_date, end_date)

@@ -1,6 +1,6 @@
 import xarray as xr
 from p_drought_indices.precipitation.regridding_products import transpose_dataset, date_compat_check
-from p_drought_indices.functions.function_clns import subsetting_pipeline, load_config, cut_file
+from p_drought_indices.functions.function_clns import subsetting_pipeline, load_config, cut_file, prepare
 import pandas as pd
 import re
 import geopandas as gpd
@@ -113,12 +113,12 @@ class MetricTable(object):
     def _load_process_datasets(self):
         ##### load xr for forecasted variable and change dimensions name due to error in preprocessing
         xds_fcst = xr.open_dataset(self.path_fcst)#.rename({'lat':'x','lon':'y'}).rename({'x':'lon','y':'lat'})
-        xr_fcst_proc = subsetting_pipeline(CONFIG_PATH, xds_fcst[self.abbrev_fcst], self.countries)
+        xr_fcst_proc = subsetting_pipeline(CONFIG_PATH, xds_fcst[self.abbrev_fcst], self.countries, invert=False)
         xr_fcst_final = self._prep_dataset(xr_fcst_proc,  transpose=True)
 
         ##### generate a datarray to be subsetted and used for reprojection
         ds_obs =  xr.open_dataarray(self.path_obs)
-        ds_obs = subsetting_pipeline(CONFIG_PATH, ds_obs, self.countries)
+        ds_obs = subsetting_pipeline(CONFIG_PATH, ds_obs, self.countries, invert=False)
         ds_final = self._prep_dataset(ds_obs, transpose=True)
 
         #### subset the dataset and the datarray
@@ -131,16 +131,16 @@ class MetricTable(object):
 
     def _prep_dataset(self, ds, transpose=False):
         if transpose==True:
-            ds = transpose_dataset(ds,'time', 'lon', 'lat')
+            ds = transpose_dataset(ds,'time', 'lat', 'lon')
         ds.rio.write_crs("epsg:4326", inplace=True)
-        ds.rio.set_spatial_dims(x_dim='lat', y_dim='lon', inplace=True)
+        ds.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
         return ds
         
     def _reproject_get_vars(self, res_xr, ds_final, target_new):
         ### Reproject datarray
         target_other = self._prep_dataset(target_new, transpose=True)
         xds_repr_match = ds_final.rio.reproject_match(target_other,  resampling=Resampling.bilinear)
-        xr_regrid = xds_repr_match.rename({'x':'lat','y':'lon'})
+        xr_regrid = xds_repr_match.rename({'x':'lon','y':'lat'})
         null_var = xr.where(target_new.notnull(), 1,np.NaN)
         condition_var = xr.where(target_new<=-self.spi_tresh,1,0)
         res_vars = condition_var.where(null_var==1)

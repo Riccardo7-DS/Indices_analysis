@@ -1,5 +1,3 @@
-import ee 
-import geemap
 from p_drought_indices.functions.function_clns import load_config
 import geopandas as gpd
 import os
@@ -42,12 +40,15 @@ def get_level_colors(ds_cover):
     return cmap, levels
 
 def visualize_map(land_proj):
+    import ee 
+    import geemap
     Map = geemap.Map(center=(5, 40), zoom=5)
     Map.addLayer(land_proj, {}, 'Land cover')
     Map
 
 def export_land_cover(CONFIG_PATH, target_resolution:str, export_path =r'../data/images'):
-
+    import ee 
+    import geemap
     assert target_resolution in ['IMERG','CHIRPS']
     ee.Initialize()
     landcover = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019").select('discrete_classification')
