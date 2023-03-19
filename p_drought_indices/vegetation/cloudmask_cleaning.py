@@ -167,9 +167,6 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
     xr_df = xr_df.sortby("time")
     xr_df.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'ndvi_no_out.nc'))
 
-    import sys
-    sys.exit(0)
-
     shapefile_path = config['SHAPE']['africa']
     gdf = gpd.read_file(shapefile_path)
     subset = gdf[gdf.ADM0_NAME.isin(countries)]

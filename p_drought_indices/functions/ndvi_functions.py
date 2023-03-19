@@ -20,7 +20,7 @@ def clean_ndvi(ds):
     return ds
 
 def clean_outliers(dataset:Dataset):
-    ds = dataset.where((dataset["ndvi"]<=1) | (dataset["ndvi"]>=-1))
+    ds = dataset.where((dataset["ndvi"]<=1) & (dataset["ndvi"]>=-1))
     return ds.dropna(dim="lon", how="all")
 
 

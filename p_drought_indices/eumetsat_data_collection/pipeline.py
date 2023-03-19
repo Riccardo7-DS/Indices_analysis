@@ -1,4 +1,4 @@
-import eumdac
+#import eumdac
 import geopandas as gpd
 from datetime import datetime, timedelta, date
 from datetime import time as time_dt
@@ -54,7 +54,7 @@ def cut_file(xr_df, gdf):
     clipped = clipped.drop('crs')
     return clipped
 
-def pipeline_ndvi(xr_df, base_dir, gdf):
+def pipeline_ndvi(xr_df, gdf):
     xr_df = cut_file(xr_df, gdf)
     xr_df = add_time(xr_df)
     xr_df = compute_radiance(xr_df)
