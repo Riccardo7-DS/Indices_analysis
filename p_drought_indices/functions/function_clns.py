@@ -167,3 +167,12 @@ def reproject_odc(ds_1, ds_2):
     ds_repr = xr_reproject(ds_1, ds_2.geobox, resampling="bilinear")
     return ds_repr.rename({"longitude": "lon", "latitude": "lat"})
 
+def crop_get_spi(ds:xr.DataArray, thresh:int=-2):
+    null_var = xr.where(ds.notnull(), 1,np.NaN)
+    condition_var = xr.where(ds<=thresh,1,0)
+    return condition_var.where(null_var==1)
+
+def crop_get_thresh(ds:xr.DataArray, thresh:int=10):
+    null_var = xr.where(ds.notnull(), 1,np.NaN)
+    condition_var = xr.where(ds<thresh,1,0)
+    return condition_var.where(null_var==1)

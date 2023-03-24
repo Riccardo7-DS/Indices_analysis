@@ -68,6 +68,13 @@ def extract_apply_cloudmask(ds, ds_cl, resample=False, include_water =True,downs
                                                          ### 4) cloudmask dataset downsampled
     else:
         return mask_clouds, res_xr
+    
+
+def clean_water(ds, ds_cl):
+    ds_cl['time'] = ds_cl.indexes['time'].normalize()
+    ds['time'] = ds.indexes['time'].normalize()
+    return ds.where(ds_cl=1)
+
 
 def apply_whittaker(datarray:DataArray, prediction="P1D", time_dim="time"):
     from fusets import WhittakerTransformer
@@ -174,7 +181,7 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
     ds_n = cut_file(xr_df, subset)
     ds_cl = cut_file(ds_cl, subset)
     print("Starting applying cloudmask on dataset...")
-    mask_clouds, res_xr = extract_apply_cloudmask(ds_n, ds_cl)
+    mask_clouds, res_xr = extract_apply_cloudmask(ds_n, ds_cl, include_water=False)
     mask_clouds.to_netcdf(os.path.join(ndvi_dir, "final_ndvi.nc"))
 
     ### apply whittaker filter
@@ -182,6 +189,8 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
 
     print("Applying Whittaker filter...")
     result = apply_whittaker(mask_clouds['ndvi'])
+    result = clean_outliers(result)
+    result = clean_water(ds, ds_cl)
     result.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi.nc'))
 
     print("Computing VCI index...")
