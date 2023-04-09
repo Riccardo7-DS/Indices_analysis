@@ -134,7 +134,34 @@ def get_subplot_year(ds, var:str="ndvi", year:Union[None, int,list]=None):
 
     return df_list, list_dates
 
+def get_year_compare(ds:xr.DataArray, var:str, year:list):
 
+    days=366 if calendar.isleap(year) else 365
+    ds_subset = ds.sel(time=ds.time.dt.year.isin([year]))
+
+    #final_df = pd.DataFrame()
+
+    day_obj_full = dfDay(ds = ds, var=var)
+    day_obj = dfDay(ds = ds_subset, var=var)
+    df_list = []
+    for day in range(1,days+1):
+        day_obj_full.get_day(day)
+
+        if (days==365) & (day==60):
+            series = [np.NaN for _ in range(len(day_obj_full.df[var]))]
+            new_df = pd.DataFrame([series,  day_obj_full.df[var]]).T
+        else:
+            day_obj.get_day(day)
+            new_df = pd.DataFrame([day_obj.df[var],  day_obj_full.df[var]]).T
+
+        new_df.columns = ["year", "whole"]
+        df_list.append(new_df)
+
+    if days==365:
+        del df_list[59]
+    bool_days = False if days==365 else True
+    list_dates = get_dates(gap_year=bool_days)
+    return df_list, list_dates
 
 def multiple_spi_boxplots(list_late, list_data, list_dates, title, figsize=None, show_means=False):
     fig, axes = plt.subplots(nrows=2,ncols=2, figsize =(15, 7))

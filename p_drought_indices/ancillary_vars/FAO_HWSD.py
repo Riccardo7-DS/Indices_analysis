@@ -148,3 +148,65 @@ def get_soil_vars(CONFIG_PATH, countries:list, xr_df:Union[DataArray, Dataset]=N
     ds_el = ds_el.assign(land= ds_el['land'].where(ds_el['land']>=0, np.NaN))
     return ds_el
 
+def get_water_cover(CONFIG_PATH, countries:list, xr_df:Union[DataArray, Dataset]=None, df:Union[pd.DataFrame, None]=None, invert =True):
+    """
+    df: pandas dataframe to get initial raster and to sample vars
+    """
+    config = load_config(CONFIG_PATH)
+    path = config['DEFAULT']['ancillary']
+    chunks={'time':'500MB'}
+
+    if ((df is None) & (xr_df is None)):
+        print('Using the default MERRA-2 grid for querying FAO HWSD')
+        ds = xr.open_dataset(os.path.join(config['MERRA2']['path'], 'nasapower_vars.nc'), chunks=chunks)
+        elev_df = ds[['lat','lon']].to_dataframe().reset_index()
+        
+    elif ((df is not None) & (xr_df is not None)):
+        raise ValueError('Need to specify only one input between the pandas and xarray datasets')
+
+    elif ((df is not None) & (xr_df is None)):
+        print('Using provided pandas dataframe for querying FAO HWSD')
+        elev_df = df.reset_index()[['lat','lon','time']]
+    else:
+        ds = xr_df.copy()
+        print('Using provided xarray dataframe for querying FAO HWSD')
+        elev_df = ds[['lat','lon']].to_dataframe().reset_index()
+        
+    if invert ==True:
+        elev_df.rename(columns={'lat':'lon','lon':'lat'},inplace=True)
+
+    M, x_corner, y_corner, cellsize = make_sparse(os.path.join(path, "GloElev_5min.asc"))
+
+
+    def lonlat2xy(lon, lat, x_corner, y_corner, cellsize):
+        return abs(int(round((lat + y_corner)/cellsize))), int(round((lon - x_corner)/cellsize))
+
+    def xy2lonlat(x, y, x_corner, y_corner, cellsize):
+        return (x_corner + y*cellsize), (abs(y_corner) - x*cellsize)
+
+    xy_list = [lonlat2xy(row['lon'], row['lat'], x_corner, y_corner, cellsize) for _, row in tqdm(elev_df.iterrows(), total=len(elev_df))]
+
+    elev_df['arc_xy'] = xy_list
+
+
+    def add_value(drought_df, path, name, dtype='int'):
+        M, x_corner, y_corner, cellsize = make_sparse(path, dtype)
+        elev_df[name] = elev_df['arc_xy'].apply(lambda x: M[x])
+        return drought_df
+
+
+    land_covers = [
+        'WAT' ]
+
+    print('Starting adding water covers...')
+
+    for land in land_covers:
+        elev_df = add_value(elev_df, os.path.join(path, '{}_2000.asc'.format(land)), '{}_LAND'.format(land), dtype='float')
+        elev_df[f'{land}_LAND'] = elev_df[f'{land}_LAND']
+
+    if 'time' in elev_df.columns:
+        ds_el = elev_df.set_index(['lon','lat','time']).to_xarray()
+    else:
+        ds_el = elev_df.set_index(['lon','lat']).to_xarray()
+    return subsetting_pipeline(CONFIG_PATH, ds_el, countries=countries).transpose("lat","lon")["WAT_LAND"]
+

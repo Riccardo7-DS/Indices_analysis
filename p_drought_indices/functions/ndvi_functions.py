@@ -23,6 +23,10 @@ def clean_outliers(dataset:Dataset):
     ds = dataset.where((dataset["ndvi"]<=1) & (dataset["ndvi"]>=-1))
     return ds.dropna(dim="lon", how="all")
 
+def clean_water(ds, ds_cl):
+    ds_cl['time'] = ds_cl.indexes['time'].normalize()
+    ds['time'] = ds.indexes['time'].normalize()
+    return ds.where(ds_cl==1)
 
 def compute_ndvi(xr_df):
     return xr_df.assign(ndvi=(xr_df['channel_2'] - xr_df['channel_1']) / (xr_df['channel_2'] + xr_df['channel_1']))
@@ -67,3 +71,61 @@ def process_ndvi(base_dir, file):
         xr_df = xr_df.assign(ndvi=(xr_df['channel_2'] - xr_df['channel_1']) / (xr_df['channel_2'] + xr_df['channel_1']))
         xr_df.to_netcdf(os.path.join(base_dir,'processed', file)) 
         xr_df.close()
+
+def extract_apply_cloudmask(ds, ds_cl, resample=False, include_water =True,downsample=False):
+    
+    def checkVars(ds, var):
+        assert var  in ds.data_vars, f"Variable {var} not in dataset"
+
+    [checkVars(ds, var)  for var in ["channel_1","channel_2","ndvi"]]
+
+    ### normalize time in order for the two datasets to match
+    ds_cl['time'] = ds_cl.indexes['time'].normalize()
+    ds['time'] = ds.indexes['time'].normalize()
+    
+    if resample==True:
+    #### reproject cloud mask to base dataset
+        reproj_cloud = ds_cl['cloud_mask'].rio.reproject_match(ds['ndvi'])
+        ds_cl_rp = reproj_cloud.rename({'y':'lat', 'x':'lon'})
+
+    else:
+        ds_cl_rp = ds_cl
+
+    ### apply time mask where values are equal to 1, hence no clouds over land, 0= no cloud over water
+    if include_water==True:
+        ds_subset = ds.where((ds_cl_rp==1)|(ds_cl_rp==0)) #ds = ds.where(ds.time == ds_cl.time)
+    else:
+        ds_subset = ds.where(ds_cl_rp==1)
+    ### recompute corrected ndvi
+    res_xr = compute_ndvi(ds_subset)
+
+    ### mask all the values equal to 0 (clouds)
+
+    mask_clouds = clean_ndvi(ds)
+    ### recompute corrected ndvi
+    mask_clouds = compute_ndvi(mask_clouds)
+
+    #### downsample to 5 days
+    if downsample==True:
+        "Starting downsampling the Dataset"
+        res_xr_p = downsample(res_xr)
+        #### downsampled df
+        mask_clouds_p = downsample(mask_clouds)
+        return mask_clouds_p, res_xr_p,  mask_clouds, res_xr ### return 1) cleaned dataset with clouds 
+                                                         ### 2) imputation with max over n days
+                                                         ### 3) cloudmask dataset original sample
+                                                         ### 4) cloudmask dataset downsampled
+    else:
+        return mask_clouds, res_xr
+
+
+def apply_whittaker(datarray:DataArray, prediction="P1D", time_dim="time"):
+    from fusets import WhittakerTransformer
+    from fusets._xarray_utils import _extract_dates, _output_dates, _topydate
+    result = WhittakerTransformer().fit_transform(datarray.load(),smoothing_lambda=1,time_dimension=time_dim, prediction_period=prediction)
+    dates = _extract_dates(datarray)
+    expected_dates = _output_dates(prediction,dates[0],dates[-1])
+    datarray['time'] = datarray.indexes['time'].normalize()
+    datarray = datarray.assign_coords(time = datarray.indexes['time'].normalize())
+    result['time'] = [np.datetime64(i) for i in expected_dates]
+    return result

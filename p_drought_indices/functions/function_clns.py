@@ -4,6 +4,7 @@ import geopandas as gpd
 import shapely
 import xarray as xr
 import glob
+import numpy as np
 
 def load_config(CONFIG_PATH):
     with open(CONFIG_PATH) as file:

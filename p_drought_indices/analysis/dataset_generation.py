@@ -27,7 +27,7 @@ def prep_dataset(ds, transpose=False):
         if transpose==True:
             ds = ds.transpose('time', 'lon', 'lat')
         ds.rio.write_crs("epsg:4326", inplace=True)
-        ds.rio.set_spatial_dims(x_dim='lat', y_dim='lon', inplace=True)
+        ds.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
         return ds
 
 def swap_change_attrs(xr_df):

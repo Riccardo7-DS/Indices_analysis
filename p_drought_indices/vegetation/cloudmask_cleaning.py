@@ -16,76 +16,13 @@ import yaml
 import numpy as np
 import re
 import yaml
-from p_drought_indices.functions.function_clns import load_config, cut_file, open_xarray_dataset
-from p_drought_indices.functions.ndvi_functions import clean_outliers, compute_ndvi, clean_ndvi, downsample
+from p_drought_indices.functions.function_clns import prepare, load_config, cut_file, open_xarray_dataset
+from p_drought_indices.functions.ndvi_functions import apply_whittaker, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
 from p_drought_indices.vegetation.NDVI_indices import compute_vci
 from xarray import DataArray
+from p_drought_indices.ancillary_vars.FAO_HWSD import get_water_cover
 from tqdm.auto import tqdm
-
-
-
-def extract_apply_cloudmask(ds, ds_cl, resample=False, include_water =True,downsample=False):
-    
-    def checkVars(ds, var):
-        assert var  in ds.data_vars, f"Variable {var} not in dataset"
-
-    [checkVars(ds, var)  for var in ["channel_1","channel_2","ndvi"]]
-
-    ### normalize time in order for the two datasets to match
-    ds_cl['time'] = ds_cl.indexes['time'].normalize()
-    ds['time'] = ds.indexes['time'].normalize()
-    
-    if resample==True:
-    #### reproject cloud mask to base dataset
-        reproj_cloud = ds_cl['cloud_mask'].rio.reproject_match(ds['ndvi'])
-        ds_cl_rp = reproj_cloud.rename({'y':'lat', 'x':'lon'})
-
-    else:
-        ds_cl_rp = ds_cl
-
-    ### apply time mask where values are equal to 1, hence no clouds over land, 0= no cloud over water
-    if include_water==True:
-        ds_subset = ds.where((ds_cl_rp==1)|(ds_cl_rp==0)) #ds = ds.where(ds.time == ds_cl.time)
-    else:
-        ds_subset = ds.where(ds_cl_rp==1)
-    ### recompute corrected ndvi
-    res_xr = compute_ndvi(ds_subset)
-
-    ### mask all the values equal to 0 (clouds)
-    mask_clouds = clean_ndvi(ds)
-    ### recompute corrected ndvi
-    mask_clouds = compute_ndvi(mask_clouds)
-
-    #### downsample to 5 days
-    if downsample==True:
-        "Starting downsampling the Dataset"
-        res_xr_p = downsample(res_xr)
-        #### downsampled df
-        mask_clouds_p = downsample(mask_clouds)
-        return mask_clouds_p, res_xr_p,  mask_clouds, res_xr ### return 1) cleaned dataset with clouds 
-                                                         ### 2) imputation with max over n days
-                                                         ### 3) cloudmask dataset original sample
-                                                         ### 4) cloudmask dataset downsampled
-    else:
-        return mask_clouds, res_xr
-    
-
-def clean_water(ds, ds_cl):
-    ds_cl['time'] = ds_cl.indexes['time'].normalize()
-    ds['time'] = ds.indexes['time'].normalize()
-    return ds.where(ds_cl=1)
-
-
-def apply_whittaker(datarray:DataArray, prediction="P1D", time_dim="time"):
-    from fusets import WhittakerTransformer
-    from fusets._xarray_utils import _extract_dates, _output_dates, _topydate
-    result = WhittakerTransformer().fit_transform(datarray.load(),smoothing_lambda=1,time_dimension=time_dim, prediction_period=prediction)
-    dates = _extract_dates(datarray)
-    expected_dates = _output_dates(prediction,dates[0],dates[-1])
-    datarray['time'] = datarray.indexes['time'].normalize()
-    datarray = datarray.assign_coords(time = datarray.indexes['time'].normalize())
-    result['time'] = [np.datetime64(i) for i in expected_dates]
-    return result
+import xskillscore as xs
 
 def plot_cloud_correction(mask_clouds_p, res_xr_p, time):
     mask_clouds_p['ndvi'].sel(time=time,  method = 'nearest').plot()
@@ -106,24 +43,12 @@ def compute_difference(mask_clouds, mask_clouds_p, res_xr_p, res_xr, time):
     abs(diff_p).mean('time').plot()
     plt.show()
 
-def subsetting_pipeline(CONFIG_PATH, xr_df, countries = ['Ethiopia','Kenya', 'Somalia']):
-    CONFIG_PATH = r"./config.yaml"
-    config = load_config(CONFIG_PATH)
-    shapefile_path = config['SHAPE']['africa']
-    gdf = gpd.read_file(shapefile_path)
-    subset = gdf[gdf.ADM0_NAME.isin(countries)]
-    return cut_file(xr_df, subset)
-
 def compute_correlation(dataarray1, dataarray2):
     ndvi_= dataarray1.chunk(dict(time=-1))
     mask_= dataarray2.chunk(dict(time=-1))
     xs.pearson_r(ndvi_, mask_, dim='time', skipna=True).plot(cmap='YlGn')
     plt.show()
 
-def prepare(ds):
-        ds.rio.write_crs("epsg:4326", inplace=True)
-        ds.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
-        return ds
 
 def convert_to_raster(list_files:list, target_darray:xr.DataArray):
     for path in tqdm(list_files, desc="Files"):
@@ -137,33 +62,41 @@ def convert_to_raster(list_files:list, target_darray:xr.DataArray):
         name = path.split("/")[-1]
         ds_ndvi.to_netcdf(os.path.join(ndvi_dir, "reprojected", name))
 
-def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']):
+def concat_datasets(list_files_1, list_files_2):
+    ds_1 = open_xarray_dataset(list_files_1)
+    ds_2 = open_xarray_dataset(list_files_2)
+    return xr.concat([ds_2, ds_1], dim="time")
+
+def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia'], concatenate=False, subset=False):
     config = load_config(CONFIG_PATH)
     ndvi_dir = config['NDVI']['ndvi_prep']
-
-    def concat_datasets(list_files_1, list_files_2):
-        ds_1 = open_xarray_dataset(list_files_1)
-        ds_2 = open_xarray_dataset(list_files_2)
-        return xr.concat([ds_2, ds_1], dim="time")
     
     new_dir = os.path.join(ndvi_dir,"new_process")
     list_files_2 = [os.path.join(new_dir, f) for f in os.listdir(new_dir) if f.endswith(".nc")]
     ds_2 = xr.open_dataset(list_files_2[0])
 
-    new_dir = os.path.join(ndvi_dir,"old_process")
-    list_files_1 = [os.path.join(new_dir, f) for f in os.listdir(new_dir) if f.endswith(".nc")]
-    ds_1 = xr.open_dataset(list_files_1[0])
+    if concatenate ==True:
+        new_dir = os.path.join(ndvi_dir,"reprojected")
+        list_files_3 = [os.path.join(new_dir, f) for f in os.listdir(new_dir) if f.endswith(".nc")]
 
-    #convert_to_raster(list_files_1, target_darray=prepare(ds_2)["ndvi"])
-
-    new_dir = os.path.join(ndvi_dir,"reprojected")
-    list_files_3 = [os.path.join(new_dir, f) for f in os.listdir(new_dir) if f.endswith(".nc")]
-    ds = concat_datasets(list_files_3, list_files_2)
+        new_dir = os.path.join(ndvi_dir,"old_process")
+        list_files_1 = [os.path.join(new_dir, f) for f in os.listdir(new_dir) if f.endswith(".nc")]
+        ds_1 = xr.open_dataset(list_files_1[0])
+        print("Starting converting raster to destination dataset")
+        convert_to_raster(list_files_1, target_darray=prepare(ds_2)["ndvi"])
+        ds = concat_datasets(list_files_3, list_files_2)
+    else:
+        ds = xr.open_mfdataset(list_files_2)
 
     ### load and prepare cloudmask
     base_dir = 'nc_files/new/ndvi_mask.nc'
-    cl_df = xr.open_dataset(os.path.join(config['NDVI']['cloud_path'], base_dir), chunks={"time":"250MB"})
+    cl_df = xr.open_dataset(os.path.join(config['NDVI']['cloud_path'], base_dir))
     cl_df = cl_df.sel(time=slice(cl_df['time'].min(), '2020-12-31'))
+
+    if subset==True:
+        days = 365
+        ds = ds.isel(time=slice(0,days))
+        cl_df = cl_df.isel(time=slice(0,days))
 
     ds_cl = prepare(cl_df)
     ds_cl = ds_cl["cloud_mask"].rio.reproject_match(prepare(ds_2)["ndvi"]).rename({'y':'lat', 'x':'lon'})
@@ -184,24 +117,23 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
     mask_clouds, res_xr = extract_apply_cloudmask(ds_n, ds_cl, include_water=False)
     mask_clouds.to_netcdf(os.path.join(ndvi_dir, "final_ndvi.nc"))
 
-    ### apply whittaker filter
-    from p_drought_indices.vegetation.cloudmask_cleaning import apply_whittaker
-
     print("Applying Whittaker filter...")
     result = apply_whittaker(mask_clouds['ndvi'])
-    result = clean_outliers(result)
-    result = clean_water(ds, ds_cl)
-    result.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi.nc'))
+
+    ### Cleaning water bodies
+    ds_cover = get_water_cover(CONFIG_PATH, xr_df =result.to_dataset(), countries=countries, invert=False)
+    res_ds = result.where(ds_cover==0)
+    res_ds = clean_outliers(res_ds.to_dataset())
+    res_ds.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))
 
     print("Computing VCI index...")
-    vci = compute_vci(result)
+    vci = compute_vci(res_ds["ndvi"])
     vci.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'vci_1D.nc'))
     print("Success") 
 
 if __name__=="__main__":
     CONFIG_PATH = "config.yaml"
-    computation_pipeline(CONFIG_PATH)
-    
+    computation_pipeline(CONFIG_PATH, subset=False)
 
 
 
