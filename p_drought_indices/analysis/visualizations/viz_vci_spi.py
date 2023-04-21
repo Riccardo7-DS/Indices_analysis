@@ -17,17 +17,16 @@ import numpy as np
 import re
 from p_drought_indices.vegetation.NDVI_indices import compute_svi, compute_vci
 from p_drought_indices.analysis.metrics_table import MetricTable
-from p_drought_indices.functions.function_clns import open_xarray_dataset, crop_get_spi, crop_get_thresh
-
-CONFIG_PATH = r"../../../config.yaml"
-
-
+from p_drought_indices.functions.function_clns import open_xarray_dataset, crop_get_spi,load_config
 import xarray as xr
 import os
-
-from p_drought_indices.functions.function_clns import load_config
 import pandas as pd
+import calendar
+import matplotlib.pyplot as plt
+import numpy as np
+from typing import Union
 
+CONFIG_PATH = r"../../../config.yaml"
 
 
 def get_dates(gap_year=False):
@@ -35,12 +34,7 @@ def get_dates(gap_year=False):
         return pd.date_range("01-Jan-2021", "31-Dec-2021", freq="D").to_series().dt.strftime('%d-%b').values
     else:
         return pd.date_range("01-Jan-2020", "31-Dec-2020", freq="D").to_series().dt.strftime('%d-%b').values
-    
 
-import calendar
-import matplotlib.pyplot as plt
-import numpy as np
-from typing import Union
 
 def box_plot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, title:str=None, figsize =(15, 7), show_means:bool=False):
     if year==None:
@@ -112,7 +106,31 @@ class dfDay:
             df = df.drop(columns={"spatial_ref"})
         return df.reset_index(drop=True)
     
-def get_subplot_year(ds, var:str="ndvi", year:Union[None, int,list]=None):
+def str_month(month):
+    if month>9:
+        return str(month)
+    else:
+        return "0" + str(month)
+    
+def subsetting_whole(df_list_all, months, year=2020):
+    last_day = calendar.monthrange(year, months[-1])[1]
+    date_start = f"01-{str_month(months[0])}-{year}"
+    date_end = f"{last_day}-{str_month(months[-1])}-{year}"
+    int_st = time.strptime(date_start, "%d-%m-%Y").tm_yday
+    int_end = time.strptime(date_end, "%d-%m-%Y").tm_yday
+    return  df_list_all[int_st-1:int_end]
+
+def get_xarray_time_subset(ds:xr.DataArray,  year:Union[list, int],month:Union[None, list, int]=None,variable:str="ndvi"):
+    if month ==None:
+        ds_subset = ds.sel(time=ds.time.dt.year.isin([year]))
+        df_list, list_dates= get_subplot_year(ds_subset, year =year, var=variable)
+    else:
+        ds_subset = ds.where(((ds['time.year'].isin([year])) & (ds['time.month'].isin([month]))), drop=True)
+        df_list, list_dates= get_subplot_year(ds_subset, year =year, var=variable, months=month)
+    return df_list, list_dates
+    
+def get_subplot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, months:Union[None, list,int]=None):
+
     if year==None:
         days = 366
     elif type(year)==list:
@@ -122,17 +140,73 @@ def get_subplot_year(ds, var:str="ndvi", year:Union[None, int,list]=None):
     else:
         days=366 if calendar.isleap(year) else 365
 
-    day_obj = dfDay(ds = ds, var=var)
-    df_list = []
-    for day in range(1,days+1):
-        day_obj.get_day(day)
-        locals()[day_obj.df_name] = day_obj.df
-        df_list.append(locals()[day_obj.df_name][var])
-    
+
     bool_days = False if days==365 else True
     list_dates = get_dates(gap_year=bool_days)
+    print(f"days are {days}")
 
-    return df_list, list_dates
+    if (months!=None) & (type(year)==int):
+        print(f"For year {year} obtaining only months {months[0]} to {months[-1]} for boxplot")
+        last_day = calendar.monthrange(year, months[-1])[1]
+        date_start = f"01-{str_month(months[0])}-{year}"
+        date_end = f"{last_day}-{str_month(months[-1])}-{year}"
+        int_st = time.strptime(date_start, "%d-%m-%Y").tm_yday
+        int_end = time.strptime(date_end, "%d-%m-%Y").tm_yday 
+        
+        day_obj = dfDay(ds = ds, var=var)
+        list_new = pd.date_range(datetime.strptime(date_start,"%d-%m-%Y"), datetime.strptime(date_end,"%d-%m-%Y"), freq="D").to_series().dt.strftime('%d-%b').values
+        df_list = []
+        for day in range(int_st,int_end+1):
+            day_obj.get_day(day)
+            locals()[day_obj.df_name] = day_obj.df
+            df_list.append(locals()[day_obj.df_name][var])
+            
+        return df_list, list_new
+
+    else:
+        print("Calculating the full year for boxplot")
+        day_obj = dfDay(ds = ds, var=var)
+        df_list = []
+        for day in range(1,days+1):
+            day_obj.get_day(day)
+            locals()[day_obj.df_name] = day_obj.df
+            df_list.append(locals()[day_obj.df_name][var])
+
+        print(f"The days are {len(df_list)}")
+    
+        return df_list, list_dates
+
+def adjust_full_list(year, df_list_all, months=None):
+    def str_month(month):
+        if month>9:
+            return str(month)
+        else:
+            return "0" + str(month)
+    
+    df_list_new = df_list_all.copy()
+
+    days=366 if calendar.isleap(year) else 365
+
+    if months!=None:
+        last_day = calendar.monthrange(year, months[-1])[1]
+        date_start = f"01-{str_month(months[0])}-{year}"
+        date_end = f"{last_day}-{str_month(months[-1])}-{year}"
+        int_st = time.strptime(date_start, "%d-%m-%Y").tm_yday
+        int_end = time.strptime(date_end, "%d-%m-%Y").tm_yday
+
+        if (2 in months) & (1 not in months) & (days ==365) :
+            raise NotImplementedError("Subsetting without January in not leap year not implemented") 
+        elif (days==365) & (2 in months):
+            del df_list_new[59]
+            return df_list_new
+        else:
+            return df_list_new
+    else:
+        if (days==365):
+            del df_list_new[59]
+            return df_list_new
+        else:
+            return df_list_new
 
 def get_year_compare(ds:xr.DataArray, var:str, year:list):
 

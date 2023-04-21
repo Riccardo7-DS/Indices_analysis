@@ -16,7 +16,7 @@ import yaml
 import numpy as np
 import re
 import yaml
-from p_drought_indices.functions.function_clns import prepare, load_config, cut_file, open_xarray_dataset
+from p_drought_indices.functions.function_clns import prepare, load_config, cut_file, open_xarray_dataset, crop_get_thresh
 from p_drought_indices.functions.ndvi_functions import apply_whittaker, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
 from p_drought_indices.vegetation.NDVI_indices import compute_vci
 from xarray import DataArray
@@ -129,6 +129,10 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
     print("Computing VCI index...")
     vci = compute_vci(res_ds["ndvi"])
     vci.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'vci_1D.nc'))
+
+    import numpy as np
+    res_ds = crop_get_thresh(vci["ndvi"]).to_dataset()
+    res_ds.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'percentage_ndvi.nc'))
     print("Success") 
 
 if __name__=="__main__":
