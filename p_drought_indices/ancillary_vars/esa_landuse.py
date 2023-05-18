@@ -1,10 +1,12 @@
-from p_drought_indices.functions.function_clns import load_config
+from p_drought_indices.functions.function_clns import load_config, prepare, subsetting_pipeline
 import geopandas as gpd
 import os
 import xarray as xr
 from osgeo import gdal
 import matplotlib.pyplot as plt
 import pandas as pd
+from rasterio.enums import Resampling
+
 
 def get_description(df:pd.DataFrame(), column:str):
     values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
@@ -50,6 +52,7 @@ def export_land_cover(CONFIG_PATH, target_resolution:str, export_path =r'../data
     import ee 
     import geemap
     assert target_resolution in ['IMERG','CHIRPS']
+    ee.Authenticate()
     ee.Initialize()
     landcover = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019").select('discrete_classification')
     
@@ -107,3 +110,22 @@ def export_land_cover(CONFIG_PATH, target_resolution:str, export_path =r'../data
     plt.show()
 
     return land_proj, cover_ds
+
+def get_cover_dataset(CONFIG_PATH:str, datarray:xr.DataArray, img_path:str, img_name:str="esa_cover.nc", resample=True)->xr.Dataset:
+    ds_cover = prepare(xr.open_dataset(os.path.join(img_path, img_name)))
+    ds_cover = subsetting_pipeline(CONFIG_PATH, ds_cover)
+    if resample ==True:
+        ds = datarray.rio.reproject_match(ds_cover["Band1"],resampling = Resampling.mode).rename({"x":"lon","y":"lat"})
+        ds = ds.to_dataset().assign(Band1=ds_cover["Band1"])
+    
+    else:
+        ds = datarray.to_dataset().assign(Band1=ds_cover["Band1"])
+    ds["Band1"] = ds["Band1"].expand_dims({"time":len(ds["time"])})
+    return ds
+
+if __name__ == "__main__":
+    from p_drought_indices.ancillary_vars.esa_landuse import export_land_cover
+    CONFIG_PATH = "../config.yaml"
+    export_land_cover(CONFIG_PATH, target_resolution="CHIRPS", export_path =r'../data/images/chirps_esa')
+
+   
