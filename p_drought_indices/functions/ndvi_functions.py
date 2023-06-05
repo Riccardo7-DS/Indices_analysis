@@ -10,6 +10,28 @@ from datetime import datetime
 import xarray as xr
 import numpy as np
 from xarray import DataArray, Dataset
+from p_drought_indices.ancillary_vars.esa_landuse import get_level_colors, get_cover_dataset
+from  matplotlib.colors import LinearSegmentedColormap
+import matplotlib.pyplot as plt
+from  matplotlib.cm import ScalarMappable
+from  matplotlib.colors import ListedColormap, BoundaryNorm
+import numpy as np
+
+
+def ndvi_colormap():
+    vals = [-0.7, -0.6,-0.5,-0.4,-0.3,-0.2,-0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+
+    cols= ["#000000","#7c4700","#000080" , "#00008B", "#0000FF","#0096FF", "#00FFFF","#ADD8e6", "#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf", "#d9ef8b", 
+           "#a6d96a","#66bd63", "#1a9850", "#006837"] 
+    bounds = np.append(vals, vals[-1] + 1)
+    cmap_custom = ListedColormap(cols)
+    norm = BoundaryNorm(bounds, ncolors=len(cols))
+    #fig, ax = plt.subplots(figsize=(12, 1))
+    #fig.subplots_adjust(bottom=0.5)
+    #fig.colorbar(ScalarMappable(norm=norm, cmap=cmap_custom),
+    #             cax=ax, orientation='horizontal', label='Colorbar')
+    #plt.show()
+    return cmap_custom
 
 def downsample(ds):
     monthly = ds.resample(time='5D', skipna=True).mean() #### Change here to change the timeframe over which to make the data imputation
@@ -72,6 +94,15 @@ def process_ndvi(base_dir, file):
         xr_df.to_netcdf(os.path.join(base_dir,'processed', file)) 
         xr_df.close()
 
+
+def drop_water_bodies_esa(CONFIG_PATH:str, config:dict, dataset:xr.Dataset, var:str="ndvi") ->xr.Dataset:
+    img_path = os.path.join(config["DEFAULT"]["images"], "chirps_esa")
+    ds_cover = get_cover_dataset(CONFIG_PATH, dataset[var], img_path)
+    water_mask = xr.where((ds_cover["Band1"]==80) | (ds_cover["Band1"]==200), 1,0)
+    ds_process = ds_cover.where(water_mask==0).drop_vars("Band1")
+    dataset = dataset.assign(ndvi=ds_process[var])
+    return dataset
+
 def extract_apply_cloudmask(ds, ds_cl, resample=False, include_water =True,downsample=False):
     
     def checkVars(ds, var):
@@ -116,7 +147,7 @@ def extract_apply_cloudmask(ds, ds_cl, resample=False, include_water =True,downs
                                                          ### 3) cloudmask dataset original sample
                                                          ### 4) cloudmask dataset downsampled
     else:
-        return mask_clouds, res_xr
+        return mask_clouds, res_xr  ###1) dataset without zeros (clouds) 2) dataset with cloud mask applied
 
 
 def apply_whittaker(datarray:DataArray, prediction="P1D", time_dim="time"):

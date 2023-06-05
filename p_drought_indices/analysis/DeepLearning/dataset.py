@@ -146,3 +146,16 @@ def load_nc_dir_after_save(dir_):
     generator_tfds = load_nc_dir_with_generator(dir_)
     tf.data.experimental.save(generator_tfds, "local_ds")
     return tf.data.experimental.load("local_ds")
+
+class CustomDataset(Dataset):
+    def __init__(self, data, targets):
+        self.data = data
+        self.targets = targets
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, index):
+        x = self.data[index]
+        y = self.targets[index]
+        return x, y

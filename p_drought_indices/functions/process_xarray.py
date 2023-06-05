@@ -13,12 +13,19 @@ def subsetting(ds, CONFIG_PATH, countries: list = ['Ethiopia','Kenya','Somalia']
     xr_df =  cut_file(ds, subset)
     return xr_df
 
-def subsetting_loop(CONFIG_PATH, path, save=True, plot=False, dest_folder="processed"):
+from p_drought_indices.functions.ndvi_functions import add_time
+
+
+def subsetting_loop(CONFIG_PATH, path, save=True, plot=False,delete_grid_mapping=False, dest_folder="processed"):
     config = load_config(CONFIG_PATH)
     list = [f for f  in os.listdir(path) if f.endswith('.nc')]
     for file in list:
         ds = xr.open_dataset(os.path.join(path, file))
-        ds = ds.rename({"latitude":"lat","longitude":"lon"})
+        ds = add_time(ds)
+        if delete_grid_mapping ==True:
+            del ds["cloud_mask"].attrs['grid_mapping']
+        if "longitude" in ds.dims:
+            ds = ds.rename({"latitude":"lat","longitude":"lon"})
         ds_sub = subsetting(CONFIG_PATH=CONFIG_PATH, ds= ds)
         if plot==True:
             

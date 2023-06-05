@@ -5,6 +5,7 @@ import shapely
 import xarray as xr
 import glob
 import numpy as np
+from typing import Union, Literal
 
 def load_config(CONFIG_PATH):
     with open(CONFIG_PATH) as file:
@@ -177,3 +178,100 @@ def crop_get_thresh(ds:xr.DataArray, thresh:int=10):
     null_var = xr.where(ds.notnull(), 1,np.NaN)
     condition_var = xr.where(ds<thresh,1,0)
     return condition_var.where(null_var==1)
+
+
+"""
+Functions for the Deep Learning models
+"""
+
+def add_channel(data, n_samples):
+
+    # define the desired size of the time steps and number of channels 
+    # ##output: (num_samples, num_frames, num_channels, height, width)
+    n_timesteps = n_samples
+    n_channels = 1
+
+    # determine the number of samples based on the desired number of time steps
+    n_samples = data.shape[-1] // n_timesteps
+
+    # reshape the input data into a 4D tensor
+    input_data = np.reshape(data, (data.shape[0], data.shape[1], n_timesteps, n_samples))
+
+    # add an extra dimension for the channels
+    input_data = np.reshape(input_data, (n_samples, n_timesteps,n_channels, input_data.shape[0], input_data.shape[1]))
+
+    # check the shape of the input data
+    print("The input data has shape:", input_data.shape) # should print (n_samples, n_timesteps, lat, lon, n_channels)
+    return input_data
+
+
+def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str, preprocess_type:Literal["constant", "nearest","median"]="constant", impute_value:Union[None, float, int]=None):
+    """
+    Function to preprocess data for Convolutional Neural Networks, can be processed with either a constant, using the rioxarray function "interpolate_na()", nearest neighbors or with the median
+    """
+    if preprocess_type not in ["constant","nearest", "median"]:
+        raise ValueError("Preprocessing type must be either \"constant\", \"nearest\", \"median\"")
+    
+    if ((preprocess_type == "constant") and (isinstance(impute_value, (int, float)))==False):
+        raise ValueError("A value muste be specified for impute_value in order to impute data with a constant")
+    
+    ### preprocess data
+    ds = prepare(ds)
+    sub_precp = prepare(ds_target)
+
+    veg_repr = ds[var_origin].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
+    
+    if preprocess_type == "nearest":
+        print("Preprocessing data with nearest neighbor from scipy.interpolate.griddata")
+        ds = ds.transpose("time","lat","lon")
+        sub_precp = sub_precp.transpose("time","lat","lon")
+        sub_precp[var_target] = sub_precp[var_target].rio.interpolate_na()
+        sub_veg = veg_repr.rio.interpolate_na()
+        sub_precp = sub_precp.assign(null_precp =  sub_precp[var_target])  
+
+    elif preprocess_type == "constant":
+        print(f"Preprocessing data with constant {impute_value}")
+        sub_veg = veg_repr.where(veg_repr.notnull(), impute_value)
+        sub_precp = sub_precp.assign(null_precp = sub_precp[var_target].where(sub_precp[var_target].notnull(), impute_value))
+    
+    elif preprocess_type == "median":
+        raise NotImplementedError
+
+    # Read the data as a numpy array
+    target = sub_veg.transpose("lat","lon","time").values #
+    data = sub_precp["null_precp"].transpose("lat","lon","time").values #.rio.interpolate_na()
+
+    target = np.array(target)
+    data = np.array(data)
+
+    return target, data
+
+
+def CNN_split(data:np.array, target:np.array, split_percentage:float=0.8):
+
+    ###splitting test and train
+    n_samples = data.shape[-1]
+    train_samples = int(round(split_percentage*n_samples, 0))
+
+    input_data = add_channel(data, n_samples)
+    target_data = add_channel(target, n_samples)
+    train_data = input_data[:,:train_samples,:,:]
+    test_data =  input_data[:,train_samples:,:,:]
+    train_label = target_data[:,:train_samples,:,:]
+    test_label =  target_data[:,train_samples:,:,:]
+
+    return train_data, test_data, train_label, test_label
+
+
+def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str,  preprocess_type:Literal["constant", "nearest","median"]="constant", impute_value:Union[None, float, int]=None, split:float=0.8):
+
+    if (ds.isnull().any()==True) or (ds_target.isnull().any()==True):
+        target, data = CNN_imputation(ds, ds_target, var_origin, var_target, preprocess_type=preprocess_type, impute_value=impute_value)
+
+    else:
+        target = np.array(ds[var_origin])
+        data = np.array(ds_target[var_target])
+
+    train_data, test_data, train_label, test_label = CNN_split(data, target, split_percentage=split)
+
+    return train_data, test_data, train_label, test_label

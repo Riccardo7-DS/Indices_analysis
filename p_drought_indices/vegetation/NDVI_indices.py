@@ -52,7 +52,7 @@ def compute_svi(darray):
     return res
 
 ### Calculation of VCI (vegetation condition index)
-def compute_vci(darray):
+def compute_vci(darray:xr.DataArray)->xr.DataArray: 
     grouped= darray.groupby('time.dayofyear')
     min_ndvi = grouped.min('time')
     max_ndvi = grouped.max('time')

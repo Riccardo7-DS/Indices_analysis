@@ -17,12 +17,45 @@ import numpy as np
 import re
 import yaml
 from p_drought_indices.functions.function_clns import prepare, load_config, cut_file, open_xarray_dataset, crop_get_thresh
-from p_drought_indices.functions.ndvi_functions import apply_whittaker, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
+from p_drought_indices.functions.ndvi_functions import apply_whittaker, drop_water_bodies_esa, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
 from p_drought_indices.vegetation.NDVI_indices import compute_vci
 from xarray import DataArray
 from p_drought_indices.ancillary_vars.FAO_HWSD import get_water_cover
 from tqdm.auto import tqdm
 import xskillscore as xs
+from typing import Literal, Union
+import logging
+
+
+def extract_clean_cloudmask_dataset(config_file, path, other_path):
+    from p_drought_indices.functions.process_xarray import subsetting_loop
+    new_path = config_file["NDVI"]["cloud_path"]
+    dest_path = os.path.join(new_path, "processed")
+    subsetting_loop(CONFIG_PATH, new_path, delete_grid_mapping=True)
+
+    from p_drought_indices.functions.ndvi_functions import add_time
+
+    list_files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith(".nc")]
+    new_path = os.path.join(path, "time")
+
+    for file in list_files:
+        name = str(file).split("/")[-1]
+        ds = xr.open_dataset(file)
+        ds_new = add_time(ds)
+        ds_new.to_netcdf(os.path.join(new_path, name))
+
+    list_files_1 = [os.path.join(other_path, f) for f in os.listdir(other_path) if f.endswith(".nc")]
+    ds = prepare(xr.open_mfdataset(list_files_1))
+    ds_2 = prepare(xr.open_dataset(list_files[0]))
+    new_raster = ds["cloud_mask"].rio.reproject_match(ds_2["cloud_mask"]).rename({"x":"lon","y":"lat"})
+
+    list_2 = [os.path.join(new_path, f) for f in os.listdir(new_path) if f.endswith(".nc")]
+    ds_3 = prepare(xr.open_mfdataset(list_2))
+    ds_3 = ds_3.drop("crs")
+    new_raster = new_raster.drop("crs")
+    ds_cl = xr.combine_by_coords([ds_3, new_raster.to_dataset()], combine_attrs="drop_conflicts")
+    base_dir = 'nc_files/new/ndvi_mask.nc'
+    ds_cl.to_netcdf(os.path.join(config_file['NDVI']['cloud_path'], base_dir))
 
 def plot_cloud_correction(mask_clouds_p, res_xr_p, time):
     mask_clouds_p['ndvi'].sel(time=time,  method = 'nearest').plot()
@@ -67,8 +100,10 @@ def concat_datasets(list_files_1, list_files_2):
     ds_2 = open_xarray_dataset(list_files_2)
     return xr.concat([ds_2, ds_1], dim="time")
 
-def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia'], concatenate=False, subset=False):
+def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia'],drop_water: Union[Literal["FAO"],Literal["ESA"],None]=None, concatenate=False, subset=False):
     config = load_config(CONFIG_PATH)
+    logging.basicConfig(filename="./log.txt", level=logging.DEBUG)
+    logging.info(f"Starting computing SEVIRI NDVI...")
     ndvi_dir = config['NDVI']['ndvi_prep']
     
     new_dir = os.path.join(ndvi_dir,"new_process")
@@ -88,23 +123,30 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
     else:
         ds = xr.open_mfdataset(list_files_2)
 
+
+    print(f"1) Dataset has dimensions {ds.sizes}")
+    logging.info(f"1) Dataset has dimensions {ds.sizes}")
+
     ### load and prepare cloudmask
     base_dir = 'nc_files/new/ndvi_mask.nc'
-    cl_df = xr.open_dataset(os.path.join(config['NDVI']['cloud_path'], base_dir))
+    cl_df = xr.open_dataarray(os.path.join(config['NDVI']['cloud_path'], base_dir))
     cl_df = cl_df.sel(time=slice(cl_df['time'].min(), '2020-12-31'))
 
     if subset==True:
-        days = 365
+        days = 365*2
         ds = ds.isel(time=slice(0,days))
         cl_df = cl_df.isel(time=slice(0,days))
 
-    ds_cl = prepare(cl_df)
-    ds_cl = ds_cl["cloud_mask"].rio.reproject_match(prepare(ds_2)["ndvi"]).rename({'y':'lat', 'x':'lon'})
-    print("Succesfully loaded cloud mask")
+    #ds_cl = prepare(cl_df)
+    #ds_cl = ds_cl["cloud_mask"].rio.reproject_match(prepare(ds_2)["ndvi"]).rename({'y':'lat', 'x':'lon'})
+    print(f"Succesfully loaded cloud mask with dimensions {cl_df.sizes}")
+    logging.info(f"Succesfully loaded cloud mask with dimensions {cl_df.sizes}")
 
     ### clean ndvi and apply cloudmask
     xr_df = clean_outliers(ds)
     xr_df = xr_df.sortby("time")
+    print(f"2) Dataset has dimensions {xr_df.sizes}")
+    logging.info(f"2) Dataset has dimensions {xr_df.sizes}")
     xr_df.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'ndvi_no_out.nc'))
 
     shapefile_path = config['SHAPE']['africa']
@@ -112,22 +154,35 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
     subset = gdf[gdf.ADM0_NAME.isin(countries)]
 
     ds_n = cut_file(xr_df, subset)
-    ds_cl = cut_file(ds_cl, subset)
-    print("Starting applying cloudmask on dataset...")
-    mask_clouds, res_xr = extract_apply_cloudmask(ds_n, ds_cl, include_water=False)
-    mask_clouds.to_netcdf(os.path.join(ndvi_dir, "final_ndvi.nc"))
-
-    print("Applying Whittaker filter...")
-    result = apply_whittaker(mask_clouds['ndvi'])
+    ds_cl = cut_file(cl_df, subset)
+    print(f"3) Dataset has dimensions {ds_n.sizes}")
+    logging.info(f"3) Dataset has dimensions {ds_n.sizes}")
 
     ### Cleaning water bodies
-    ds_cover = get_water_cover(CONFIG_PATH, xr_df =result.to_dataset(), countries=countries, invert=False)
-    res_ds = result.where(ds_cover==0)
-    res_ds = clean_outliers(res_ds.to_dataset())
-    res_ds.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))
+    if drop_water== "ESA":
+        print(f"Dropping water bodies with {drop_water} Land map")
+        res_ds = drop_water_bodies_esa(CONFIG_PATH, config, ds_n)
+
+    elif drop_water == "FAO":
+        print(f"Dropping water bodies with {drop_water} Land map")
+        ds_cover = get_water_cover(CONFIG_PATH, xr_df =ds_n, countries=countries, invert=False)
+        res_ds = ds_n["ndvi"].where(ds_cover==0)
+        res_ds = clean_outliers(res_ds.to_dataset())
+
+    print(f"4) Dataset has dimensions {res_ds.sizes}")
+    logging.info(f"4) Dataset has dimensions {res_ds.sizes}")
+
+    print("Starting applying cloudmask on dataset...")
+    mask_clouds, res_xr = extract_apply_cloudmask(res_ds, ds_cl, include_water=False)
+    res_xr.to_netcdf(os.path.join(ndvi_dir, "final_ndvi.nc"))
+
+    print("Applying Whittaker filter...")
+    result = apply_whittaker(res_xr['ndvi']).to_dataset()
+    res = clean_outliers(result)
+    res.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))
 
     print("Computing VCI index...")
-    vci = compute_vci(res_ds["ndvi"])
+    vci = compute_vci(res["ndvi"]).to_dataset()
     vci.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'vci_1D.nc'))
 
     import numpy as np
@@ -137,7 +192,7 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
 
 if __name__=="__main__":
     CONFIG_PATH = "config.yaml"
-    computation_pipeline(CONFIG_PATH, subset=False)
+    computation_pipeline(CONFIG_PATH, subset=False, drop_water="ESA")
 
 
 

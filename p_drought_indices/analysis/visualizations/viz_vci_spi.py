@@ -458,22 +458,22 @@ def plot_veg_2009_event(ds, path=None):
         plt.savefig(path)
     plt.show()
 
-def plot_veg_3_years(ds, path=None):
+def plot_veg_3_years(ds, years:list, path=None):
     df_list_all, list_dates_all = get_subplot_year(ds)
 
     months = [i for i in np.arange(9,13)]
-    year = 2009
-    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year, variable="ndvi")
-    df_list_all_1 = adjust_full_list(df_list_all =df_list_all, year = year)
+    year_1 = years[0]
+    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year_1, variable="ndvi")
+    df_list_all_1 = adjust_full_list(df_list_all =df_list_all, year = year_1)
 
     months = [i for i in np.arange(1,6)]
-    year=2010
-    df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year, variable="ndvi")
-    df_list_all_2 = adjust_full_list(df_list_all =df_list_all, year = year)
+    year_2= years[1]
+    df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year_2, variable="ndvi")
+    df_list_all_2 = adjust_full_list(df_list_all =df_list_all, year = year_2)
 
-    year = 2011
-    df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year, variable="ndvi")
-    df_list_all_3 = adjust_full_list(df_list_all=df_list_all, year = year)
+    year_3 = years[2]
+    df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year_3, variable="ndvi")
+    df_list_all_3 = adjust_full_list(df_list_all=df_list_all, year = year_3)
 
 
     fig = plt.figure(figsize=(22,6))
@@ -482,14 +482,14 @@ def plot_veg_3_years(ds, path=None):
 
     ##Legend
 
-    pop_a = mpatches.Patch(color='red', label='Median 2009')
+    pop_a = mpatches.Patch(color='red', label=f'Median {year_1}')
     pop_b = mpatches.Patch(color='darkgreen', label='Median climatology 2005-2020')
     pop_c = mpatches.Patch(color='lightblue', label='IQR climatology 2005-2020')
-    pop_d = mpatches.Patch(color='lightgrey', label='IQR 2009')
-    pop_e = mpatches.Patch(color='red', label='Median 2010')
-    pop_f = mpatches.Patch(color='lightgrey', label='IQR 2010')
-    pop_g = mpatches.Patch(color='red', label='Median 2011')
-    pop_h = mpatches.Patch(color='lightgrey', label='IQR 2011')
+    pop_d = mpatches.Patch(color='lightgrey', label=f'IQR {year_1}')
+    pop_e = mpatches.Patch(color='red', label=f'Median {year_2}')
+    pop_f = mpatches.Patch(color='lightgrey', label=f'IQR {year_2}')
+    pop_g = mpatches.Patch(color='red', label=f'Median {year_3}')
+    pop_h = mpatches.Patch(color='lightgrey', label=f'IQR {year_3}')
 
 
     # the first subplot
@@ -497,7 +497,7 @@ def plot_veg_3_years(ds, path=None):
     #ax0.set_title("NDVI for 2009")
     ax0.legend(handles=[pop_a, pop_b, pop_d, pop_c], fontsize=16, loc="upper left")
     ax0.set_ylabel("NDVI value", fontsize=14)
-    ax0.set_xlabel("2009", fontsize=16)
+    ax0.set_xlabel(f"{year_1}", fontsize=16)
 
     # log scale for axis Y of the first subplot
     line0 = ax0.boxplot(df_list_1, showfliers=False, labels=list_dates_1, patch_artist=True,showcaps=False)
@@ -507,7 +507,7 @@ def plot_veg_3_years(ds, path=None):
     # shared axis X
     ax1 = fig.add_subplot(gs[1], sharey=ax0)
     #ax1.set_title("NDVI for 2010")
-    ax1.set_xlabel("2010", fontsize=16)
+    ax1.set_xlabel(f"{year_2}", fontsize=16)
     ax1.legend(handles=[pop_e, pop_b, pop_f, pop_c], fontsize=16, loc="upper left")
 
     line3 = ax1.boxplot(df_list_2, showfliers=+False, labels=list_dates_2, patch_artist=True,showcaps=False)
@@ -517,7 +517,7 @@ def plot_veg_3_years(ds, path=None):
     # shared axis X
     ax2 = fig.add_subplot(gs[2], sharey=ax0)
     #ax1.set_title("NDVI for 2010")
-    ax2.set_xlabel("2011", fontsize=16)
+    ax2.set_xlabel(f"{year_3}", fontsize=16)
     ax2.legend(handles=[pop_g, pop_b, pop_h, pop_c], fontsize=16, loc="upper left")
 
     line5 = ax2.boxplot(df_list_3, showfliers=False, labels=list_dates_3, patch_artist=True,showcaps=False)
@@ -562,22 +562,22 @@ def plot_veg_3_years(ds, path=None):
         plt.savefig(path)
     plt.show()
 
-def plot_vci_3_years(ds, path=None):
+def plot_vci_3_years(ds:xr.Dataset, years:list, path=None):
     df_list_all, list_dates_all = get_subplot_year(ds)
 
     months = [i for i in np.arange(9,13)]
-    year = 2009
-    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year)
-    df_list_all_1 = adjust_full_list(df_list_all = df_list_all, year = year)
+    year_1 = years[0]
+    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year_1)
+    df_list_all_1 = adjust_full_list(df_list_all = df_list_all, year = year_1)
 
     months = [i for i in np.arange(1,6)]
-    year=2010
-    df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year)
-    df_list_all_2 = adjust_full_list(df_list_all =df_list_all, year = year)
+    year_2=years[1]
+    df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year_2)
+    df_list_all_2 = adjust_full_list(df_list_all =df_list_all, year = year_2)
 
-    year=2011
-    df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year)
-    df_list_all_3 = adjust_full_list(df_list_all =df_list_all, year = year)
+    year_3=years[2]
+    df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year_3)
+    df_list_all_3 = adjust_full_list(df_list_all =df_list_all, year = year_3)
 
     list_med = pd.Series([p.mean() for p in df_list_1])
     list_med_2 = pd.Series([p.mean() for p in df_list_2])
@@ -599,16 +599,16 @@ def plot_vci_3_years(ds, path=None):
 
     ##Legend
 
-    pop_a = mpatches.Patch(color='red', label='Mean 2009')
+    pop_a = mpatches.Patch(color='red', label=f'Mean {year_1}')
     pop_b = mpatches.Patch(color='darkgreen', label='Mean climatology 2005-2020')
-    pop_d = mpatches.Patch(color='red', label='Mean 2010')
-    pop_e = mpatches.Patch(color='red', label='Mean 2011')
+    pop_d = mpatches.Patch(color='red', label=f'Mean {year_2}')
+    pop_e = mpatches.Patch(color='red', label=f'Mean {year_3}')
 
 
     ax0.legend(handles=[pop_a, pop_b],loc="upper right", fontsize=16)
     ax0.set_xticklabels(list_dates_1)
     ax0.set_ylabel("VCI value", fontsize=14)
-    ax0.set_xlabel("2009", fontsize=16)
+    ax0.set_xlabel(f"{year_1}", fontsize=16)
 
 
     # log scale for axis Y of the first subplot
@@ -620,7 +620,7 @@ def plot_vci_3_years(ds, path=None):
     ax1 = fig.add_subplot(gs[1], sharey=ax0)
     ax1.set_xticklabels(list_dates_2)
     ax1.legend(handles=[pop_d,pop_b],loc="upper right", fontsize=16)
-    ax1.set_xlabel("2010", fontsize=16)
+    ax1.set_xlabel(f"{year_2}", fontsize=16)
 
 
     line3 = ax1.plot(list_med_2, c="red",linestyle="--")
@@ -631,7 +631,7 @@ def plot_vci_3_years(ds, path=None):
     ax2 = fig.add_subplot(gs[2], sharey=ax0)
     ax2.set_xticklabels(list_dates_3)
     ax2.legend(handles=[pop_e,pop_b],loc="upper right", fontsize=16)
-    ax2.set_xlabel("2011", fontsize=16)
+    ax2.set_xlabel(f"{year_3}", fontsize=16)
 
 
     line5 = ax2.plot(list_med_3, c="red",linestyle="--")
@@ -653,33 +653,40 @@ def plot_vci_3_years(ds, path=None):
         plt.savefig(path)
     plt.show()
 
-def plot_precp_3_years(ds, variable):
+def get_precp_hist(ds:xr.Dataset, variable):
     df_list_all, list_dates_all = get_subplot_year(ds, var=variable)
+    print("Gathered the whole climatology to build precipitation boxplot")
+    return df_list_all
+
+def plot_precp_3_years(ds:xr.Dataset, years:list, variable, df_list_all:Union[list, None]=None):
+    if df_list_all==None:
+        print("The climatology data was not provided, now proceeding with its computation...")
+        df_list_all, list_dates_all = get_subplot_year(ds, var=variable)
 
     months = [i for i in np.arange(9,13)]
-    year = 2009
-    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year, variable=variable)
-    df_list_all_1 = adjust_full_list(df_list_all =df_list_all, year = year)
+    year_1 = years[0]
+    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year_1, variable=variable)
+    df_list_all_1 = adjust_full_list(df_list_all =df_list_all, year = year_1)
 
     months = [i for i in np.arange(1,6)]
-    year=2010
-    df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year, variable=variable)
-    df_list_all_2 = adjust_full_list(df_list_all =df_list_all, year = year)
+    year_2= years[1]
+    df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year_2, variable=variable)
+    df_list_all_2 = adjust_full_list(df_list_all =df_list_all, year = year_2)
 
-    year=2011
-    df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year, variable=variable)
-    df_list_all_3 = adjust_full_list(df_list_all =df_list_all, year = year)
+    year_3= years[2]
+    df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year_3, variable=variable)
+    df_list_all_3 = adjust_full_list(df_list_all =df_list_all, year = year_3)
 
     fig = plt.figure(figsize=(22,6))
 
-    pop_a = mpatches.Patch(color='red', label='Median 2009')
-    pop_b = mpatches.Patch(color='navy', label='IQR year 2009')
-    pop_e = mpatches.Patch(color='red', label='Median 2010')
-    pop_f = mpatches.Patch(color='navy', label='IQR year 2010')
+    pop_a = mpatches.Patch(color='red', label=f'Median {year_1}')
+    pop_b = mpatches.Patch(color='navy', label=f'IQR year {year_1}')
+    pop_e = mpatches.Patch(color='red', label=f'Median {year_2}')
+    pop_f = mpatches.Patch(color='navy', label=f'IQR year {year_2}')
     pop_c = mpatches.Patch(color='limegreen', label='Median climatology 1979-2020')
     pop_d = mpatches.Patch(color='lightblue', label='IQR climatology 1979-2020')
-    pop_g = mpatches.Patch(color='red', label='Median 2011')
-    pop_h = mpatches.Patch(color='navy', label='IQR year 2011')
+    pop_g = mpatches.Patch(color='red', label=f'Median {year_3}')
+    pop_h = mpatches.Patch(color='navy', label=f'IQR year {year_3}')
 
 
     # set height ratios for subplots
@@ -689,7 +696,7 @@ def plot_precp_3_years(ds, variable):
     ax0 = fig.add_subplot(gs[0])
     #ax0.set_title(f"{prod} precipitation for 2009", fontsize=20)
     ax0.set_ylabel("Precipitation ERA5 (mm)", fontsize=14)
-    ax0.set_xlabel("2009", fontsize=16)
+    ax0.set_xlabel(f"{year_1}", fontsize=16)
 
 
     # log scale for axis Y of the first subplot
@@ -701,13 +708,13 @@ def plot_precp_3_years(ds, variable):
     # shared axis X
     ax1 = fig.add_subplot(gs[1], sharey=ax0)
     #ax1.set_title(f"{prod} precipitation for 2010",fontsize=20)
-    ax1.set_xlabel("2010", fontsize=16)
+    ax1.set_xlabel(f"{year_2}", fontsize=16)
     ax1.legend(handles=[pop_e,pop_f, pop_c,pop_d], fontsize=16)
     line3 = ax1.boxplot(df_list_2, showfliers=False, whis=0,labels=list_dates_2, patch_artist=True,showcaps=False)
     line4 = ax1.boxplot(df_list_all_2, showfliers=False, whis=0, labels=list_dates_2, patch_artist=True,showcaps=False, manage_ticks=False)
 
     ax2 = fig.add_subplot(gs[2], sharey=ax0)
-    ax2.set_xlabel(f"2011", fontsize=16)
+    ax2.set_xlabel(f"{year_3}", fontsize=16)
     ax2.legend(handles=[pop_g,pop_h, pop_c,pop_d], fontsize=16)
 
     line5 = ax2.boxplot(df_list_3, showfliers=False, whis=0,labels=list_dates_3, patch_artist=True,showcaps=False)
@@ -838,32 +845,32 @@ def plot_precp_2009_event(ds, variable, path=None):
     plt.show()
 
 
-def plot_spi_3_years(ds, variable):
+def plot_spi_3_years(ds, years:list, variable):
 
     #df_list_all, list_dates_all = get_subplot_year(ds, var=var_target)
 
     months = [i for i in np.arange(9,13)]
-    year = 2009
-    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year, variable=variable)
+    year_1 = years[0]
+    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year_1, variable=variable)
     #df_list_all_1 = subsetting_whole(df_list_all, months, year = year)
 
     months = [i for i in np.arange(1,6)]
-    year=2010
-    df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year, variable=variable)
+    year_2=years[1]
+    df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year_2, variable=variable)
     #df_list_all_2 = subsetting_whole(df_list_all, months, year = year)
 
-    year=2011
-    df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year, variable=variable)
+    year_3= years[2]
+    df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year_3, variable=variable)
 
 
-    pop_a = mpatches.Patch(color='red', label='SPI median 2009')
-    pop_b = mpatches.Patch(color='lightblue', label='SPI IQR 2009')
+    pop_a = mpatches.Patch(color='red', label=f'SPI median {year_1}')
+    pop_b = mpatches.Patch(color='lightblue', label=f'SPI IQR {year_1}')
 
-    pop_c = mpatches.Patch(color='red', label='SPI median 2010')
-    pop_d = mpatches.Patch(color='lightblue', label='SPI IQR 2010')
+    pop_c = mpatches.Patch(color='red', label=f'SPI median {year_2}')
+    pop_d = mpatches.Patch(color='lightblue', label=f'SPI IQR {year_2}')
 
-    pop_e = mpatches.Patch(color='red', label='SPI median 2011')
-    pop_f = mpatches.Patch(color='lightblue', label='SPI IQR 2011')
+    pop_e = mpatches.Patch(color='red', label=f'SPI median {year_3}')
+    pop_f = mpatches.Patch(color='lightblue', label=f'SPI IQR {year_3}')
 
     fig = plt.figure(figsize=(22,6))
     # set height ratios for subplots
@@ -874,7 +881,7 @@ def plot_spi_3_years(ds, variable):
     #ax0.set_title(f"{prod} SPI {late} for 2009")
 
     line0 = ax0.boxplot(df_list_1, showfliers=False, labels=list_dates_1, whis=0,patch_artist=True,showcaps=False,showmeans=False,medianprops=dict(color="red",ls="--",lw=1), meanline=True, meanprops=dict(color="red", ls="-", lw=2))
-    ax0.set_xlabel("2009", fontsize=16)
+    ax0.set_xlabel(f"{year_1}", fontsize=16)
     ax0.legend(handles=[pop_a,pop_b], fontsize=16)
     ax0.set_ylabel("SPI value", fontsize=14)
 
@@ -883,11 +890,11 @@ def plot_spi_3_years(ds, variable):
     ax1 = fig.add_subplot(gs[1], sharey=ax0)
     #x1.set_title(f"{prod} SPI {late} for 2010")
     line3 = ax1.boxplot(df_list_2, showfliers=False, labels=list_dates_2,whis=0, patch_artist=True,showcaps=False, showmeans=False,medianprops=dict(color="red",ls="--",lw=1), meanline=True, meanprops=dict(color="red", ls="-", lw=2))
-    ax1.set_xlabel("2010", fontsize=16)
+    ax1.set_xlabel(f"{year_2}", fontsize=16)
     ax1.legend(handles=[pop_c,pop_d], fontsize=16)
 
     ax2 = fig.add_subplot(gs[2], sharey=ax0)
-    ax2.set_xlabel("2011", fontsize=16)
+    ax2.set_xlabel(f"{year_3}", fontsize=16)
     ax2.legend(handles=[pop_e,pop_f], fontsize=16)
     line5 = ax2.boxplot(df_list_3, showfliers=False, labels=list_dates_3, whis=0, patch_artist=True,showcaps=False, showmeans=False,medianprops=dict(color="red",ls="--",lw=1), meanline=True, meanprops=dict(color="red", ls="-", lw=2))
 
@@ -989,7 +996,7 @@ def plot_spi_2009_event(ds, variable, path=None):
         plt.savefig(path)
     plt.show()
     
-def loop_soil(CONFIG_PATH): 
+def loop_soil(CONFIG_PATH, level1=True): 
     import pandas as pd
     from datetime import datetime
     import time
@@ -1041,10 +1048,10 @@ def loop_soil(CONFIG_PATH):
     ndvi_res =prepare(ds_ndvi)
     path = config["DEFAULT"]["images"]
     img_path = os.path.join(path, 'chirps_esa')
-    ds_cover = get_cover_dataset(CONFIG_PATH, ndvi_res["ndvi"], img_path)
+    ds_cover = get_cover_dataset(CONFIG_PATH, ndvi_res["ndvi"], img_path, level1=True)
     
 
-    cmap, levels = get_level_colors(ds_cover["Band1"].isel(time=0))
+    cmap, levels = get_level_colors(ds_cover["Band1"].isel(time=0), level1=True)
     ds_cover.isel(time=0)["Band1"].plot(colors=cmap, levels=levels)
 
     def clean_multi_nulls(ds):
@@ -1058,9 +1065,15 @@ def loop_soil(CONFIG_PATH):
     base_path = os.path.join(path, 'soil_type')
     soil_types = np.unique(ds_cover["Band1"].values)[:-1]
 
-    del ds_cover
-
-    values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
+    if level1 == True:
+    
+        values_land_cover = {0	:'Unknown', 20:	'Shrubland',30:'Herbaceous vegetation',40:	'Cropland',
+                        50:	'Built-up',60:	'Bare sparse vegetation',70:'Snow and ice', 80:	'Permanent water bodies',
+                        90:'Herbaceous wetland',100: 'Moss and lichen', 11:"Closed forest", 
+                        12: "Open forest,", 200: "Oceans, seas"}
+    
+    else:
+        values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
                             50:	'Urban',60:	'Bare',70:	'Snow and ice',80:	'Permanent water bodies',90:	'Herbaceous wetland',100: 'Moss and lichen',111: 'Closed forest, evergreen needle leaf',
                             112: 'Closed forest, evergreen broad leaf',115: 'Closed forest, mixed',125: 'Open forest, mixed',113: 'Closed forest, deciduous needle leaf',
                             114: 'Closed forest, deciduous broad leaf',116: 'Closed forest, not matching any of the others',121: 'Open forest, evergreen needle leaf',122: 'Open forest, evergreen broad leaf',
@@ -1068,19 +1081,16 @@ def loop_soil(CONFIG_PATH):
 
 
     precp_ds =prepare(precp_ds)
-    ds_cover_precp = get_cover_dataset(CONFIG_PATH, precp_ds[variable], img_path)
-    del precp_ds
+    ds_cover_precp = get_cover_dataset(CONFIG_PATH, precp_ds[variable], img_path, level1=True)
 
     spi_ds =prepare(spi_ds).transpose("time","lat","lon")
-    ds_cover_spi = get_cover_dataset(CONFIG_PATH, spi_ds[var_target], img_path)
-    del spi_ds
+    ds_cover_spi = get_cover_dataset(CONFIG_PATH, spi_ds[var_target], img_path, level1=True)
 
     ds_ndvi =prepare(ds_ndvi)
-    ds_cover_ndvi = get_cover_dataset(CONFIG_PATH, ndvi_res["ndvi"], img_path)
-    del ds_ndvi
+    ds_cover_ndvi = get_cover_dataset(CONFIG_PATH, ndvi_res["ndvi"], img_path, level1=True)
 
     for soil_type in soil_types[1:]:
-        soil_name = values_land_cover[soil_type].replace(" ","_")
+        soil_name = values_land_cover[soil_type].replace(" ","_").replace("/","_")
         print(f"Starting analysis for {soil_name}")
 
         ### Raw precipitation
