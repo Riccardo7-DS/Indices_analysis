@@ -845,8 +845,10 @@ def plot_precp_2009_event(ds, variable, path=None):
     plt.show()
 
 
-def plot_spi_3_years(ds, years:list, variable):
-
+def plot_spi_3_years(ds, years:list, variable,  df_list_all:Union[list, None]=None):
+    if df_list_all==None:
+        print("The climatology data was not provided, now proceeding with its computation...")
+        df_list_all, list_dates_all = get_subplot_year(ds, var=variable)
     #df_list_all, list_dates_all = get_subplot_year(ds, var=var_target)
 
     months = [i for i in np.arange(9,13)]
