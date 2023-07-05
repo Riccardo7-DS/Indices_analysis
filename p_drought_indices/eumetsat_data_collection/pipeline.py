@@ -16,6 +16,7 @@ import pandas as pd
 import requests
 from p_drought_indices.functions.function_clns import load_config, subsetting_pipeline
 import time
+import eumdac
 
 def add_time(xr_df):
     my_date_string = xr_df.attrs['date_time'] 
@@ -245,7 +246,7 @@ if __name__ == "__main__":
     # Function to load yaml configuration file
     config = load_config(CONFIG_PATH)
     product_code = config['SEVIRI']['HRV']
-    start_date = '2010-11-02 12:00:00'
-    end_date= '2011-03-02 12:00:00'
+    start_date = '2020-07-21 12:00:00'
+    end_date= '2021-01-01 12:00:00'
 
     datatailor_loop(CONFIG_PATH, product_code, start_date, end_date)

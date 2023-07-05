@@ -205,21 +205,24 @@ def add_channel(data, n_samples):
     return input_data
 
 
-def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str, preprocess_type:Literal["constant", "nearest","median"]="constant", impute_value:Union[None, float, int]=None):
+def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str, preprocess_type:Literal["constant", "nearest","median", "None"]="constant", impute_value:Union[None, float, int]=None):
     """
     Function to preprocess data for Convolutional Neural Networks, can be processed with either a constant, using the rioxarray function "interpolate_na()", nearest neighbors or with the median
     """
-    if preprocess_type not in ["constant","nearest", "median"]:
+    if preprocess_type not in ["constant","nearest", "median","None"]:
         raise ValueError("Preprocessing type must be either \"constant\", \"nearest\", \"median\"")
     
     if ((preprocess_type == "constant") and (isinstance(impute_value, (int, float)))==False):
         raise ValueError("A value muste be specified for impute_value in order to impute data with a constant")
     
     ### preprocess data
-    ds = prepare(ds)
-    sub_precp = prepare(ds_target)
+    #ds = prepare(ds)
+    #sub_precp = prepare(ds_target)
 
-    veg_repr = ds[var_origin].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
+    sub_precp = ds_target
+    veg_repr = ds
+
+    #veg_repr = ds[var_origin].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
     
     if preprocess_type == "nearest":
         print("Preprocessing data with nearest neighbor from scipy.interpolate.griddata")
@@ -228,18 +231,27 @@ def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataAr
         sub_precp[var_target] = sub_precp[var_target].rio.interpolate_na()
         sub_veg = veg_repr.rio.interpolate_na()
         sub_precp = sub_precp.assign(null_precp =  sub_precp[var_target])  
+        var = "null_precp"
 
     elif preprocess_type == "constant":
         print(f"Preprocessing data with constant {impute_value}")
         sub_veg = veg_repr.where(veg_repr.notnull(), impute_value)
         sub_precp = sub_precp.assign(null_precp = sub_precp[var_target].where(sub_precp[var_target].notnull(), impute_value))
-    
+        var = "null_precp"
+
     elif preprocess_type == "median":
         raise NotImplementedError
+    
+    elif preprocess_type == "None":
+        sub_veg = veg_repr
+        print("Not applying any imputation")
+        var = var_target
+
+
 
     # Read the data as a numpy array
     target = sub_veg.transpose("lat","lon","time").values #
-    data = sub_precp["null_precp"].transpose("lat","lon","time").values #.rio.interpolate_na()
+    data = sub_precp[var].transpose("lat","lon","time").values #.rio.interpolate_na()
 
     target = np.array(target)
     data = np.array(data)
@@ -263,7 +275,7 @@ def CNN_split(data:np.array, target:np.array, split_percentage:float=0.8):
     return train_data, test_data, train_label, test_label
 
 
-def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str,  preprocess_type:Literal["constant", "nearest","median"]="constant", impute_value:Union[None, float, int]=None, split:float=0.8):
+def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str,  preprocess_type:Literal["constant", "nearest","median", "None"]="constant", impute_value:Union[None, float, int]=None, split:float=0.8):
 
     if (ds.isnull().any()==True) or (ds_target.isnull().any()==True):
         target, data = CNN_imputation(ds, ds_target, var_origin, var_target, preprocess_type=preprocess_type, impute_value=impute_value)
@@ -275,3 +287,16 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.Dat
     train_data, test_data, train_label, test_label = CNN_split(data, target, split_percentage=split)
 
     return train_data, test_data, train_label, test_label
+
+
+def get_lat_lon_window(temp_ds, target_pixels):
+    dict_lat = temp_ds["lat"].values
+    lat_max = temp_ds["lat"].max().values
+    idx_lat= np.where(dict_lat==lat_max)[0][0]
+    idx_tagt_lat = dict_lat[idx_lat+target_pixels-1]
+    
+    dict_lon = temp_ds["lon"].values
+    lon_min = temp_ds["lon"].min().values
+    idx_lon= np.where(dict_lon==lon_min)[0][0]
+    idx_tagt_lon = dict_lon[idx_lon+target_pixels-1]
+    return idx_tagt_lat, lat_max, idx_tagt_lon, lon_min

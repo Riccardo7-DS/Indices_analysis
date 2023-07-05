@@ -466,15 +466,41 @@ def plot_veg_3_years(ds, years:list, path=None):
     df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year_1, variable="ndvi")
     df_list_all_1 = adjust_full_list(df_list_all =df_list_all, year = year_1)
 
+    i = max([np.percentile(l, 75) for l in df_list_1])
+    j = i = max([np.percentile(l, 75) for l in df_list_all_1])
+    max_1 = max(i, j)
+
+    i = min([np.percentile(l, 25) for l in df_list_1])
+    j = i = min([np.percentile(l, 25) for l in df_list_all_1])
+    min_1 = min(i, j)
+
     months = [i for i in np.arange(1,6)]
     year_2= years[1]
     df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year_2, variable="ndvi")
     df_list_all_2 = adjust_full_list(df_list_all =df_list_all, year = year_2)
 
+    i = max([np.percentile(l, 75) for l in df_list_2])
+    j = i = max([np.percentile(l, 75) for l in df_list_all_2])
+    max_2 = max(i, j)
+
+    i = min([np.percentile(l, 25) for l in df_list_2])
+    j = i = min([np.percentile(l, 25) for l in df_list_all_2])
+    min_2 = min(i, j)
+
     year_3 = years[2]
     df_list_3, list_dates_3 = get_xarray_time_subset(ds=ds, year=year_3, variable="ndvi")
     df_list_all_3 = adjust_full_list(df_list_all=df_list_all, year = year_3)
 
+    i = max([np.percentile(l, 75) for l in df_list_3])
+    j = i = max([np.percentile(l, 75) for l in df_list_all_3])
+    max_3 = max(i, j)
+
+    i = min([np.percentile(l, 25) for l in df_list_3])
+    j = i = min([np.percentile(l, 25) for l in df_list_all_3])
+    min_3 = min(i, j)
+
+    max_ndvi =max(max_1, max_2, max_3)
+    min_ndvi = min(min_1, min_2, min_3)
 
     fig = plt.figure(figsize=(22,6))
     # set height ratios for subplots
@@ -524,7 +550,8 @@ def plot_veg_3_years(ds, years:list, path=None):
     line6 = ax2.boxplot(df_list_all_3, showfliers=False, labels=list_dates_3, patch_artist=True,showcaps=False, manage_ticks=False)
 
     plt.setp(ax1.get_yticklabels(), visible=False)
-    plt.ylim(0, 0.35)
+
+    plt.ylim(min_ndvi-0.05, max_ndvi+0.05)
     n=30
     for ax in [ax0, ax1, ax2]:
         ax.set_axisbelow(True)
@@ -846,9 +873,9 @@ def plot_precp_2009_event(ds, variable, path=None):
 
 
 def plot_spi_3_years(ds, years:list, variable,  df_list_all:Union[list, None]=None):
-    if df_list_all==None:
-        print("The climatology data was not provided, now proceeding with its computation...")
-        df_list_all, list_dates_all = get_subplot_year(ds, var=variable)
+    #if df_list_all==None:
+        #print("The climatology data was not provided, now proceeding with its computation...")
+        #df_list_all, list_dates_all = get_subplot_year(ds, var=variable)
     #df_list_all, list_dates_all = get_subplot_year(ds, var=var_target)
 
     months = [i for i in np.arange(9,13)]

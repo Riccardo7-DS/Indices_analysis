@@ -68,6 +68,60 @@ class VizNC():
 
 
 
+from p_drought_indices.functions.ndvi_functions import ndvi_colormap
+from datetime import timedelta
+import pandas as pd
+
+def plot_ndvi_days(ds_smoot:xr.Dataset,start_day:Union[str,None],num_timesteps:int,var:str="ndvi")-> None:
+
+    """ Function to plot NDVI saries"""
+
+    cmap_custom = ndvi_colormap()
+
+    if start_day ==None:
+        start_day = "2007-08-01"
+        print(f"Given that no day has been specified chosing sample day {start_day}")
+
+    # Select the desired number of timesteps to plot
+    date_end = pd.to_datetime(start_day) 
+    new_end = date_end + timedelta(days = num_timesteps - 1)
+    end = new_end.strftime('%d-%m-%Y')
+
+    # Assuming 'ndvi' is a DataArray within the 'data' dataset
+    ndvi_data = ds_smoot[var]
+
+    # Select the first 'num_timesteps' timesteps
+    ndvi_subset =  ndvi_data.sel(time=slice(start_day, end))
+
+    # Determine the number of rows and columns for subplots
+    num_rows = (num_timesteps + 4) // 5
+    num_cols = min(num_timesteps, 5)
+
+    # Create a figure and subplots
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(20, 3*num_rows))
+
+    # Flatten the axes array to simplify indexing
+    axes = axes.flatten()
+
+    # Iterate over the timesteps and plot each one
+    for i, ndvi in enumerate(ndvi_subset):
+        ts = pd.to_datetime(str(ndvi["time"].values)) 
+        d = ts.strftime('%d-%m-%Y')
+        # Assuming the time coordinate is named 'time'
+        ax = axes[i]
+        ndvi.plot(ax=ax, cmap=cmap_custom)
+        ax.set_title(f'Day {d}')
+
+    # Remove any extra empty subplots
+    if len(ndvi_subset) < len(axes):
+        for j in range(len(ndvi_subset), len(axes)):
+            fig.delaxes(axes[j])
+
+    # Adjust the layout and spacing
+    fig.tight_layout()
+
+    # Display the plot
+    plt.show()
 
 
 if __name__== "__main__":
@@ -77,9 +131,9 @@ if __name__== "__main__":
     CONFIG = "./config.yaml"
     config = load_config(CONFIG)
 
-    ### Visualize NDVI series
- #   path_ndvi = Path(config['NDVI']['ndvi_prep'])
- #   files = "*.nc"
+        ### Visualize NDVI series
+     #   path_ndvi = Path(config['NDVI']['ndvi_prep'])
+     #   files = "*.nc"
  #   VizNC(path_ndvi, data=files, period_start=period_start, period_end=period_end)
 
     ### Visualize VCI
