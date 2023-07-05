@@ -53,6 +53,30 @@ def clean_water(ds, ds_cl):
 def compute_ndvi(xr_df):
     return xr_df.assign(ndvi=(xr_df['channel_2'] - xr_df['channel_1']) / (xr_df['channel_2'] + xr_df['channel_1']))
 
+
+def get_irradiances(satellite):
+    if satellite == 'MSG2':
+        irradiance_vis6 = 65.2065
+        irradiance_vis8 = 73.0127
+        
+    elif satellite == 'MSG1':
+        irradiance_vis6 =65.2296 
+        irradiance_vis8 =73.1869
+    
+    elif satellite == 'MSG3':
+        irradiance_vis6 =65.5148 
+        irradiance_vis8 =73.1807
+        
+    elif satellite == 'MSG4':
+        irradiance_vis6 =65.2656
+        irradiance_vis8 =73.1692
+
+    return irradiance_vis6, irradiance_vis8
+
+def compute_ndvi_corr(xr_df, irradiance_vis6, irradiance_vis8):
+    return xr_df.assign(ndvi=(xr_df['channel_2']*irradiance_vis6 - xr_df['channel_1']*irradiance_vis8) / (xr_df['channel_2']*irradiance_vis6 + xr_df['channel_1']*irradiance_vis8))
+
+
 def compute_radiance(xr_df):
     satellite = xr_df.attrs['EPCT_product_name'][:4]
     if satellite == 'MSG2':
@@ -98,6 +122,7 @@ def process_ndvi(base_dir, file):
 def drop_water_bodies_esa(CONFIG_PATH:str, config:dict, dataset:xr.Dataset, var:str="ndvi") ->xr.Dataset:
     img_path = os.path.join(config["DEFAULT"]["images"], "chirps_esa")
     ds_cover = get_cover_dataset(CONFIG_PATH, dataset[var], img_path)
+    
     water_mask = xr.where((ds_cover["Band1"]==80) | (ds_cover["Band1"]==200), 1,0)
     ds_process = ds_cover.where(water_mask==0).drop_vars("Band1")
     dataset = dataset.assign(ndvi=ds_process[var])
