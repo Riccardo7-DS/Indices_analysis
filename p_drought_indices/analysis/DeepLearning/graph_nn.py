@@ -155,3 +155,4 @@ def train(df, reTrain=False, latent_dim  = 4):
 
         latentMat[idx,:] = out.data.cpu().numpy().squeeze()
     return latentMat
+

@@ -6,15 +6,28 @@ import numpy as np
 from scipy.sparse import linalg
 
 import scipy.sparse as sp
-from p_drought_indices.analysis.DeepLearning.gwnet import GWNet, Optim
+from p_drought_indices.analysis.DeepLearning.gwnet import gwnet
 import torch
 import time
 import argparse
 import torch.optim as optim
 import torch.nn as nn
+from scipy.spatial.distance import cdist
+from geopy.distance import geodesic
+import pickle
 
 CONFIG_PATH = "config.yaml"
 
+def generate_adj_dist(df, normalized_k=0.05):
+    coord = df[['lat', 'lon']].values
+    dist_mx = cdist(coord, coord,
+                   lambda u, v: geodesic(u, v).kilometers)
+    distances = dist_mx[~np.isinf(dist_mx)].flatten()
+    std = distances.std()
+    adj_mx = np.exp(-np.square(dist_mx / std))
+
+    adj_mx[adj_mx < normalized_k] = 0
+    return adj_mx
 
 def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
     config = load_config(CONFIG_PATH)
@@ -38,7 +51,7 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
     time_end = "2019-12-31"
     time_start = "2018-01-01"
 
-    dim = config["DATA"]["pixels"]
+    dim = config["GWNET"]["pixels"]
 
     dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))).sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
 
@@ -73,6 +86,12 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
     y_unstack = data_y_unstack.to_numpy()
     y_unstack = np.expand_dims(y_unstack, axis=-1)
     print("The instance have dimensions:", y_unstack.shape)
+
+    st_df = x_df.reset_index()[["lon","lat"]].drop_duplicates()
+
+    adj_dist = generate_adj_dist(st_df)
+    with open(os.path.join(config["DEFAULT"]["data"], "graph_net/adj_dist.pkl"), 'wb') as f:
+        pickle.dump(adj_dist, f, protocol=2)
 
     seq_length_x = seq_length_y = 12
     y_start = 1
@@ -114,7 +133,7 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
 
     batch_size = 24
     dataloader = load_dataset(output_dir, batch_size, batch_size, batch_size)
-    return dataloader, x_df, y_df
+    return dataloader
 
 class DataLoader(object):
     def __init__(self, xs, ys, batch_size, pad_with_last_sample=True):
@@ -232,7 +251,20 @@ def calculate_scaled_laplacian(adj_mx, lambda_max=2, undirected=True):
     L = (2 / lambda_max * L) - I
     return L.astype(np.float32).todense()
 
-def load_adj(adj_mx, adjtype):
+def load_pickle(pickle_file):
+    try:
+        with open(pickle_file, 'rb') as f:
+            pickle_data = pickle.load(f)
+    except UnicodeDecodeError as e:
+        with open(pickle_file, 'rb') as f:
+            pickle_data = pickle.load(f, encoding='latin1')
+    except Exception as e:
+        print('Unable to load data ', pickle_file, ':', e)
+        raise
+    return pickle_data
+
+def load_adj(pkl_filename, adjtype):
+    adj_mx = load_pickle(pkl_filename)
     if adjtype == "scalap":
         adj = [calculate_scaled_laplacian(adj_mx)]
     elif adjtype == "normlap":
@@ -243,7 +275,11 @@ def load_adj(adj_mx, adjtype):
         adj = [asym_adj(adj_mx)]
     elif adjtype == "doubletransition":
         adj = [asym_adj(adj_mx), asym_adj(np.transpose(adj_mx))]
-
+    elif adjtype == "identity":
+        adj = [np.diag(np.ones(adj_mx.shape[0])).astype(np.float32)]
+    else:
+        error = 0
+        assert error, "adj type not defined"
     return adj
 
 def masked_mse(preds, labels, null_val=np.nan):
@@ -290,9 +326,10 @@ def masked_mape(preds, labels, null_val=np.nan):
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
     return torch.mean(loss)
 
+
 class trainer():
     def __init__(self, scaler, in_dim, seq_length, num_nodes, nhid , dropout, lrate, wdecay, device, supports, gcn_bool, addaptadj, aptinit):
-        self.model = GWNet(device, num_nodes, dropout, supports=supports, gcn_bool=gcn_bool, addaptadj=addaptadj, aptinit=aptinit, in_dim=in_dim, out_dim=seq_length, residual_channels=nhid, dilation_channels=nhid, skip_channels=nhid * 8, end_channels=nhid * 16)
+        self.model = gwnet(device, num_nodes, dropout, supports=supports, gcn_bool=gcn_bool, addaptadj=addaptadj, aptinit=aptinit, in_dim=in_dim, out_dim=seq_length, residual_channels=nhid, dilation_channels=nhid, skip_channels=nhid * 8, end_channels=nhid * 16)
         self.model.to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lrate, weight_decay=wdecay)
         self.loss = masked_mae
@@ -337,15 +374,39 @@ def metric(pred, real):
     rmse = masked_rmse(pred,real,0.0).item()
     return mae,mape,rmse
 
+def build_model(args):
+    device = torch.device(args.device)
+    adj_mx = load_adj(args.adjdata,args.adjtype)
+    dataloader = load_dataset(args.data, args.batch_size, args.batch_size, args.batch_size)
+    scaler = dataloader['scaler']
+    supports = [torch.tensor(i).to(device) for i in adj_mx]
 
-def main():
+    print(args)
+
+    if args.randomadj:
+        adjinit = None
+    else:
+        adjinit = supports[0]
+
+    if args.aptonly:
+        supports = None
+
+
+
+    engine = trainer(scaler, args.in_dim, args.seq_length, args.num_nodes, args.nhid, args.dropout,
+                         args.learning_rate, args.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
+                         adjinit)
+    return engine, scaler, dataloader, adj_mx
+
+def main(config):
     dataloader = data_preparation(CONFIG_PATH)
     #set seed
     #torch.manual_seed(args.seed)
     #np.random.seed(args.seed)
     #load data
     device = torch.device(args.device)
-    sensor_ids, sensor_id_to_ind, adj_mx = load_adj(args.adjdata,args.adjtype)
+    adj_path = os.path.join(config["DEFAULT"]["data"], "graph_net/adj_dist.pkl")
+    adj_mx = load_adj(adj_path,  args.adjtype)
     scaler = dataloader['scaler']
     supports = [torch.tensor(i).to(device) for i in adj_mx]
 
@@ -468,11 +529,11 @@ def main():
 
 
 if __name__=="__main__":
+    config = load_config(CONFIG_PATH)
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
     parser.add_argument('--device',type=str,default='cpu',help='')
     #parser.add_argument('--data',type=str,default='data/METR-LA',help='data path')
-    parser.add_argument('--adjdata',type=str,default='data/sensor_graph/adj_mx.pkl',help='adj data path')
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
     parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
@@ -493,4 +554,4 @@ if __name__=="__main__":
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
 
     args = parser.parse_args()
-    main()
+    main(config)

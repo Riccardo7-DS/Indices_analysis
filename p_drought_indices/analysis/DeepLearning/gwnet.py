@@ -1,4 +1,3 @@
-#https://raw.githubusercontent.com/nnzhan/Graph-WaveNet/master/model.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -47,12 +46,9 @@ class gcn(nn.Module):
         return h
 
 
-class GWNet(nn.Module):
-    def __init__(self, device, num_nodes, dropout=0.3, supports=None,
-        gcn_bool=True, addaptadj=True, aptinit=None, in_dim=32,out_dim=1,
-        residual_channels=32,dilation_channels=32,skip_channels=256,
-        end_channels=512,kernel_size=2,blocks=4,layers=2,apt_size=10):
-        super(GWNet, self).__init__()
+class gwnet(nn.Module):
+    def __init__(self, device, num_nodes, dropout=0.3, supports=None, gcn_bool=True, addaptadj=True, aptinit=None, in_dim=2,out_dim=12,residual_channels=32,dilation_channels=32,skip_channels=256,end_channels=512,kernel_size=2,blocks=4,layers=2):
+        super(gwnet, self).__init__()
         self.dropout = dropout
         self.blocks = blocks
         self.layers = layers
@@ -81,8 +77,8 @@ class GWNet(nn.Module):
             if aptinit is None:
                 if supports is None:
                     self.supports = []
-                self.nodevec1 = nn.Parameter(torch.randn(num_nodes, apt_size).to(device), requires_grad=True).to(device)
-                self.nodevec2 = nn.Parameter(torch.randn(apt_size, num_nodes).to(device), requires_grad=True).to(device)
+                self.nodevec1 = nn.Parameter(torch.randn(num_nodes, 10).to(device), requires_grad=True).to(device)
+                self.nodevec2 = nn.Parameter(torch.randn(10, num_nodes).to(device), requires_grad=True).to(device)
                 self.supports_len +=1
             else:
                 if supports is None:
@@ -106,17 +102,17 @@ class GWNet(nn.Module):
                                                    out_channels=dilation_channels,
                                                    kernel_size=(1,kernel_size),dilation=new_dilation))
 
-                self.gate_convs.append(nn.Conv2d(in_channels=residual_channels,
+                self.gate_convs.append(nn.Conv1d(in_channels=residual_channels,
                                                  out_channels=dilation_channels,
                                                  kernel_size=(1, kernel_size), dilation=new_dilation))
 
                 # 1x1 convolution for residual connection
-                self.residual_convs.append(nn.Conv2d(in_channels=dilation_channels,
+                self.residual_convs.append(nn.Conv1d(in_channels=dilation_channels,
                                                      out_channels=residual_channels,
                                                      kernel_size=(1, 1)))
 
                 # 1x1 convolution for skip connection
-                self.skip_convs.append(nn.Conv2d(in_channels=dilation_channels,
+                self.skip_convs.append(nn.Conv1d(in_channels=dilation_channels,
                                                  out_channels=skip_channels,
                                                  kernel_size=(1, 1)))
                 self.bn.append(nn.BatchNorm2d(residual_channels))
@@ -143,12 +139,7 @@ class GWNet(nn.Module):
 
 
     def forward(self, input):
-        # x: (batch_size, input_seq_length, num_nodes, input_feature_dim)
-        #need to change to
-        # x: (batch_size, input_feature_dim, num_nodes, input_seq_length)
-        input = input.permute(0,3,2,1)
         in_len = input.size(3)
-        #print (self.receptive_field) <-this should be 37 for kernel_size = 4
         if in_len<self.receptive_field:
             x = nn.functional.pad(input,(self.receptive_field-in_len,0,0,0))
         else:
@@ -161,17 +152,18 @@ class GWNet(nn.Module):
         if self.gcn_bool and self.addaptadj and self.supports is not None:
             adp = F.softmax(F.relu(torch.mm(self.nodevec1, self.nodevec2)), dim=1)
             new_supports = self.supports + [adp]
+
         # WaveNet layers
         for i in range(self.blocks * self.layers):
 
             #            |----------------------------------------|     *residual*
             #            |                                        |
             #            |    |-- conv -- tanh --|                |
-            # -> dilate -|----|                  * ----|-- 1x1 -- + -->    *input*
+            # -> dilate -|----|                  * ----|-- 1x1 -- + -->	*input*
             #                 |-- conv -- sigm --|     |
             #                                         1x1
             #                                          |
-            # ---------------------------------------> + ------------->    *skip*
+            # ---------------------------------------> + ------------->	*skip*
 
             #(dilation, init_dilation) = self.dilations[i]
 
@@ -207,77 +199,8 @@ class GWNet(nn.Module):
 
 
             x = self.bn[i](x)
+
         x = F.relu(skip)
         x = F.relu(self.end_conv_1(x))
         x = self.end_conv_2(x)
-        #permute again for output
-        #[batch_size,1,num_nodes, output_dim]
-        x = x.permute(0, 3, 2, 1)
-
         return x
-
-import torch.optim as optim
-
-class Optim(object):
-
-    def _makeOptimizer(self):
-        if self.method == 'sgd':
-            self.optimizer = optim.SGD(self.params, lr=self.lr, weight_decay=self.lr_decay)
-        elif self.method == 'adagrad':
-            self.optimizer = optim.Adagrad(self.params, lr=self.lr, weight_decay=self.lr_decay)
-        elif self.method == 'adadelta':
-            self.optimizer = optim.Adadelta(self.params, lr=self.lr, weight_decay=self.lr_decay)
-        elif self.method == 'adam':
-            self.optimizer = optim.Adam(self.params, lr=self.lr, weight_decay=self.lr_decay)
-        else:
-            raise RuntimeError("Invalid optim method: " + self.method)
-
-    def __init__(self, params, method, lr, clip, lr_decay=1, start_decay_at=None):
-        self.params = params  # careful: params may be a generator
-        self.last_ppl = None
-        self.lr = lr
-        self.clip = clip
-        self.method = method
-        self.lr_decay = lr_decay
-        self.start_decay_at = start_decay_at
-        self.start_decay = False
-
-        self._makeOptimizer()
-
-    def step(self):
-        # Compute gradients norm.
-        grad_norm = 0
-        if self.clip is not None:
-            torch.nn.utils.clip_grad_norm_(self.params, self.clip)
-
-        # for param in self.params:
-        #     grad_norm += math.pow(param.grad.data.norm(), 2)
-        #
-        # grad_norm = math.sqrt(grad_norm)
-        # if grad_norm > 0:
-        #     shrinkage = self.max_grad_norm / grad_norm
-        # else:
-        #     shrinkage = 1.
-        #
-        # for param in self.params:
-        #     if shrinkage < 1:
-        #         param.grad.data.mul_(shrinkage)
-        self.optimizer.step()
-        return  grad_norm
-
-    # decay learning rate if val perf does not improve or we hit the start_decay_at limit
-    def updateLearningRate(self, ppl, epoch):
-        if self.start_decay_at is not None and epoch >= self.start_decay_at:
-            self.start_decay = True
-        if self.last_ppl is not None and ppl > self.last_ppl:
-            self.start_decay = True
-
-        if self.start_decay:
-            self.lr = self.lr * self.lr_decay
-            print("Decaying learning rate to %g" % self.lr)
-        #only decay for one epoch
-        self.start_decay = False
-
-        self.last_ppl = ppl
-
-        self._makeOptimizer()
