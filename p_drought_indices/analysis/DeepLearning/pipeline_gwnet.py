@@ -18,7 +18,7 @@ import pickle
 
 CONFIG_PATH = "config.yaml"
 
-def generate_adj_dist(df, normalized_k=0.05):
+def generate_adj_dist(df, normalized_k=0.05,):
     coord = df[['lat', 'lon']].values
     dist_mx = cdist(coord, coord,
                    lambda u, v: geodesic(u, v).kilometers)
@@ -71,9 +71,9 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
     x_df = x_df.sort_values(["lat", "lon","time"],ascending=False)
 
     data_x_unstack = x_df.unstack(["lat","lon"])
-    x_unstack = data_x_unstack.to_numpy()
-    num_samples, num_nodes = x_unstack.shape
-    x_unstack = np.expand_dims(x_unstack, axis=-1)
+    #x_unstack = data_x_unstack.to_numpy()
+    num_samples, num_nodes = data_x_unstack.shape
+    x_unstack = np.expand_dims(data_x_unstack, axis=-1)
     print("The features have dimensions:", x_unstack.shape)
 
     y_df = ds.to_dataframe()
@@ -131,9 +131,9 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
             y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
         )
 
-    batch_size = 24
+    batch_size = 64
     dataloader = load_dataset(output_dir, batch_size, batch_size, batch_size)
-    return dataloader
+    return dataloader, num_nodes
 
 class DataLoader(object):
     def __init__(self, xs, ys, batch_size, pad_with_last_sample=True):
@@ -399,7 +399,7 @@ def build_model(args):
     return engine, scaler, dataloader, adj_mx
 
 def main(config):
-    dataloader = data_preparation(CONFIG_PATH)
+    dataloader, num_nodes = data_preparation(CONFIG_PATH)
     #set seed
     #torch.manual_seed(args.seed)
     #np.random.seed(args.seed)
@@ -422,7 +422,7 @@ def main(config):
 
 
 
-    engine = trainer(scaler, args.in_dim, args.seq_length, args.num_nodes, args.nhid, args.dropout,
+    engine = trainer(scaler, args.in_dim, args.seq_length, num_nodes, args.nhid, args.dropout,
                          args.learning_rate, args.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
                          adjinit)
 
@@ -541,8 +541,8 @@ if __name__=="__main__":
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
     parser.add_argument('--seq_length',type=int,default=12,help='')
     parser.add_argument('--nhid',type=int,default=32,help='')
-    parser.add_argument('--in_dim',type=int,default=2,help='inputs dimension')
-    parser.add_argument('--num_nodes',type=int,default=207,help='number of nodes')
+    parser.add_argument('--in_dim',type=int,default=1,help='inputs dimension')
+    #parser.add_argument('--num_nodes',type=int,default=207,help='number of nodes')
     parser.add_argument('--batch_size',type=int,default=64,help='batch size')
     parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
     parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
@@ -550,7 +550,7 @@ if __name__=="__main__":
     parser.add_argument('--epochs',type=int,default=100,help='')
     parser.add_argument('--print_every',type=int,default=50,help='')
     #parser.add_argument('--seed',type=int,default=99,help='random seed')
-    parser.add_argument('--save',type=str,default='./garage/metr',help='save path')
+    parser.add_argument('--save',type=str,default='notebooks/output',help='save path')
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
 
     args = parser.parse_args()
