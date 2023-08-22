@@ -15,6 +15,7 @@ import torch.nn as nn
 from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 import pickle
+import matplotlib.pyplot as plt
 
 CONFIG_PATH = "config.yaml"
 
@@ -326,6 +327,62 @@ def masked_mape(preds, labels, null_val=np.nan):
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
     return torch.mean(loss)
 
+def save_figures(config:dict, epoch:int, train_loss:list, train_mape:list, train_rmse:list, test_loss:list, test_mape:list, test_rmse:list):
+    epochs = list(range(1, epoch + 1))
+    output = os.path.join(config["DEFAULT"]["output"], "gwnet_metrics")
+    # Plot MAPE
+    plt.figure()
+    plt.plot(epochs, train_mape, label='Train MAPE')
+    plt.plot(epochs, test_mape, label='Validation MAPE')
+    plt.xlabel('Epoch')
+    plt.ylabel('MAPE')
+    plt.legend()
+    plt.title('Mean Absolute Percentage Error (MAPE) vs. Epoch')
+    plt.savefig(os.path.join(output, 'mape_vs_epoch.png'))
+    plt.close()
+
+    # Plot RMSE
+    plt.figure()
+    plt.plot(epochs, train_rmse, label='Train RMSE')
+    plt.plot(epochs, test_rmse, label='Validation RMSE')
+    plt.xlabel('Epoch')
+    plt.ylabel('RMSE')
+    plt.legend()
+    plt.title('Root Mean Squared Error (RMSE) vs. Epoch')
+    plt.savefig(os.path.join(output, 'rmse_vs_epoch.png'))
+    plt.close()
+
+    # Plot Loss
+    plt.figure()
+    plt.plot(epochs, train_loss, label='Train Loss')
+    plt.plot(epochs, test_loss, label='Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('Loss vs. Epoch')
+    plt.savefig(os.path.join(output, 'loss_vs_epoch.png'))
+    plt.close()
+    
+
+class MetricsRecorder:
+    def __init__(self):
+        self.train_mape = []
+        self.train_rmse = []
+        self.train_loss = []
+        self.val_mape = []
+        self.val_rmse = []
+        self.val_loss = []
+
+    def add_train_metrics(self, mape, rmse, loss):
+        self.train_mape.append(mape)
+        self.train_rmse.append(rmse)
+        self.train_loss.append(loss)
+
+    def add_val_metrics(self, mape, rmse, loss):
+        self.val_mape.append(mape)
+        self.val_rmse.append(rmse)
+        self.val_loss.append(loss)
+
 
 class trainer():
     def __init__(self, scaler, in_dim, seq_length, num_nodes, nhid , dropout, lrate, wdecay, device, supports, gcn_bool, addaptadj, aptinit):
@@ -400,6 +457,7 @@ def build_model(args):
 
 def main(config):
     dataloader, num_nodes = data_preparation(CONFIG_PATH)
+    epochs = config["GWNET"]["epochs"]
     #set seed
     #torch.manual_seed(args.seed)
     #np.random.seed(args.seed)
@@ -409,6 +467,7 @@ def main(config):
     adj_mx = load_adj(adj_path,  args.adjtype)
     scaler = dataloader['scaler']
     supports = [torch.tensor(i).to(device) for i in adj_mx]
+    metrics_recorder = MetricsRecorder()
 
     print(args)
 
@@ -431,7 +490,7 @@ def main(config):
     his_loss =[]
     val_time = []
     train_time = []
-    for i in range(1,args.epochs+1):
+    for i in range(1,epochs+1):
         train_loss = []
         train_mape = []
         train_rmse = []
@@ -467,6 +526,7 @@ def main(config):
             valid_loss.append(metrics[0])
             valid_mape.append(metrics[1])
             valid_rmse.append(metrics[2])
+        
         s2 = time.time()
         log = 'Epoch: {:03d}, Inference Time: {:.4f} secs'
         print(log.format(i,(s2-s1)))
@@ -474,11 +534,19 @@ def main(config):
         mtrain_loss = np.mean(train_loss)
         mtrain_mape = np.mean(train_mape)
         mtrain_rmse = np.mean(train_rmse)
+        metrics_recorder.add_train_metrics(mtrain_mape, mtrain_rmse, mtrain_loss)
+
 
         mvalid_loss = np.mean(valid_loss)
         mvalid_mape = np.mean(valid_mape)
         mvalid_rmse = np.mean(valid_rmse)
         his_loss.append(mvalid_loss)
+        metrics_recorder.add_val_metrics(mvalid_mape, mvalid_rmse, mvalid_loss)
+
+        save_figures(config=config, epoch=i, train_loss=metrics_recorder.train_loss, 
+                    train_mape=metrics_recorder.train_mape, train_rmse=metrics_recorder.train_rmse, 
+                    test_loss=metrics_recorder.val_loss, test_rmse=metrics_recorder.val_loss, 
+                    test_mape=metrics_recorder.val_mape)
 
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}, Valid Loss: {:.4f}, Valid MAPE: {:.4f}, Valid RMSE: {:.4f}, Training Time: {:.4f}/epoch'
         print(log.format(i, mtrain_loss, mtrain_mape, mtrain_rmse, mvalid_loss, mvalid_mape, mvalid_rmse, (t2 - t1)),flush=True)
@@ -547,7 +615,7 @@ if __name__=="__main__":
     parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
     parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
     parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
-    parser.add_argument('--epochs',type=int,default=100,help='')
+    #parser.add_argument('--epochs',type=int,default=100,help='')
     parser.add_argument('--print_every',type=int,default=50,help='')
     #parser.add_argument('--seed',type=int,default=99,help='random seed')
     parser.add_argument('--save',type=str,default='notebooks/output',help='save path')
