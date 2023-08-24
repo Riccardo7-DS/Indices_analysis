@@ -50,7 +50,7 @@ def data_collection(dest_path:str, years:list):
             ],
             'format': 'netcdf',
         },
-        dest_path + 'era5land_' + str(year) + '.nc')
+        os.path.join(dest_path, ('era5land_' + str(year) + '.nc')))
 
         print('era5land_' + str(year) + '.nc' + ' downloaded.')
 
@@ -65,6 +65,9 @@ def process_era5(ds: xr.Dataset, var:str = "tp"):
 
 if __name__=="__main__":
     import numpy as np
+    years = list(range(1979, 2021))
+    dest_path = os.path.join(config["SPI"]["ERA5"]["path"], "ERA5_daily")
+    data_collection(dest_path, years)
     list_files = [os.path.join(dest_path, f) for f in os.listdir(dest_path) 
                   if f.endswith(".nc")]
     ds = xr.open_mfdataset(list_files)
