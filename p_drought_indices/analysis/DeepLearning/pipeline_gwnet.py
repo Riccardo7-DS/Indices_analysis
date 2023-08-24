@@ -38,34 +38,35 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
     config_dir_precp = [config['PRECIP']['IMERG']['path'],config['PRECIP']['GPCC']['path'], config['PRECIP']['CHIRPS']['path'], config['PRECIP']['ERA5']['path'],  config['PRECIP']['TAMSTAT']['path'],config['PRECIP']['MSWEP']['path']]
     output_dir = os.path.join(config["DEFAULT"]["data"],  "graph_net")
 
-
     # Open the NetCDF file with xarray
     prod = precp_dataset
-    late = 90
     path = config['SPI']['ERA5']['path']
     file = "era5_land_merged.nc" #f"ERA5_spi_gamma_{late}.nc"
     precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file))))
     #precp_ds = precp_ds.reindex(lat=precp_ds['lat'][::-1])
-    var_target = var_target = [var for var in precp_ds.data_vars][0] #"spi_gamma_{}".format(late)
+    var_target = [var for var in precp_ds.data_vars][0] #"spi_gamma_{}".format(late)
     print(f"The {prod} raster has spatial dimensions:", precp_ds.rio.resolution())
 
-    time_end = "2019-12-31"
-    time_start = "2018-01-01"
+    time_end = config['DEFAULT']['date_end']
+    time_start = config['DEFAULT']['date_start']
 
     dim = config["GWNET"]["pixels"]
 
     dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))).sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
+    print("NDVI dataset resolution:", dataset.rio.resolution())
+    print("Precipitation dataset resolution", precp_ds.rio.resolution())
 
     idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, dim)
     sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
         .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
-
     sub_precp = sub_precp[var_target].where(ds.notnull())
+    return sub_precp, ds
 
-    print("NDVI dataset resolution:", dataset.rio.resolution())
-    print("Precipitation dataset resolution", precp_ds.rio.resolution())
 
+def get_dataloader(CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray):
+    config = load_config(CONFIG_PATH)
+    output_dir = os.path.join(config["DEFAULT"]["data"],  "graph_net")
     x_df = sub_precp.to_dataframe()
     x_df = x_df.swaplevel(1,2)
     x_df = x_df.dropna(subset={"tp"}).drop(columns={"spatial_ref"})
@@ -456,7 +457,8 @@ def build_model(args):
     return engine, scaler, dataloader, adj_mx
 
 def main(config):
-    dataloader, num_nodes = data_preparation(CONFIG_PATH)
+    sub_precp, ds =  data_preparation(CONFIG_PATH)
+    dataloader, num_nodes = get_dataloader(CONFIG_PATH, sub_precp, ds)
     epochs = config["GWNET"]["epochs"]
     #set seed
     #torch.manual_seed(args.seed)

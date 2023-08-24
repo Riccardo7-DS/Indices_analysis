@@ -288,6 +288,23 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.Dat
 
     return train_data, test_data, train_label, test_label
 
+def interpolate_prepare(sub_precp:xr.Dataset, ds:xr.DataArray):
+    var_target = [var for var in sub_precp.data_vars][0]
+    ds = ds.transpose("time","lat","lon")
+    sub_precp = sub_precp.transpose("time","lat","lon")
+    sub_precp[var_target] = sub_precp[var_target].rio.write_nodata("nan")
+    sub_precp[var_target] = sub_precp[var_target].rio.interpolate_na()
+    sub_veg = ds.rio.interpolate_na()
+    sub_precp = sub_precp.assign(null_precp =  sub_precp[var_target])  
+    var = "null_precp"
+
+    # Read the data as a numpy array
+    target = sub_veg.transpose("lat","lon","time").values #
+    data = sub_precp[var].transpose("lat","lon","time").values #.rio.interpolate_na()
+    target = np.array(target)
+    data = np.array(data)
+    return data, target
+
 
 def get_lat_lon_window(temp_ds, target_pixels):
     dict_lat = temp_ds["lat"].values
