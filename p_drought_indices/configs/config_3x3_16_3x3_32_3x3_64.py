@@ -57,6 +57,10 @@ class Config:
     output_dir = os.path.join(root_dir, 'output')
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+
+    checkpoint_dir =  os.path.join(output_dir, 'checkpoints')
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
     model_dir = os.path.join(output_dir, 'model')
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)

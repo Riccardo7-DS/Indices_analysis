@@ -101,11 +101,11 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     # Define best_score, counter, and patience for early stopping:
     best_score = None
     counter = 0
-    patience = 50
-    checkpoint_path = os.path.join(config.output_dir,"checkpoints")
+    patience = 40
     
     logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
+
     #criterion = CrossEntropyLoss().to(config.device)
     #criterion = torch.nn.MSELoss().to(config.device)
     criterion = MSELoss().to(config.device)
@@ -124,9 +124,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
                 # val_loss improves, we update the latest best_score, 
                 # and save the current model
                 best_score = epoch_records['loss']
-                if not os.path.exists(checkpoint_path):
-                    os.makedirs(checkpoint_path)
-                torch.save({'state_dict':model.state_dict()}, checkpoint_path)
+                torch.save({'state_dict':model.state_dict()}, os.path.join(config.checkpoint_dir,"convlstm_model.pt"))
             else:
                 # val_loss does not improve, we increase the counter, 
                 # stop training if it exceeds the amount of patience
