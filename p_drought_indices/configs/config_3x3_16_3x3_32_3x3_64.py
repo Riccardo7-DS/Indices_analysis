@@ -36,7 +36,7 @@ class Config:
     train_dataset = (0, 10000)
     valid_dataset = (10000, 12000)
     test_dataset = (12000, 15000)
-    epochs = 50
+    epochs = 100
 
     # (type, activation, in_ch, out_ch, kernel_size, padding, stride)
     encoder = [('conv', 'leaky', 1, 16, 3, 1, 2),

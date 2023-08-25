@@ -96,6 +96,13 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     #### Start training
     
     name = '3x3_16_3x3_32_3x3_64'
+
+    ### parrameters for early stopping 
+    # Define best_score, counter, and patience for early stopping:
+    best_score = None
+    counter = 0
+    patience = 50
+    checkpoint_path = os.path.join(config.output_dir,"checkpoints")
     
     logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
@@ -109,6 +116,23 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
         train_records.append(np.mean(epoch_records['loss']))
         epoch_records = valid_loop(config, logger, epoch, model, test_dataloader, criterion)
         valid_records.append(np.mean(epoch_records['loss']))
+        if best_score is None:
+            best_score = epoch_records['loss']
+        else:
+            # Check if val_loss improves or not.
+            if epoch_records['loss'] < best_score:
+                # val_loss improves, we update the latest best_score, 
+                # and save the current model
+                best_score = epoch_records['loss']
+                if not os.path.exists(checkpoint_path):
+                    os.makedirs(checkpoint_path)
+                torch.save({'state_dict':model.state_dict()}, checkpoint_path)
+            else:
+                # val_loss does not improve, we increase the counter, 
+                # stop training if it exceeds the amount of patience
+                counter += 1
+                if counter >= patience:
+                    break
         plt.plot(range(epoch + 1), train_records, label='train')
         plt.plot(range(epoch + 1), valid_records, label='valid')
         plt.legend()
