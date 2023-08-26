@@ -317,3 +317,26 @@ def get_lat_lon_window(temp_ds, target_pixels):
     idx_lon= np.where(dict_lon==lon_min)[0][0]
     idx_tagt_lon = dict_lon[idx_lon+target_pixels-1]
     return idx_tagt_lat, lat_max, idx_tagt_lon, lon_min
+
+
+def check_xarray_dataset(data: xr.Dataset):
+    import matplotlib.pyplot as plt
+    # Detect and inspect coordinates
+    for dim in data.dims:
+        coord_values = data.coords[dim].values
+        print(f"{dim}-axis values:", coord_values)
+    # Inspect dimensions and size
+    print("Dimensions:", data.dims)
+    print("Size:", data.size)
+    print("Number of Dimensions:", data.ndim)
+
+    # Inspect coordinates
+    print("Coordinates:", data.coords)
+
+    # Check for missing values
+    print("Is null:", data.isnull().sum())
+    print("Not null:", data.notnull().sum())
+
+    print("Plotting the dataset...")
+    data.isel(time=0).plot()
+    plt.show()
