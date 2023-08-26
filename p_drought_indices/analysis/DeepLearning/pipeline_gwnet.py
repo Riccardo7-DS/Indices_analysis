@@ -133,7 +133,7 @@ def get_dataloader(CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray):
             y_offsets=y_offsets.reshape(list(y_offsets.shape) + [1]),
         )
 
-    batch_size = 64
+    batch_size = config["GWNET"]["batch_size"]
     dataloader = load_dataset(output_dir, batch_size, batch_size, batch_size)
     return dataloader, num_nodes
 
