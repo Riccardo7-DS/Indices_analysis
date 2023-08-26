@@ -1,5 +1,5 @@
 from p_drought_indices.analysis.DeepLearning.dataset import MyDataset
-from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline
+from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset
 import xarray as xr
 import os
 import numpy as np
@@ -458,6 +458,10 @@ def build_model(args):
 
 def main(config):
     sub_precp, ds =  data_preparation(CONFIG_PATH)
+    print("Checking precipitation dataset...")
+    check_xarray_dataset(sub_precp)
+    print("Checking vegetation dataset")
+    check_xarray_dataset(ds)
     dataloader, num_nodes = get_dataloader(CONFIG_PATH, sub_precp, ds)
     epochs = config["GWNET"]["epochs"]
     #set seed
