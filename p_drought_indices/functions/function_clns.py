@@ -323,8 +323,9 @@ def check_xarray_dataset(data: xr.Dataset):
     import matplotlib.pyplot as plt
     # Detect and inspect coordinates
     for dim in data.dims:
-        coord_values = data.coords[dim].values
-        print(f"{dim}-axis values:", coord_values)
+        if dim != "time":
+            coord_values = data.coords[dim].values
+            print(f"{dim}-axis values:", coord_values)
     # Inspect dimensions and size
     print("Dimensions:", data.dims)
     print("Size:", data.size)
