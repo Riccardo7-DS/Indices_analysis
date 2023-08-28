@@ -26,6 +26,7 @@ import re
 from p_drought_indices.vegetation.NDVI_indices import compute_svi, compute_vci
 from p_drought_indices.ancillary_vars.esa_landuse import get_level_colors, get_description
 from rasterio.enums import Resampling
+from typing import Union
 
 
 
@@ -34,7 +35,7 @@ CONFIG_PATH = r"../config.yaml"
 config = load_config(CONFIG_PATH)
 
 class MetricTable(object):
-    def __init__(self, obs_directory, fcst_directory, var_obs:str, var_fcst:str, CONFIG_PATH, vci_tresh = 10, spi_tresh=-2, countries = None):
+    def __init__(self, obs_directory, fcst_directory, var_obs:str, var_fcst:str, CONFIG_PATH:str, vci_tresh:int = 10, spi_tresh:int=-2, countries:Union[list, None] = None):
         """
         Script to calculate metrics for drought prediction for observed and forecasted variable
         obs_directory: path of observed variable
@@ -146,11 +147,11 @@ class MetricTable(object):
         res_vars = condition_var.where(null_var==1)
         ### assign calculated variables to xarray dataset and subset vars
         res_xr = res_xr.assign(drt_precp = res_vars,\
-                drt_veg = xr.where(xr_regrid <=self.vci_tresh, 1, 0), target_new = target_new)
+                drt_veg = xr.where(xr_regrid <=self.vci_tresh, 1, 0), target_new = target_new, vci_corr=xr_regrid)
         res_xr['drt_veg'] = res_xr['drt_veg'].where(res_xr['target_new'].notnull())
         #res_xr['drt_precp'] = subsetting_pipeline(CONFIG_PATH, res_xr['drt_precp'], countries=self.countries)
         #res_xr['drt_veg'] = subsetting_pipeline(CONFIG_PATH, res_xr['drt_veg'], countries=self.countries)
-        return res_xr
+        return res_xr.drop_vars(['target_new']) 
 
     def _get_eval_metrics(self, dataset= None, drt_obs:str='drt_veg', drt_forec:str = 'drt_precp', dim:list=["lat","lon"]):
         """

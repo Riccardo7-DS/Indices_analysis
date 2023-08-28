@@ -106,3 +106,19 @@ def export_land_cover(CONFIG_PATH, target_resolution:str, export_path =r'../data
     plt.show()
 
     return land_proj, cover_ds
+
+        
+    def get_esa_land(ds_path):
+        ds_cover = xr.open_dataset(ds_path)
+        ds_cover = subsetting_pipeline(CONFIG_PATH, ds_cover, invert=False)
+        #### get categories and levels with colors to plot the land cover dataset
+        cmap, levels = get_level_colors(ds_cover)
+        self.land_categories = ds_cover.to_dataframe()['Band1'].dropna().astype(int).unique().tolist()
+        #### reproject land cover ds in the format of the precipitation dataset
+        res = ds_cover['Band1'].rio.reproject_match(self.dataset[self.abbrev_fcst])
+        res = res.rename({'x':'lon','y':'lat'})
+        #### generate empty time dimension and expand it
+        time_dim = self.dataset['time'].values
+        time_da = xr.DataArray(time_dim, [('time', time_dim)])
+        res = res.expand_dims(time=time_da)
+        self.dataset = self.dataset.assign(land = res)
