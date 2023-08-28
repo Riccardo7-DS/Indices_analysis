@@ -42,17 +42,20 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
     prod = precp_dataset
     path = config['SPI']['ERA5']['path']
     file = "era5_land_merged.nc" #f"ERA5_spi_gamma_{late}.nc"
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file))))
+    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)))).rio.write_crs(4326, inplace=True)
     #precp_ds = precp_ds.reindex(lat=precp_ds['lat'][::-1])
     var_target = [var for var in precp_ds.data_vars][0] #"spi_gamma_{}".format(late)
     print(f"The {prod} raster has spatial dimensions:", precp_ds.rio.resolution())
+    precp_ds[var_target] = precp_ds[var_target].astype(np.float32)
 
     time_end = config['DEFAULT']['date_end']
     time_start = config['DEFAULT']['date_start']
 
     dim = config["GWNET"]["pixels"]
 
-    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))).sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
+    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1_old.nc'))).rio.write_crs(4326, inplace=True)
+    dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
+    dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
     print("NDVI dataset resolution:", dataset.rio.resolution())
     print("Precipitation dataset resolution", precp_ds.rio.resolution())
 
@@ -456,7 +459,8 @@ def build_model(args):
                          adjinit)
     return engine, scaler, dataloader, adj_mx
 
-def main(config):
+def main(CONFIG_PATH):
+    config = load_config(CONFIG_PATH)
     sub_precp, ds =  data_preparation(CONFIG_PATH)
     print("Checking precipitation dataset...")
     check_xarray_dataset(sub_precp)
@@ -628,4 +632,4 @@ if __name__=="__main__":
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
 
     args = parser.parse_args()
-    main(config)
+    main(CONFIG_PATH)
