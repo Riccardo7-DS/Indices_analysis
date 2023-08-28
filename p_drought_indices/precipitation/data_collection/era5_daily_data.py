@@ -72,7 +72,7 @@ def process_era5(ds: xr.Dataset, var:str = "tp"):
     ds[var].attrs = attrs
     return ds
 
-def ee_collection(start_date:str, end_date:str, output_path):
+def ee_collection(start_date:str, end_date:str):
 
 # Initialize Earth Engine
     ee.Initialize()
@@ -81,14 +81,14 @@ def ee_collection(start_date:str, end_date:str, output_path):
     horn_of_africa_roi = ee.Geometry.Rectangle([32, -5, 51, 15])
 
     # Load ERA5 Land daily data collection
-    era5_land = ee.ImageCollection('ECMWF/ERA5_LAND/DAILY')
+    era5_land = ee.ImageCollection('ECMWF/ERA5_LAND/DAILY_RAW')
 
     # Filter the collection by date and region
     filtered_era5 = era5_land.filterDate(ee.Date(start_date), ee.Date(end_date)).filterBounds(horn_of_africa_roi)
 
     # Select precipitation band and scale it
     def process_image(image):
-        precipitation = image.select('total_precipitation')
+        precipitation = image.select('total_precipitation_sum')
         return precipitation.multiply(0.1)
 
     processed_era5 = filtered_era5.map(process_image)
@@ -104,30 +104,31 @@ def ee_collection(start_date:str, end_date:str, output_path):
         'region': horn_of_africa_roi
     }
 
-    # Start the download task
-    task = ee.batch.Export.image.toLocal(
+    # Start the download task to Google Drive
+    task = ee.batch.Export.image.toDrive(
         image=horn_of_africa_precipitation,
         description='ERA5_Land_HornOfAfrica',
+        folder="era5_download",
         **download_options
     )
 
-    task.start()
-
-    # Wait for the task to complete
-    task.wait()
-
-    # Move the downloaded file to the desired location
-    import shutil
-    shutil.move('ERA5_Land_HornOfAfrica.tif', output_path)
+    return task
 
 
 if __name__=="__main__":
-    CONFIG_PATH = "config.yaml"
+    from p_drought_indices.precipitation.data_collection.era5_daily_data import ee_collection
+    import xarray as xr
+    import os
+    from p_drought_indices.functions.function_clns import load_config, subsetting_pipeline
+    import ee
+    ee.Authenticate()
+
+    CONFIG_PATH= "../config.yaml"
     config = load_config(CONFIG_PATH)
     # Define the date range
     start_date = '1970-01-01'
     end_date = '2020-12-31'
     output_path = os.path.join(config["SPI"]["ERA5"]["path"],'daily/ee_era5_ecmwf.tif')
-    ee_collection(start_date, end_date, output_path)
+    task = ee_collection(start_date, end_date)
 
     
