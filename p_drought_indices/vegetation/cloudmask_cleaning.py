@@ -173,13 +173,13 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
     logging.info(f"4) Dataset has dimensions {res_ds.sizes}")
 
     print("Starting applying cloudmask on dataset...")
-    mask_clouds, res_xr = extract_apply_cloudmask(res_ds, ds_cl, include_water=False)
+    mask_clouds, res_xr = extract_apply_cloudmask(res_ds, ds_cl, include_water=True)
     res_xr.to_netcdf(os.path.join(ndvi_dir, "final_ndvi.nc"))
 
     print("Applying Whittaker filter...")
     result = apply_whittaker(res_xr['ndvi']).to_dataset()
     res = clean_outliers(result)
-    res.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))
+    res.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi.nc'))
 
     print("Computing VCI index...")
     vci = compute_vci(res["ndvi"]).to_dataset()
