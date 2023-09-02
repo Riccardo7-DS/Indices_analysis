@@ -30,7 +30,7 @@ def generate_adj_dist(df, normalized_k=0.05,):
     adj_mx[adj_mx < normalized_k] = 0
     return adj_mx
 
-def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
+def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='smoothed_ndvi_1_old.nc'):
     config = load_config(CONFIG_PATH)
     device = "cpu"
 
@@ -41,7 +41,7 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
     # Open the NetCDF file with xarray
     prod = precp_dataset
     path = config['SPI']['ERA5']['path']
-    file = "era5_land_merged.nc" #f"ERA5_spi_gamma_{late}.nc"
+    file = "era5_land_merged_corr.nc" #f"ERA5_spi_gamma_{late}.nc"
     precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)))).rio.write_crs(4326, inplace=True)
     #precp_ds = precp_ds.reindex(lat=precp_ds['lat'][::-1])
     var_target = [var for var in precp_ds.data_vars][0] #"spi_gamma_{}".format(late)
@@ -53,7 +53,7 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5"):
 
     dim = config["GWNET"]["pixels"]
 
-    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1_old.nc'))).rio.write_crs(4326, inplace=True)
+    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset))).rio.write_crs(4326, inplace=True)
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
     dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
     print("NDVI dataset resolution:", dataset.rio.resolution())
@@ -94,11 +94,16 @@ def get_dataloader(CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray):
 
     st_df = x_df.reset_index()[["lon","lat"]].drop_duplicates()
 
-    adj_dist = generate_adj_dist(st_df)
-    with open(os.path.join(config["DEFAULT"]["data"], "graph_net/adj_dist.pkl"), 'wb') as f:
-        pickle.dump(adj_dist, f, protocol=2)
+    dest_path = os.path.join(config["DEFAULT"]["data"], "graph_net/adj_dist.pkl")
 
-    seq_length_x = seq_length_y = 12
+    if os.path.isfile(dest_path):
+        print("Using previously created adjacency matrix")
+    else:
+        adj_dist = generate_adj_dist(st_df)
+        with open(dest_path, 'wb') as f:
+            pickle.dump(adj_dist, f, protocol=2)
+
+    seq_length_x = seq_length_y = config["GWNET"]["days_timeseries"]
     y_start = 1
 
     x_offsets = np.sort(np.concatenate((np.arange(-(seq_length_x - 1), 1, 1),)))
@@ -412,6 +417,10 @@ class trainer():
         if self.clip is not None:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
         self.optimizer.step()
+        # Check gradients for NaN or Infinity
+        #for name, param in self.model.named_parameters():
+        #    if param.grad is not None:
+        #        print("Gradient Stats:", name, param.grad.mean().item(), param.grad.max().item(), param.grad.min().item())
         mape = masked_mape(predict,real,0.0).item()
         rmse = masked_rmse(predict,real,0.0).item()
         return loss.item(),mape,rmse
@@ -462,6 +471,7 @@ def build_model(args):
 def main(CONFIG_PATH):
     config = load_config(CONFIG_PATH)
     sub_precp, ds =  data_preparation(CONFIG_PATH)
+    print("Prepared data from {s} to {e}".format(s=sub_precp["time"].values[0], e=sub_precp["time"].values[-1]))
     print("Checking precipitation dataset...")
     check_xarray_dataset(sub_precp)
     print("Checking vegetation dataset")
@@ -591,7 +601,7 @@ def main(CONFIG_PATH):
     amae = []
     amape = []
     armse = []
-    for i in range(12):
+    for i in range(config["GWNET"]["days_timeseries"]):
         pred = scaler.inverse_transform(yhat[:,:,i])
         real = realy[:,:,i]
         metrics = metric(pred,real)
@@ -601,8 +611,8 @@ def main(CONFIG_PATH):
         amape.append(metrics[1])
         armse.append(metrics[2])
 
-    log = 'On average over 12 horizons, Test MAE: {:.4f}, Test MAPE: {:.4f}, Test RMSE: {:.4f}'
-    print(log.format(np.mean(amae),np.mean(amape),np.mean(armse)))
+    log = 'On average over {} horizons, Test MAE: {:.4f}, Test MAPE: {:.4f}, Test RMSE: {:.4f}'
+    print(log.format(config["GWNET"]["days_timeseries"], np.mean(amae),np.mean(amape),np.mean(armse)))
     #torch.save(engine.model.state_dict(), args.save+"_exp"+str(args.expid)+"_best_"+str(round(his_loss[bestid],2))+".pth")
 
 
@@ -617,11 +627,11 @@ if __name__=="__main__":
     parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
     parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
-    parser.add_argument('--seq_length',type=int,default=12,help='')
+    parser.add_argument('--seq_length',type=int,default=config["GWNET"]["days_timeseries"],help='')
     parser.add_argument('--nhid',type=int,default=32,help='')
     parser.add_argument('--in_dim',type=int,default=1,help='inputs dimension')
     #parser.add_argument('--num_nodes',type=int,default=207,help='number of nodes')
-    parser.add_argument('--batch_size',type=int,default=64,help='batch size')
+    parser.add_argument('--batch_size',type=int,default=config["GWNET"]["batch_size"],help='batch size')
     parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
     parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
     parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
