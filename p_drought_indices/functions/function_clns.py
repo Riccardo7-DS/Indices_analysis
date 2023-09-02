@@ -321,6 +321,7 @@ def get_lat_lon_window(temp_ds, target_pixels):
 
 def check_xarray_dataset(data: xr.Dataset):
     import matplotlib.pyplot as plt
+    import time
     # Detect and inspect coordinates
     for dim in data.dims:
         if dim != "time":
@@ -341,3 +342,7 @@ def check_xarray_dataset(data: xr.Dataset):
     print("Plotting the dataset...")
     data.isel(time=0).plot()
     plt.show()
+    # Wait for 5 seconds (adjust the time as needed)
+    time.sleep(3)
+    # Close the image window
+    plt.close()
