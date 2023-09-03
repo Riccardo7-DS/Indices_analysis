@@ -343,6 +343,6 @@ def check_xarray_dataset(data: xr.Dataset):
     data.isel(time=0).plot()
     plt.show()
     # Wait for 5 seconds (adjust the time as needed)
-    time.sleep(3)
+    #time.sleep(3)
     # Close the image window
-    plt.close()
+    #plt.close()
