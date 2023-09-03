@@ -40,8 +40,8 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str
 
     # Open the NetCDF file with xarray
     prod = precp_dataset
-    path = config['SPI']['ERA5']['path']
-    file = "era5_land_merged_corr.nc" #f"ERA5_spi_gamma_{late}.nc"
+    path = config['PRECIP']['ERA5']['path']
+    file = "ERA5_merged.nc" #"era5_land_merged_corr.nc" #f"ERA5_spi_gamma_{late}.nc"
     precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)))).rio.write_crs(4326, inplace=True)
     #precp_ds = precp_ds.reindex(lat=precp_ds['lat'][::-1])
     var_target = [var for var in precp_ds.data_vars][0] #"spi_gamma_{}".format(late)
@@ -67,12 +67,16 @@ def data_preparation(CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str
     return sub_precp, ds
 
 
-def get_dataloader(CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray):
+def get_dataloader(CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray, check_matrix:bool=False):
     config = load_config(CONFIG_PATH)
     output_dir = os.path.join(config["DEFAULT"]["data"],  "graph_net")
     x_df = sub_precp.to_dataframe()
     x_df = x_df.swaplevel(1,2)
-    x_df = x_df.dropna(subset={"tp"}).drop(columns={"spatial_ref"})
+    for col in ["spatial_ref","crs"]:
+        if col in x_df:
+            x_df.drop(columns={col}, inplace=True)
+    var_target = sub_precp.name
+    x_df = x_df.dropna(subset={var_target})
     x_df = x_df.sort_values(["lat", "lon","time"],ascending=False)
 
     data_x_unstack = x_df.unstack(["lat","lon"])
@@ -82,7 +86,10 @@ def get_dataloader(CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray):
     print("The features have dimensions:", x_unstack.shape)
 
     y_df = ds.to_dataframe()
-    y_df = y_df.dropna(subset={"ndvi"}).drop(columns={"spatial_ref"})
+    for col in ["spatial_ref","crs"]:
+        if col in y_df:
+            y_df.drop(columns={col}, inplace=True)
+    y_df = y_df.dropna(subset={"ndvi"})
     y_df = y_df.sort_values(["lat", "lon","time"],ascending=False)
     y_df = y_df.reset_index().set_index(["time","lon","lat"])
     y_df = y_df[y_df.index.isin(x_df.index)]
@@ -93,10 +100,11 @@ def get_dataloader(CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray):
     print("The instance have dimensions:", y_unstack.shape)
 
     st_df = x_df.reset_index()[["lon","lat"]].drop_duplicates()
+    dim = config["GWNET"]["pixels"]
 
-    dest_path = os.path.join(config["DEFAULT"]["data"], "graph_net/adj_dist.pkl")
+    dest_path = os.path.join(config["DEFAULT"]["data"], f"graph_net/{dim}_adj_dist.pkl")
 
-    if os.path.isfile(dest_path):
+    if os.path.isfile(dest_path) and check_matrix==True:
         print("Using previously created adjacency matrix")
     else:
         adj_dist = generate_adj_dist(st_df)
@@ -476,14 +484,15 @@ def main(CONFIG_PATH):
     check_xarray_dataset(sub_precp)
     print("Checking vegetation dataset")
     check_xarray_dataset(ds)
-    dataloader, num_nodes = get_dataloader(CONFIG_PATH, sub_precp, ds)
+    dataloader, num_nodes = get_dataloader(CONFIG_PATH, sub_precp, ds, check_matrix=True)
     epochs = config["GWNET"]["epochs"]
     #set seed
     #torch.manual_seed(args.seed)
     #np.random.seed(args.seed)
     #load data
+    dim = config["GWNET"]["pixels"]
     device = torch.device(args.device)
-    adj_path = os.path.join(config["DEFAULT"]["data"], "graph_net/adj_dist.pkl")
+    adj_path = os.path.join(config["DEFAULT"]["data"], f"graph_net/{dim}_adj_dist.pkl")
     adj_mx = load_adj(adj_path,  args.adjtype)
     scaler = dataloader['scaler']
     supports = [torch.tensor(i).to(device) for i in adj_mx]
@@ -617,10 +626,13 @@ def main(CONFIG_PATH):
 
 
 if __name__=="__main__":
+    import time
+    # get the start time
+    start = time.time()
     config = load_config(CONFIG_PATH)
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
-    parser.add_argument('--device',type=str,default='cpu',help='')
+    parser.add_argument('--device',type=str,default='cuda',help='')
     #parser.add_argument('--data',type=str,default='data/METR-LA',help='data path')
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
@@ -643,3 +655,7 @@ if __name__=="__main__":
 
     args = parser.parse_args()
     main(CONFIG_PATH)
+    end = time.time()
+    total_time = end - start
+    print("\n The script took "+ time.strftime("%H%M:%S", \
+                                                    time.gmtime(total_time)) + "to run")
