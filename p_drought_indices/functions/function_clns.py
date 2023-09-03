@@ -319,8 +319,9 @@ def get_lat_lon_window(temp_ds, target_pixels):
     return idx_tagt_lat, lat_max, idx_tagt_lon, lon_min
 
 
-def check_xarray_dataset(data: xr.Dataset):
+def check_xarray_dataset(args, data: xr.DataArray, save:bool=False):
     import matplotlib.pyplot as plt
+    import os
     import time
     # Detect and inspect coordinates
     for dim in data.dims:
@@ -339,10 +340,17 @@ def check_xarray_dataset(data: xr.Dataset):
     print("Is null:", data.isnull().sum())
     print("Not null:", data.notnull().sum())
 
+    fig = plt.figure() 
+
     print("Plotting the dataset...")
     data.isel(time=0).plot()
-    plt.show()
-    # Wait for 5 seconds (adjust the time as needed)
-    #time.sleep(3)
-    # Close the image window
-    #plt.close()
+    if save is True:
+        name = data.name
+        plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.forecast}/{name}_dataset.png"))
+        plt.close(fig)
+    else:
+        plt.show()
+        # Wait for 5 seconds (adjust the time as needed)
+        time.sleep(3)
+        # Close the image window
+        plt.close()
