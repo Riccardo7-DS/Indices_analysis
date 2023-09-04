@@ -142,6 +142,7 @@ class gwnet(nn.Module):
 
 
     def forward(self, input):
+        # Input shape is (batch_size, features, n_nodes, n_timesteps)
         in_len = input.size(3)
         if in_len<self.receptive_field:
             x = nn.functional.pad(input,(self.receptive_field-in_len,0,0,0))
