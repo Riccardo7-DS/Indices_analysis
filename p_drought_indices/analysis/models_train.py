@@ -21,7 +21,7 @@ import time
 
 if __name__=="__main__":
 
-    logger.remove(0)
+    logger.remove()
     CONFIG_PATH = "config.yaml"
     # get the start time
     start = time.time()
@@ -40,17 +40,18 @@ if __name__=="__main__":
     parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
     parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
     parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
-    parser.add_argument('--print_every',type=int,default=50,help='')
+    parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
 
     for product in ["GPCC","ERA5","CHIRPS"]:
         parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
-        for days in range(5, 15, 5):
+        for days in range(10, 35, 5):
             parser.add_argument('--forecast',type=int,default=days,help='days used to perform forecast')
             parser.add_argument('--seq_length',type=int,default=days,help='')
             args = parser.parse_args()
             main(args, CONFIG_PATH)
+            torch.cuda.empty_cache()
     
     #for product in ["SPI_ERA5", "SPI_GPCC","SPI_CHIRPS"]:
     #    parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
