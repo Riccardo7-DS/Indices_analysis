@@ -71,7 +71,7 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         raise ValueError(f"Precipitation product must be one of {list_precp_prods}")
     
     if "SPI" in precp_dataset:
-        path = [f for f in config_directories if precp_dataset in f][0]
+        path = [f for f in config_directories if precp_dataset.replace("SPI_","") in f][0]
         late = args.latency
         filename = "spi_gamma_{}".format(late)
         file = [f for f in os.listdir(path) if filename in f][0]
