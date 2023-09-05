@@ -21,7 +21,7 @@ import time
 
 if __name__=="__main__":
 
-    logger.remove(0)
+    logger.remove()
     CONFIG_PATH = "config.yaml"
     # get the start time
     start = time.time()
@@ -40,7 +40,7 @@ if __name__=="__main__":
     parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
     parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
     parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
-    parser.add_argument('--print_every',type=int,default=50,help='')
+    parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
 
