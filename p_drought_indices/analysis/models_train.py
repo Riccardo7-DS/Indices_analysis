@@ -54,7 +54,9 @@ if __name__=="__main__":
     #        torch.cuda.empty_cache()
     
     for product in ["SPI_ERA5"]: # "SPI_GPCC","SPI_CHIRPS"]:
+        precp_product  = product.replace("SPI_","")
         parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
+        parser.add_argument('--precp_product',type=str,default=precp_product,help='precipitation product')
         parser.add_argument('--seq_length',type=int,default=12,help='')
         for late in [60, 90]:
             parser.add_argument('--latency',type=int,default=late,help='days used to accumulate precipitation for SPI')
