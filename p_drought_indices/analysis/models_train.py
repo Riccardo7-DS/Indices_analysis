@@ -44,20 +44,24 @@ if __name__=="__main__":
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
 
-    for product in ["GPCC","ERA5","CHIRPS"]:
-        parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
-        for days in range(5, 15, 5):
-            parser.add_argument('--forecast',type=int,default=days,help='days used to perform forecast')
-            parser.add_argument('--seq_length',type=int,default=days,help='')
-            args = parser.parse_args()
-            main(args, CONFIG_PATH)
-    
-    #for product in ["SPI_ERA5", "SPI_GPCC","SPI_CHIRPS"]:
-    #    parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
-    #    for late in [30, 60, 90, 180]:
-    #        parser.add_argument('--latency',type=int,default=late,help='days used to accumulate precipitation for SPI')
+    #for product in ["CHIRPS","GPCC","ERA5"]:
+    #    parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
+    #    for days in range(5, 15, 5):
+    #        parser.add_argument('--forecast',type=int,default=days,help='days used to perform forecast')
+    #        parser.add_argument('--seq_length',type=int,default=days,help='')
     #        args = parser.parse_args()
     #        main(args, CONFIG_PATH)
+    #        torch.cuda.empty_cache()
+    
+    for product in ["SPI_ERA5"]: # "SPI_GPCC","SPI_CHIRPS"]:
+        parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
+        parser.add_argument('--seq_length',type=int,default=12,help='')
+        for late in [60, 90]:
+            parser.add_argument('--latency',type=int,default=late,help='days used to accumulate precipitation for SPI')
+            args = parser.parse_args()
+            main(args, CONFIG_PATH)
+            torch.cuda.empty_cache()
+    
 
     end = time.time()
     total_time = end - start
