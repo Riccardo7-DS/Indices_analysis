@@ -44,9 +44,9 @@ if __name__=="__main__":
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
 
-    for product in ["GPCC","ERA5","CHIRPS"]:
+    for product in ["CHIRPS"]:#,"ERA5","CHIRPS","GPCC"]:
         parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
-        for days in range(10, 35, 5):
+        for days in range(5, 35, 5):
             parser.add_argument('--forecast',type=int,default=days,help='days used to perform forecast')
             parser.add_argument('--seq_length',type=int,default=days,help='')
             args = parser.parse_args()

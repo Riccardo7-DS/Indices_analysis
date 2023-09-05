@@ -1,5 +1,5 @@
 from p_drought_indices.analysis.DeepLearning.dataset import MyDataset
-from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset
+from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays
 import xarray as xr
 import os
 import numpy as np
@@ -122,7 +122,8 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
-    sub_precp = sub_precp[var_target].where(ds.notnull())
+    sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
+    sub_precp = sub_precp.where(ds.notnull())
     return sub_precp, ds
 
 
