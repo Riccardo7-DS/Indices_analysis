@@ -1,5 +1,5 @@
 from p_drought_indices.analysis.DeepLearning.dataset import MyDataset
-from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset
+from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays
 import xarray as xr
 import os
 import numpy as np
@@ -100,8 +100,10 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     logger.info("The {p} raster has spatial dimensions: {r}".format(p = precp_dataset, r= precp_ds.rio.resolution()))
 
     precp_ds[var_target] = precp_ds[var_target].astype(np.float32)
-    time_end = config['DEFAULT']['date_end']
-    time_start = config['DEFAULT']['date_start']
+    #time_end = config['DEFAULT']['date_end']
+    #time_start = config['DEFAULT']['date_start']
+    time_end = config['PRECIP'][precp_dataset]['date_end']
+    time_start = config['PRECIP'][precp_dataset]['date_start']
     dim = config["GWNET"]["pixels"]
 
     # Open the vegetation file with xarray
@@ -120,7 +122,8 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
-    sub_precp = sub_precp[var_target].where(ds.notnull())
+    sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
+    sub_precp = sub_precp.where(ds.notnull())
     return sub_precp, ds
 
 
@@ -643,20 +646,31 @@ def main(args, CONFIG_PATH):
     engine.model.load_state_dict(torch.load(os.path.join(args.output_dir, 
         f"checkpoints/forecast_{args.forecast}") +"/checkpoints_epoch_"+str(bestid+1)+"_"+str(round(his_loss[bestid],2))+".pth"))
 
+    print(engine.model)
 
     outputs = []
     realy = torch.Tensor(dataloader['y_test']).to(device)
     realy = realy.transpose(1,3)[:,0,:,:]
+    logger.debug("realy dims is: {}", realy.shape)
 
     for iter, (x, y) in enumerate(dataloader['test_loader'].get_iterator()):
+        logger.debug("single x shape: {}", x.shape)
         testx = torch.Tensor(x).to(device)
         testx = testx.transpose(1,3)
         with torch.no_grad():
             preds = engine.model(testx).transpose(1,3)
-        outputs.append(preds.squeeze())
+        logger.debug("single testx shape: {}", testx.shape)
+        logger.debug("single prediction shape: {}", preds.shape)
+        logger.debug("squeezed pred dims is: {}", preds.squeeze().shape)
+        outputs.append(preds[:,0,:,:].squeeze())
+
+    
+    logger.debug("outputs dims is: {}", outputs[0].shape)
 
     yhat = torch.cat(outputs,dim=0)
+    logger.debug("yhat dims is: {}",yhat.shape)
     yhat = yhat[:realy.size(0),...]
+    logger.debug("yhat dims is: {}",yhat.shape)
 
     logger.success("Training finished")
     logger.info("The valid loss on best model is {}".format(str(round(his_loss[bestid],4))))
@@ -664,10 +678,12 @@ def main(args, CONFIG_PATH):
     amae = []
     amape = []
     armse = []
-    for i in range(args.forecast):
+    for i in range(args.seq_length):
         pred = scaler.inverse_transform(yhat[:,:,i])
         real = realy[:,:,i]
-        metrics = metric(pred,real)
+        logger.info(pred.shape)
+        logger.info(real.shape)
+        metrics = metric(pred,real) 
         log = 'Evaluate best model on test data for horizon {:d}, Test MAE: {:.4f}, Test MAPE: {:.4f}, Test RMSE: {:.4f}'
         logger.info(log.format(i+1, metrics[0], metrics[1], metrics[2]))
         amae.append(metrics[0])
