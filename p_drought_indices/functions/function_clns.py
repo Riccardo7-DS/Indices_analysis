@@ -319,38 +319,54 @@ def get_lat_lon_window(temp_ds, target_pixels):
     return idx_tagt_lat, lat_max, idx_tagt_lon, lon_min
 
 
-def check_xarray_dataset(args, data: xr.DataArray, save:bool=False):
+def check_timeformat_arrays(array_1:xr.DataArray, array_2:xr.DataArray):
+    if array_1.indexes["time"][0] == array_2.indexes["time"][0]:
+        return array_1, array_2
+    else:
+        array_1["time"] = array_1.indexes["time"].normalize()
+        array_2["time"] = array_2.indexes["time"].normalize()
+        return array_1, array_2
+
+def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False):
     import matplotlib.pyplot as plt
     import os
     import time
-    # Detect and inspect coordinates
-    for dim in data.dims:
-        if dim != "time":
-            coord_values = data.coords[dim].values
-            print(f"{dim}-axis values:", coord_values)
-    # Inspect dimensions and size
-    print("Dimensions:", data.dims)
-    print("Size:", data.size)
-    print("Number of Dimensions:", data.ndim)
+    
+    def datarray_check(data):
+        # Detect and inspect coordinates
+        for dim in data.dims:
+            if dim != "time":
+                coord_values = data.coords[dim].values
+                print(f"{dim}-axis values:", coord_values)
+        # Inspect dimensions and size
+        print("Dimensions:", data.dims)
+        print("Size:", data.size)
+        print("Number of Dimensions:", data.ndim)
 
-    # Inspect coordinates
-    print("Coordinates:", data.coords)
+        # Inspect coordinates
+        print("Coordinates:", data.coords)
 
-    # Check for missing values
-    print("Is null:", data.isnull().sum())
-    print("Not null:", data.notnull().sum())
+        # Check for missing values
+        print("Is null:", data.isnull().sum())
+        print("Not null:", data.notnull().sum())
 
-    fig = plt.figure() 
+        fig = plt.figure() 
 
-    print("Plotting the dataset...")
-    data.isel(time=0).plot()
-    if save is True:
-        name = data.name
-        plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.forecast}/{name}_dataset.png"))
-        plt.close(fig)
+        print("Plotting the dataset...")
+        data.isel(time=0).plot()
+        if save is True:
+            name = data.name
+            plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.forecast}/{name}_dataset.png"))
+            plt.close(fig)
+        else:
+            plt.show()
+            # Wait for 5 seconds (adjust the time as needed)
+            time.sleep(3)
+            # Close the image window
+            plt.close()
+    
+    if type(data)==list:
+        for ds in data:
+            datarray_check(ds)
     else:
-        plt.show()
-        # Wait for 5 seconds (adjust the time as needed)
-        time.sleep(3)
-        # Close the image window
-        plt.close()
+        datarray_check(data)
