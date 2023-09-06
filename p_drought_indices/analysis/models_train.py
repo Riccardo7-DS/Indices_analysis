@@ -43,6 +43,7 @@ if __name__=="__main__":
     parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
+    parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
 
     #for product in ["CHIRPS","GPCC","ERA5"]:
     #    parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
@@ -53,12 +54,13 @@ if __name__=="__main__":
     #        main(args, CONFIG_PATH)
     #        torch.cuda.empty_cache()
     
-    for product in ["SPI_ERA5"]: # "SPI_GPCC","SPI_CHIRPS"]:
-        precp_product  = product.replace("SPI_","")
+    for product in [ "SPI_GPCC","SPI_ERA5","SPI_CHIRPS"]:
         parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
-        parser.add_argument('--precp_product',type=str,default=precp_product,help='precipitation product')
+        parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
         parser.add_argument('--seq_length',type=int,default=12,help='')
-        for late in [60, 90]:
+        parser.add_argument('--spi',type=bool,default=True,help='if dataset is SPI')
+
+        for late in [30, 60, 90, 180]:
             parser.add_argument('--latency',type=int,default=late,help='days used to accumulate precipitation for SPI')
             args = parser.parse_args()
             main(args, CONFIG_PATH)
@@ -69,3 +71,4 @@ if __name__=="__main__":
     total_time = end - start
     print("\n The script took "+ time.strftime("%H%M:%S", \
                                                     time.gmtime(total_time)) + "to run")
+    
