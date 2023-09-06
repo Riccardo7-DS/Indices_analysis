@@ -32,7 +32,7 @@ def generate_adj_dist(df, normalized_k=0.05,):
     adj_mx[adj_mx < normalized_k] = 0
     return adj_mx
 
-def create_paths(args, path):
+def create_paths(args:dict, path:str, spi:bool=False):
     ### Create all the paths
     output_dir = os.path.join(path,  "graph_net")
     if not os.path.exists(output_dir):
@@ -46,13 +46,23 @@ def create_paths(args, path):
     if not os.path.exists(log_path):
         os.makedirs(log_path)
 
-    img_path = os.path.join(output_dir,  f"images_results/forecast_{args.forecast}")
-    if not os.path.exists(img_path):
-        os.makedirs(img_path)
+    if args.spi==False:
+        img_path = os.path.join(output_dir,  f"images_results/forecast_{args.forecast}")
+        if not os.path.exists(img_path):
+            os.makedirs(img_path)
 
-    checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{args.forecast}")
-    if not os.path.exists(checkp_path):
-        os.makedirs(checkp_path)
+        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{args.forecast}")
+        if not os.path.exists(checkp_path):
+            os.makedirs(checkp_path)
+    
+    else:
+        img_path = os.path.join(output_dir,  f"images_results/forecast_{args.precp_product}_SPI_{args.latency}")
+        if not os.path.exists(img_path):
+            os.makedirs(img_path)
+
+        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
+        if not os.path.exists(checkp_path):
+            os.makedirs(checkp_path)
     
     return output_dir, log_path
 
@@ -71,7 +81,8 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         raise ValueError(f"Precipitation product must be one of {list_precp_prods}")
     
     if "SPI" in precp_dataset:
-        path = [f for f in config_directories if precp_dataset.replace("SPI_","") in f][0]
+        precp_dataset = precp_dataset.replace("SPI_","")
+        path = [f for f in config_directories if precp_dataset in f][0]
         late = args.latency
         filename = "spi_gamma_{}".format(late)
         file = [f for f in os.listdir(path) if filename in f][0]
@@ -86,11 +97,19 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     ### specify all the logging
     logger.remove()
     logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
-    logger_name = os.path.join(log_path, f"log_{precp_dataset}_{args.forecast}.log")
+    if args.spi==False:
+        logger_name = os.path.join(log_path, f"log_{precp_dataset}_{args.forecast}.log")
+    else:
+        logger_name = os.path.join(log_path, f"log_{precp_dataset}_spi_{args.latency}.log")
     if os.path.exists(logger_name): 
         os.remove(logger_name)
     logger.add(logger_name, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
-    logger.info(f"Starting NDVI prediction with product {args.precp_product} with {args.forecast} days of features...")
+
+    if args.spi==False:
+        logger.info(f"Starting NDVI prediction with product {args.precp_product} with {args.forecast} days of features...")
+    else:
+        logger.info(f"Starting NDVI prediction with product {args.precp_product} {filename} with {args.forecast} days of features...")
+
     
     # Open the precipitation file with xarray
     precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file))))\
@@ -131,7 +150,10 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
     config = load_config(CONFIG_PATH)
 
     x_df = sub_precp.to_dataframe()
-    x_df = x_df.swaplevel(1,2)
+    if args.spi==False:
+        x_df = x_df.swaplevel(1,2)
+    else:
+        x_df = x_df.swaplevel(0,2)
     for col in ["spatial_ref","crs"]:
         if col in x_df:
             x_df.drop(columns={col}, inplace=True)
@@ -408,7 +430,11 @@ def masked_mape(preds, labels, null_val=np.nan):
 
 def save_figures(args:dict, epoch:int, train_loss:list, train_mape:list, train_rmse:list, test_loss:list, test_mape:list, test_rmse:list):
     epochs = list(range(1, epoch + 1))
-    output = os.path.join(args.output_dir,  f"images_results/forecast_{args.forecast}")
+    if args.spi==False:
+        output = os.path.join(args.output_dir,  f"images_results/forecast_{args.forecast}")
+    else:
+        output = os.path.join(args.output_dir,  f"images_results/forecast_{args.precp_product}_SPI_{args.latency}")
+
     # Plot MAPE
     plt.figure()
     plt.plot(epochs, train_mape, label='Train MAPE')
@@ -533,7 +559,6 @@ def build_model(args):
         supports = None
 
 
-
     engine = trainer(scaler, args.in_dim, args.seq_length, args.num_nodes, args.nhid, args.dropout,
                          args.learning_rate, args.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
                          adjinit)
@@ -558,6 +583,11 @@ def main(args, CONFIG_PATH):
     scaler = dataloader['scaler']
     supports = [torch.tensor(i).to(device) for i in adj_mx]
     metrics_recorder = MetricsRecorder()
+
+    if args.spi==True:
+        checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
+    else:
+        checkp_path = os.path.join(args.utput_dir,  f"checkpoints/forecast_{args.forecast}")
 
     if args.randomadj:
         adjinit = None
@@ -637,14 +667,13 @@ def main(args, CONFIG_PATH):
 
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}, Valid Loss: {:.4f}, Valid MAPE: {:.4f}, Valid RMSE: {:.4f}, Training Time: {:.4f}/epoch'
         logger.info(log.format(i, mtrain_loss, mtrain_mape, mtrain_rmse, mvalid_loss, mvalid_mape, mvalid_rmse, (t2 - t1)),flush=True)
-        torch.save(engine.model.state_dict(), os.path.join(args.output_dir, f"checkpoints/forecast_{args.forecast}")+"/checkpoints_epoch_"+str(i)+"_"+str(round(mvalid_loss,2))+".pth")
+        torch.save(engine.model.state_dict(), checkp_path+"/checkpoints_epoch_"+str(i)+"_"+str(round(mvalid_loss,2))+".pth")
     logger.info("Average Training Time: {:.4f} secs/epoch".format(np.mean(train_time)))
     logger.info("Average Inference Time: {:.4f} secs".format(np.mean(val_time)))
 
     #testing
     bestid = np.argmin(his_loss)
-    engine.model.load_state_dict(torch.load(os.path.join(args.output_dir, 
-        f"checkpoints/forecast_{args.forecast}") +"/checkpoints_epoch_"+str(bestid+1)+"_"+str(round(his_loss[bestid],2))+".pth"))
+    engine.model.load_state_dict(torch.load(checkp_path +"/checkpoints_epoch_"+str(bestid+1)+"_"+str(round(his_loss[bestid],2))+".pth"))
 
     print(engine.model)
 
@@ -692,8 +721,7 @@ def main(args, CONFIG_PATH):
 
     log = 'On average over {} horizons, Test MAE: {:.4f}, Test MAPE: {:.4f}, Test RMSE: {:.4f}'
     logger.info(log.format(args.forecast, np.mean(amae),np.mean(amape),np.mean(armse)))
-    torch.save(engine.model.state_dict(), os.path.join(args.output_dir, \
-            f"checkpoints/forecast_{args.forecast}") +"/checkpoints_exp"+str(args.expid)+"_best_"+str(round(his_loss[bestid],2))+".pth")
+    torch.save(engine.model.state_dict(), checkp_path +"/checkpoints_exp"+str(args.expid)+"_best_"+str(round(his_loss[bestid],2))+".pth")
 
 
 if __name__=="__main__":

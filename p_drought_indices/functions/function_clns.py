@@ -356,7 +356,10 @@ def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False)
         data.isel(time=0).plot()
         if save is True:
             name = data.name
-            plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.forecast}/{name}_dataset.png"))
+            if args.spi==False:
+                plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.forecast}/{name}_dataset.png"))
+            else:
+                plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.precp_product}_SPI_{args.latency}/{name}_dataset.png"))
             plt.close(fig)
         else:
             plt.show()
