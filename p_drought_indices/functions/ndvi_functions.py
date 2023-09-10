@@ -18,20 +18,45 @@ from  matplotlib.colors import ListedColormap, BoundaryNorm
 import numpy as np
 
 
-def ndvi_colormap():
-    vals = [-0.7, -0.6,-0.5,-0.4,-0.3,-0.2,-0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
 
-    cols= ["#000000","#7c4700","#000080" , "#00008B", "#0000FF","#0096FF", "#00FFFF","#ADD8e6", "#d73027", "#f46d43", "#fdae61", "#fee08b", "#ffffbf", "#d9ef8b", 
-           "#a6d96a","#66bd63", "#1a9850", "#006837"] 
-    bounds = np.append(vals, vals[-1] + 1)
-    cmap_custom = ListedColormap(cols)
-    norm = BoundaryNorm(bounds, ncolors=len(cols))
+
+
+
+def ndvi_colormap():
+    # List of upper boundaries for NDVI values (reversed order)
+    vals = [-0.941, -0.824, -0.706, -0.588, -0.471, -0.353, -0.235, -0.118, 0.000, 0.118, 0.235, 0.353, 0.471, 0.588, 0.706, 0.824, 0.941]
+
+    # List of corresponding colors in hexadecimal format (reversed order)
+    cols = [
+        "#770000",
+        "#880000",
+        "#990000",
+        "#AA0000",
+        "#BB0000",
+        "#CC0000",
+        "#DD0000",
+        "#EE0000",
+        "#FF0000",
+        "#FF8800",
+        "#FFCC00",
+        "#FFFF00",
+        "#CCFF00",
+        "#00FF00",
+        "#00BB00",
+        "#008800",
+        "#006600"
+    ]
+    cmap= ListedColormap(cols)
+    bounds = np.array(vals)
+    # Normalize the colormap
+    norm = BoundaryNorm(bounds, cmap.N)
+
     #fig, ax = plt.subplots(figsize=(12, 1))
     #fig.subplots_adjust(bottom=0.5)
     #fig.colorbar(ScalarMappable(norm=norm, cmap=cmap_custom),
     #             cax=ax, orientation='horizontal', label='Colorbar')
     #plt.show()
-    return cmap_custom
+    return cmap, norm
 
 def downsample(ds):
     monthly = ds.resample(time='5D', skipna=True).mean() #### Change here to change the timeframe over which to make the data imputation
