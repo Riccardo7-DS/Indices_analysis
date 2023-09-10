@@ -23,11 +23,27 @@ def cut_file(xr_df, gdf):
     clipped = xr_df.rio.clip(gdf.geometry.apply(mapping), gdf.crs, drop=True)
     return clipped
 
-def subsetting_pipeline(CONFIG_PATH, xr_df, countries = ['Ethiopia','Kenya', 'Somalia'], invert=False):
+def subsetting_pipeline(CONFIG_PATH:str, xr_df:Union[xr.DataArray, xr.Dataset], 
+                        countries:Union[list, None] = ['Ethiopia','Kenya', 'Somalia'], 
+                        regions: Union[list, None] = None,
+                        invert=False):
+    
     config = load_config(CONFIG_PATH)
-    shapefile_path = config['SHAPE']['africa']
+    if regions is None and countries is None:
+        raise ValueError("You must specify either a list of countries or regions")
+    if regions is not None and countries is not None:
+        raise ValueError("You must specify either country or regions list, not both")
+    if countries is not None:
+        shapefile_path = config['SHAPE']['africa']
+        column = "ADM0_NAME"
+        location =countries
+    else:
+        shapefile_path = config['SHAPE']['ethiopia']
+        column = "REGIONNAME"
+        location=regions
+
     gdf = gpd.read_file(shapefile_path)
-    subset = gdf[gdf.ADM0_NAME.isin(countries)]
+    subset = gdf[gdf[column].isin(location)]
     if invert==True:
         subset = subset['geometry'].map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
     return cut_file(xr_df, subset)
@@ -288,21 +304,23 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.Dat
 
     return train_data, test_data, train_label, test_label
 
-def interpolate_prepare(sub_precp:xr.Dataset, ds:xr.DataArray):
+def interpolate_prepare(args, sub_precp:xr.Dataset, ds:xr.DataArray):
     var_target = [var for var in sub_precp.data_vars][0]
     ds = ds.transpose("time","lat","lon")
     sub_precp = sub_precp.transpose("time","lat","lon")
     sub_precp[var_target] = sub_precp[var_target].rio.write_nodata("nan")
-    sub_precp[var_target] = sub_precp[var_target].rio.interpolate_na()
-    sub_veg = ds.rio.interpolate_na()
-    sub_precp = sub_precp.assign(null_precp =  sub_precp[var_target])  
+    precip_null = sub_precp[var_target].rio.interpolate_na()
+    ds.rio.write_nodata(np.nan, inplace=True)
+    null_vegetation = ds.rio.interpolate_na()
+    sub_precp = sub_precp.assign(null_precp =  precip_null)  
     var = "null_precp"
 
     # Read the data as a numpy array
-    target = sub_veg.transpose("lat","lon","time").values #
+    target = null_vegetation.transpose("lat","lon","time").values #
     data = sub_precp[var].transpose("lat","lon","time").values #.rio.interpolate_na()
     target = np.array(target)
     data = np.array(data)
+    check_xarray_dataset(args, [null_vegetation,  sub_precp[var]],save=False)
     return data, target
 
 
@@ -326,6 +344,23 @@ def check_timeformat_arrays(array_1:xr.DataArray, array_2:xr.DataArray):
         array_1["time"] = array_1.indexes["time"].normalize()
         array_2["time"] = array_2.indexes["time"].normalize()
         return array_1, array_2
+    
+def check_nulls_overtime(datarray):
+    # Compute a boolean mask for missing values
+    missing_mask = xr.where(np.isnan(datarray), True, False)
+
+    # Check if the mask values are constant over time
+    are_missing_values_constant = missing_mask.all(dim='time')
+
+    # Create a mask to identify points with non-constant missing values
+    non_constant_missing_mask = ~are_missing_values_constant
+
+    # Apply the mask to the DataArray to keep only points with non-constant missing values
+    filtered_data = datarray.where(non_constant_missing_mask, drop=True)
+
+    # Print the filtered DataArray
+    print(filtered_data)
+    return filtered_data
 
 def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False):
     import matplotlib.pyplot as plt
@@ -364,7 +399,7 @@ def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False)
         else:
             plt.show()
             # Wait for 5 seconds (adjust the time as needed)
-            time.sleep(3)
+            time.sleep(10)
             # Close the image window
             plt.close()
     

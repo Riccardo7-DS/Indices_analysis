@@ -29,9 +29,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from typing import Union
 
-CONFIG_PATH = r"../../../config.yaml"
-
-
 def get_dates(gap_year=False):
     if gap_year==False:
         return pd.date_range("01-Jan-2021", "31-Dec-2021", freq="D").to_series().dt.strftime('%d-%b').values
@@ -467,11 +464,11 @@ def plot_veg_3_years(ds, years:list, path=None):
     df_list_all_1 = adjust_full_list(df_list_all =df_list_all, year = year_1)
 
     i = max([np.percentile(l, 75) for l in df_list_1])
-    j = i = max([np.percentile(l, 75) for l in df_list_all_1])
+    j = max([np.percentile(l, 75) for l in df_list_all_1])
     max_1 = max(i, j)
 
     i = min([np.percentile(l, 25) for l in df_list_1])
-    j = i = min([np.percentile(l, 25) for l in df_list_all_1])
+    j = min([np.percentile(l, 25) for l in df_list_all_1])
     min_1 = min(i, j)
 
     months = [i for i in np.arange(1,6)]
@@ -953,6 +950,75 @@ def plot_spi_3_years(ds, years:list, variable,  df_list_all:Union[list, None]=No
     gs.tight_layout(fig, rect=[0, 0, 1, 0.95])
     plt.suptitle("Daily SPI boxplot", fontsize=18)
     plt.subplots_adjust(top=0.95)
+    plt.show()
+
+def plot_veg_event(ds:xr.Dataset, year:int, months:list,  path:str=None, df_list_all:list=None):
+    if df_list_all is None:
+        df_list_all, list_dates_all = get_subplot_year(ds)
+
+    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year,month=months, variable="ndvi")
+    df_list_all_1 = subsetting_whole(df_list_all =df_list_all, year = year, months=months)
+
+    i = max([np.percentile(l, 75) for l in df_list_1])
+    j = max([np.percentile(l, 75) for l in df_list_all_1])
+    max_ndvi = max(i, j)
+
+    i = min([np.percentile(l, 25) for l in df_list_1])
+    j = min([np.percentile(l, 25) for l in df_list_all_1])
+    min_ndvi = min(i, j)
+
+    fig = plt.figure(figsize=(10,6))
+    # set height ratios for subplots
+    gs = gridspec.GridSpec(1, 1) 
+
+    ##Legend
+
+    pop_a = mpatches.Patch(color='red', label=f'Median {year}')
+    pop_b = mpatches.Patch(color='darkgreen', label='Median climatology 2005-2020')
+    pop_c = mpatches.Patch(color='lightblue', label='IQR climatology 2005-2020')
+    pop_d = mpatches.Patch(color='lightgrey', label=f'IQR {year}')
+
+
+    # the first subplot
+    ax0 = fig.add_subplot(gs[0])
+    #ax0.set_title("NDVI for 2009")
+    ax0.legend(handles=[pop_a, pop_b, pop_d, pop_c], fontsize=16, loc="upper left")
+    ax0.set_ylabel("NDVI value", fontsize=14)
+    ax0.set_xlabel(f"{year}", fontsize=16)
+
+    # log scale for axis Y of the first subplot
+    line0 = ax0.boxplot(df_list_1, showfliers=False, labels=list_dates_1, patch_artist=True,showcaps=False)
+    line2 = ax0.boxplot(df_list_all_1, showfliers=False, labels=list_dates_1, patch_artist=True,showcaps=False, manage_ticks=False)
+
+    n=30
+    for ax in [ax0]:
+        ax.set_axisbelow(True)
+        ax.yaxis.grid(color='grey', linestyle='dashed')
+        [l.set_visible(False) for (i,l) in enumerate(ax.xaxis.get_ticklabels()) if i % n != 0]
+        [l.set_visible(False) for (i,l) in enumerate(ax.xaxis.get_gridlines()) if i % n != 0]
+        ax.tick_params(labelrotation=45, tick1On=False)
+
+    for median in line0['medians']:
+        median.set_color('red')
+    for box in line0["boxes"]:
+        box.set_color("lightgrey")
+        box.set_alpha(0.8)
+    for whisk in line0["whiskers"]:
+        whisk.set_color("white")
+    for median in line2['medians']:
+        median.set_color('darkgreen')
+    for box in line2["boxes"]:
+        box.set_color("lightblue")
+        box.set_alpha(0.4)
+    for whisk in line2["whiskers"]:
+        whisk.set_color("white")
+
+    plt.ylim(min_ndvi-0.05, max_ndvi+0.05)
+    gs.tight_layout(fig, rect=[0, 0, 1, 0.95])
+    plt.suptitle("Daily NDVI boxplot", fontsize=18)
+    plt.subplots_adjust(top=0.95)
+    if path!=None:
+        plt.savefig(path)
     plt.show()
 
 def plot_spi_2009_event(ds, variable, path=None):

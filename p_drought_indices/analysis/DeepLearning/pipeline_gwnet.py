@@ -18,6 +18,7 @@ import pickle
 import matplotlib.pyplot as plt
 from loguru import logger
 import sys
+from osgeo import gdal
 
 CONFIG_PATH = "config.yaml"
 
@@ -67,15 +68,16 @@ def create_paths(args:dict, path:str, spi:bool=False):
     return output_dir, log_path
 
 
-def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='smoothed_ndvi_1_old.nc'):
+def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='smoothed_ndvi.nc'):
     config = load_config(CONFIG_PATH)
 
     config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
                           config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
     config_dir_precp = [config['PRECIP']['IMERG']['path'],config['PRECIP']['GPCC']['path'], config['PRECIP']['CHIRPS']['path'], 
-                        config['PRECIP']['ERA5']['path'],  config['PRECIP']['TAMSTAT']['path'],config['PRECIP']['MSWEP']['path']]
+                        config['PRECIP']['ERA5']['path'],  config['PRECIP']['TAMSTAT']['path'],config['PRECIP']['MSWEP']['path'],
+                        config["PRECIP"]["ERA5_land"]["path"]]
     
-    list_precp_prods = ["ERA5", "GPCC","CHIRPS","SPI_ERA5", "SPI_GPCC","SPI_CHIRPS"]
+    list_precp_prods = ["ERA5", "GPCC","CHIRPS","SPI_ERA5", "SPI_GPCC","SPI_CHIRPS","ERA5_land"]
     
     if precp_dataset not in list_precp_prods:
         raise ValueError(f"Precipitation product must be one of {list_precp_prods}")
@@ -111,34 +113,45 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         logger.info(f"Starting NDVI prediction with product {args.precp_product} {filename} with {args.forecast} days of features...")
 
     
+    # Open the precipitation to use for reprojection file with xarray
+    #path_oth = config['PRECIP']["ERA5"]['path']
+    #file_oth = [f for f in os.listdir(path_oth) if f.endswith(".nc") and "merged" in f ][0]
+    #era5_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path_oth, file_oth)),countries=None, regions=args.location))
+    #var_era5 = [var for var in era5_ds.data_vars][0]
+
     # Open the precipitation file with xarray
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file))))\
-        .rio.write_crs(4326, inplace=True)
-    
+    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=None, regions=args.location ))\
+        #.rio.write_crs(4326, inplace=True)
+
     var_target = [var for var in precp_ds.data_vars][0]
+    precp_ds[var_target] = precp_ds[var_target].astype(np.float32)
+    precp_ds[var_target].rio.write_nodata("nan", inplace=True)
+    #precp_ds[var_target] = precp_ds[var_target].rio.reproject_match(era5_ds[var_era5]).rename({'x':'lon','y':'lat'})
+
     logger.info("The {p} raster has spatial dimensions: {r}".format(p = precp_dataset, r= precp_ds.rio.resolution()))
 
-    precp_ds[var_target] = precp_ds[var_target].astype(np.float32)
+    #precp_ds = prepare(precp_ds)
     #time_end = config['DEFAULT']['date_end']
     #time_start = config['DEFAULT']['date_start']
     time_end = config['PRECIP'][precp_dataset]['date_end']
     time_start = config['PRECIP'][precp_dataset]['date_start']
-    dim = config["GWNET"]["pixels"]
 
     # Open the vegetation file with xarray
-    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset))).rio.write_crs(4326, inplace=True)
+    dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=None, regions=args.location))#.rio.write_crs(4326, inplace=True)
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
+    dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
     dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
     logger.info("MSG NDVI dataset resolution: {}", dataset.rio.resolution())
     logger.info("{p} precipitation dataset resolution: {r}".format(p=precp_dataset, r=precp_ds.rio.resolution()))
 
     try:
-        idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, dim)
+        idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, args.dim)
         sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
             .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
     except IndexError:
         logger.error("The dataset {} is out of bounds when using a subset, using original product".format(args.precp_product))
         sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))
+        args.dim = max(len(sub_precp["lat"]),len(sub_precp["lon"]))
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
     sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
@@ -162,6 +175,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
     x_df = x_df.sort_values(["lat", "lon","time"],ascending=False)
 
     data_x_unstack = x_df.unstack(["lat","lon"])
+    print(data_x_unstack.isnull().sum())
     #x_unstack = data_x_unstack.to_numpy()
     num_samples, num_nodes = data_x_unstack.shape
     x_unstack = np.expand_dims(data_x_unstack, axis=-1)
@@ -177,6 +191,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
     y_df = y_df[y_df.index.isin(x_df.index)]
 
     data_y_unstack = y_df.unstack(["lat","lon"])
+    print(data_y_unstack.isnull().sum())
     y_unstack = data_y_unstack.to_numpy()
     y_unstack = np.expand_dims(y_unstack, axis=-1)
     logger.info("The instance have dimensions: {}", y_unstack.shape)
@@ -184,7 +199,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
     st_df = x_df.reset_index()[["lon","lat"]].drop_duplicates()
     dim = config["GWNET"]["pixels"]
 
-    dest_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{dim}_adj_dist.pkl")
+    dest_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
 
     if os.path.isfile(dest_path) and check_matrix==True:
         logger.info("Using previously created adjacency matrix")
@@ -192,7 +207,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
         adj_dist = generate_adj_dist(st_df)
         with open(dest_path, 'wb') as f:
             pickle.dump(adj_dist, f, protocol=2)
-        logger.info(f"Created new adjacency matrix {args.precp_product}_{dim}")
+        logger.info(f"Created new adjacency matrix {args.precp_product}_{args.dim}")
 
     seq_length_x = seq_length_y = args.forecast
     y_start = 1
@@ -213,8 +228,8 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
     logger.info("x shape: {}", x.shape) 
     logger.info("y shape: {}", y.shape)
 
-    num_test = round(num_samples * 0.2)
-    num_train = round(num_samples * 0.7)
+    num_test = round(num_samples * config["GWNET"]["test_split"])
+    num_train = round(num_samples * config["GWNET"]["train_split"])
     num_val = num_samples - num_test - num_train
     x_train, y_train = x[:num_train], y[:num_train]
     x_val, y_val = (
@@ -235,7 +250,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
 
     batch_size = config["GWNET"]["batch_size"]
     dataloader = load_dataset(args.output_dir, batch_size, batch_size, batch_size)
-    return dataloader, num_nodes
+    return dataloader, num_nodes, data_y_unstack[-num_val:,]
 
 class DataLoader(object):
     def __init__(self, xs, ys, batch_size, pad_with_last_sample=True):
@@ -576,9 +591,9 @@ def main(args, CONFIG_PATH):
 
     dataloader, num_nodes = get_dataloader(args, CONFIG_PATH, sub_precp, ds, check_matrix=True)
     epochs = config["GWNET"]["epochs"]
-    dim = config["GWNET"]["pixels"]
+    dim = args.dim
     device = torch.device(args.device)
-    adj_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{dim}_adj_dist.pkl")
+    adj_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
     adj_mx = load_adj(adj_path,  args.adjtype)
     scaler = dataloader['scaler']
     supports = [torch.tensor(i).to(device) for i in adj_mx]
@@ -587,7 +602,7 @@ def main(args, CONFIG_PATH):
     if args.spi==True:
         checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
     else:
-        checkp_path = os.path.join(args.utput_dir,  f"checkpoints/forecast_{args.forecast}")
+        checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")
 
     if args.randomadj:
         adjinit = None
@@ -727,36 +742,35 @@ def main(args, CONFIG_PATH):
 if __name__=="__main__":
     import time
     # get the start time
+    product = "ERA5_land"
     start = time.time()
     config = load_config(CONFIG_PATH)
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
     parser.add_argument('--device',type=str,default='cuda',help='')
-    #parser.add_argument('--data',type=str,default='data/METR-LA',help='data path')
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
     parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
     parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
-    parser.add_argument('--seq_length',type=int,default=config["GWNET"]["days_timeseries"],help='')
     parser.add_argument('--nhid',type=int,default=32,help='')
     parser.add_argument('--in_dim',type=int,default=1,help='inputs dimension')
-    #parser.add_argument('--num_nodes',type=int,default=207,help='number of nodes')
     parser.add_argument('--batch_size',type=int,default=config["GWNET"]["batch_size"],help='batch size')
     parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
     parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
     parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
-    #parser.add_argument('--epochs',type=int,default=100,help='')
-    parser.add_argument('--print_every',type=int,default=50,help='')
-    #parser.add_argument('--seed',type=int,default=99,help='random seed')
-    parser.add_argument('--save',type=str,default='notebooks/output',help='save path')
+    parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
-    parser.add_argument('--forecast',type=str,default=30,help='days used to perform forecast')
-    parser.add_argument('--precp_product',type=str,default="ERA5",help='precipitation product')
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
+    parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
+    parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
+    parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
+    parser.add_argument('--seq_length',type=int,default=12,help='')
+    parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
+    parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
 
     args = parser.parse_args()
-    main(CONFIG_PATH)
+    main(args, CONFIG_PATH)
     end = time.time()
     total_time = end - start
     print("\n The script took "+ time.strftime("%H%M:%S", \
