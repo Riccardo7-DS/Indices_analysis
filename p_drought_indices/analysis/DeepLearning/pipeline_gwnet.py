@@ -68,7 +68,7 @@ def create_paths(args:dict, path:str, spi:bool=False):
     return output_dir, log_path
 
 
-def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='smoothed_ndvi.nc'):
+def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='smoothed_ndvi_1_old.nc'):
     config = load_config(CONFIG_PATH)
 
     config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
@@ -120,7 +120,7 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     #var_era5 = [var for var in era5_ds.data_vars][0]
 
     # Open the precipitation file with xarray
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=None, regions=args.location ))\
+    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
         #.rio.write_crs(4326, inplace=True)
 
     var_target = [var for var in precp_ds.data_vars][0]
@@ -137,7 +137,7 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     time_start = config['PRECIP'][precp_dataset]['date_start']
 
     # Open the vegetation file with xarray
-    dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=None, regions=args.location))#.rio.write_crs(4326, inplace=True)
+    dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=args.country, regions=args.region))#.rio.write_crs(4326, inplace=True)
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
     dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
     dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
@@ -176,6 +176,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
 
     data_x_unstack = x_df.unstack(["lat","lon"])
     print(data_x_unstack.isnull().sum())
+    print(data_x_unstack.isnull().sum().sum())
     #x_unstack = data_x_unstack.to_numpy()
     num_samples, num_nodes = data_x_unstack.shape
     x_unstack = np.expand_dims(data_x_unstack, axis=-1)
@@ -192,6 +193,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
 
     data_y_unstack = y_df.unstack(["lat","lon"])
     print(data_y_unstack.isnull().sum())
+    print(data_y_unstack.isnull().sum().sum())
     y_unstack = data_y_unstack.to_numpy()
     y_unstack = np.expand_dims(y_unstack, axis=-1)
     logger.info("The instance have dimensions: {}", y_unstack.shape)
@@ -250,7 +252,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
 
     batch_size = config["GWNET"]["batch_size"]
     dataloader = load_dataset(args.output_dir, batch_size, batch_size, batch_size)
-    return dataloader, num_nodes, data_y_unstack[-num_val:,]
+    return dataloader, num_nodes, data_y_unstack.iloc[num_train: num_test+num_train,:]
 
 class DataLoader(object):
     def __init__(self, xs, ys, batch_size, pad_with_last_sample=True):
@@ -589,7 +591,7 @@ def main(args, CONFIG_PATH):
     print("Checking vegetation dataset...")
     check_xarray_dataset(args, ds, save=True)
 
-    dataloader, num_nodes = get_dataloader(args, CONFIG_PATH, sub_precp, ds, check_matrix=True)
+    dataloader, num_nodes, x_df = get_dataloader(args, CONFIG_PATH, sub_precp, ds, check_matrix=True)
     epochs = config["GWNET"]["epochs"]
     dim = args.dim
     device = torch.device(args.device)
@@ -766,7 +768,8 @@ if __name__=="__main__":
     parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
     parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
     parser.add_argument('--seq_length',type=int,default=12,help='')
-    parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
+    parser.add_argument("--country", type=list, default=["Kenya"], help="Location for dataset")
+    parser.add_argument("--region",type=list, default=None, help="region location for dataset") #Amhara 
     parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
 
     args = parser.parse_args()
