@@ -952,6 +952,54 @@ def plot_spi_3_years(ds, years:list, variable,  df_list_all:Union[list, None]=No
     plt.subplots_adjust(top=0.95)
     plt.show()
 
+def plot_spi_event(ds:xr.Dataset, variable:str, year:int, months:list, path=None, df_list_all=None):
+    if df_list_all is None:
+        df_list_all, list_dates_all = get_subplot_year(ds, var=variable)
+
+    df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year,month=months, variable=variable)
+    df_list_all_1 = subsetting_whole(df_list_all =df_list_all, year = year, months=months)
+
+    pop_a = mpatches.Patch(color='red', label=f'SPI median {year}')
+    pop_b = mpatches.Patch(color='lightblue', label=f'SPI IQR {year}')
+
+
+    fig = plt.figure(figsize=(8,5))
+    # set height ratios for subplots
+    gs = gridspec.GridSpec(1, 1) 
+
+    # the first subplot
+    ax0 = fig.add_subplot(gs[0])
+    #ax0.set_title(f"{prod} SPI {late} for 2009")
+
+    line0 = ax0.boxplot(df_list_1, showfliers=False, labels=list_dates_1, whis=0,patch_artist=True,showcaps=False,showmeans=False,medianprops=dict(color="red",ls="--",lw=1), meanline=True, meanprops=dict(color="red", ls="-", lw=2))
+    ax0.set_xlabel(f"{year}", fontsize=16)
+    ax0.legend(handles=[pop_a,pop_b], fontsize=16)
+    ax0.set_ylabel("SPI value", fontsize=14)
+
+    n=15
+    for ax in [ax0]:
+        ax.set_axisbelow(True)
+        ax.axhline(y=0, color='grey', linestyle='--')
+        ax.yaxis.grid(color='grey', linestyle='dashed')
+        [l.set_visible(False) for (i,l) in enumerate(ax.xaxis.get_ticklabels()) if i % n != 0]
+        [l.set_visible(False) for (i,l) in enumerate(ax.xaxis.get_gridlines()) if i % n != 0]
+        ax.tick_params(labelrotation=45,tick1On=False)
+
+    for median in line0['medians']:
+        median.set_color('red')
+    for box in line0["boxes"]:
+        box.set_color("lightblue")
+    for whisk in line0["whiskers"]:
+        whisk.set_color("lightgrey")
+
+    gs.tight_layout(fig, rect=[0, 0, 1, 0.95])
+    plt.suptitle(f"Year {year} daily SPI boxplot", fontsize=18)
+    plt.subplots_adjust(top=0.95)
+    if path!=None:
+        plt.savefig(path)
+    plt.show()
+
+
 def plot_veg_event(ds:xr.Dataset, year:int, months:list,  path:str=None, df_list_all:list=None):
     if df_list_all is None:
         df_list_all, list_dates_all = get_subplot_year(ds)
