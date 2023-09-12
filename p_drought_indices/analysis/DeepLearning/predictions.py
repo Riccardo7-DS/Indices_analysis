@@ -7,6 +7,24 @@ import os
 import numpy as np
 import torch
 
+
+def get_predicted_dataset(pred, dates, sub_cols):
+    df = pd.DataFrame(pred.cpu())
+    df.index = list(set(dates))
+    df.columns = sub_cols
+    new_df = df.stack().reset_index()
+    #new_df["lat"] = new_df.iloc[:,1].apply(lambda x: x[1:-1].split(",")[0]).astype(np.float32)
+    #new_df["lon"] = new_df.iloc[:,1].apply(lambda x: x[1:-1].split(",")[1]).astype(np.float32)
+    new_df["lat"] = new_df.iloc[:,1].apply(lambda x: x[0]).astype(np.float32)
+    new_df["lon"] = new_df.iloc[:,1].apply(lambda x: x[1]).astype(np.float32)
+    new_df.columns=["time", "latlon","ndvi","lat","lon"]
+    data = new_df[["time","lat","lon", "ndvi"]]
+    data = data.sort_values(by=["time","lat","lon"])
+    data.set_index(["time","lat","lon"], inplace=True)
+    ds = data.to_xarray()
+    return ds
+
+
 if __name__=="__main__":
     CONFIG_PATH = "config.yaml"
     import time
@@ -34,7 +52,8 @@ if __name__=="__main__":
     parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
     parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
     parser.add_argument('--seq_length',type=int,default=12,help='')
-    parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
+    parser.add_argument("--region", type=list, default=["Amhara"], help="Location for dataset")
+    parser.add_argument("--country", type=list, default=None, help="Location for dataset")
     parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
 
     args = parser.parse_args()
@@ -104,23 +123,22 @@ if __name__=="__main__":
     yhat = torch.cat(outputs,dim=0)
     yhat = yhat[:realy.size(0),...]
 
-    #for i in range(args.seq_length):
-    i = 0
-    pred = scaler.inverse_transform(yhat[:,:,i])
-    real = realy[:,:,i]
+    for i in range(args.seq_length):
+        pred = scaler.inverse_transform(yhat[:,:,i])
+        real = realy[:,:,i]
 
-    print(pred.shape)
-    print(real.shape)
-    print(pred[0].shape)
+        print(pred.shape)
+        print(real.shape)
+        print(pred[0].shape)
 
-    import pandas as pd
+        import pandas as pd
+        import numpy as np
+        base_path = os.path.join(args.output_dir, "predicted_data")
+        ds = get_predicted_dataset(pred, dates, sub_cols)
+        ds.to_netcdf(os.path.join(base_path, f"predicted_ndvi_{i}.nc"))
 
-    df = pd.DataFrame(pred.cpu())
-    df.index = list(set(dates))
-    df.columns = sub_cols
-    print(df)
+    
 
-    print(df.stack())
 
 
 
