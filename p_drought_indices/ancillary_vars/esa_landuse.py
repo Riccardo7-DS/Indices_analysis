@@ -48,9 +48,9 @@ def get_level_colors(ds_cover, level1=True):
     df['description'] = df['Band1'].replace(values_land_cover.keys(),values_land_cover.values())
 
     cmap = df.sort_values('Band1')['colors'].unique().tolist()
-    cmap = [c.lower() for c in cmap]
+    #cmap = [c.lower() for c in cmap]
     levels = df.sort_values('Band1')['Band1'].unique().tolist()
-    return cmap, levels
+    return cmap, levels, values_land_cover
 
 def visualize_map(land_proj):
     import ee 
