@@ -768,8 +768,8 @@ if __name__=="__main__":
     parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
     parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
     parser.add_argument('--seq_length',type=int,default=12,help='')
-    parser.add_argument("--country", type=list, default=["Kenya"], help="Location for dataset")
-    parser.add_argument("--region",type=list, default=None, help="region location for dataset") #Amhara 
+    parser.add_argument("--country", type=list, default=None, help="Location for dataset")
+    parser.add_argument("--region",type=list, default=["Oromia","SNNPR","Gambela"], help="region location for dataset") #Amhara 
     parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
 
     args = parser.parse_args()
