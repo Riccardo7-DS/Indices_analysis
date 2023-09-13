@@ -976,7 +976,7 @@ def plot_spi_event(ds:xr.Dataset, variable:str, year:int, months:list, path=None
     ax0.legend(handles=[pop_a,pop_b], fontsize=16)
     ax0.set_ylabel("SPI value", fontsize=14)
 
-    n=15
+    n=30
     for ax in [ax0]:
         ax.set_axisbelow(True)
         ax.axhline(y=0, color='grey', linestyle='--')
