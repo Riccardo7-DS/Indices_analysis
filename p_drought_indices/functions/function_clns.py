@@ -337,6 +337,19 @@ def get_lat_lon_window(temp_ds, target_pixels):
     return idx_tagt_lat, lat_max, idx_tagt_lon, lon_min
 
 
+def crop_image_right(temp_ds, target_pixels):
+    dict_lat = temp_ds["lat"].values
+    lat_max = temp_ds["lat"].max().values
+    idx_lat= np.where(dict_lat==lat_max)[0][0]
+    idx_tagt_lat = dict_lat[idx_lat+target_pixels-1]
+    
+    dict_lon = temp_ds["lon"].values
+    lon_max = temp_ds["lon"].max().values
+    idx_lon= np.where(dict_lon==lon_max)[0][0]
+    idx_tagt_lon = dict_lon[idx_lon-target_pixels+1]
+    return idx_tagt_lat, lat_max, idx_tagt_lon, lon_max
+
+
 def check_timeformat_arrays(array_1:xr.DataArray, array_2:xr.DataArray):
     if array_1.indexes["time"][0] == array_2.indexes["time"][0]:
         return array_1, array_2
@@ -377,6 +390,7 @@ def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False)
         print("Dimensions:", data.dims)
         print("Size:", data.size)
         print("Number of Dimensions:", data.ndim)
+        print("Shape:", data.shape)
 
         # Inspect coordinates
         print("Coordinates:", data.coords)
@@ -399,7 +413,7 @@ def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False)
         else:
             plt.show()
             # Wait for 5 seconds (adjust the time as needed)
-            time.sleep(10)
+            time.sleep(0.5)
             # Close the image window
             plt.close()
     

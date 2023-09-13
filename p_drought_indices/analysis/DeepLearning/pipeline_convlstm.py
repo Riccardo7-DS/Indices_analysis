@@ -11,6 +11,7 @@ from p_drought_indices.analysis.DeepLearning.dataset import CustomDataset
 from torch.utils.data import DataLoader
 import pickle
 import argparse
+from tqdm.auto import tqdm
 
 
 def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
@@ -112,7 +113,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     criterion = MSELoss().to(config.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     train_records, valid_records, test_records = [], [], []
-    for epoch in range(config.epochs):
+    for epoch in tqdm(range(config.epochs)):
         epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, optimizer)
         train_records.append(np.mean(epoch_records['loss']))
         epoch_records = valid_loop(config, logger, epoch, model, test_dataloader, criterion)
@@ -171,12 +172,17 @@ if __name__=="__main__":
     parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
     parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
     parser.add_argument('--seq_length',type=int,default=12,help='')
-    parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
+    #parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
     parser.add_argument("--dim", type=int, default= config["CONVLSTM"]["pixels"], help="")
+    parser.add_argument("--convlstm", type=bool, default= True, help="")
 
     args = parser.parse_args()
-    sub_precp, ds = data_preparation(args, CONFIG_PATH)
-    sub_precp = sub_precp.to_dataset()
+    sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product)
+    
+    from p_drought_indices.functions.function_clns import check_xarray_dataset
+    print("Visualizing dataset before imputation...")
+    check_xarray_dataset(args, [sub_precp["tp"], ds])
+    #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
     train_split = 0.8
     training_lstm(CONFIG_PATH, data, target, train_split = train_split)

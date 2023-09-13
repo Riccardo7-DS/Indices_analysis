@@ -1,5 +1,5 @@
 from p_drought_indices.analysis.DeepLearning.dataset import MyDataset
-from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays
+from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays, crop_image_right
 import xarray as xr
 import os
 import numpy as np
@@ -112,7 +112,6 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     else:
         logger.info(f"Starting NDVI prediction with product {args.precp_product} {filename} with {args.forecast} days of features...")
 
-    
     # Open the precipitation to use for reprojection file with xarray
     #path_oth = config['PRECIP']["ERA5"]['path']
     #file_oth = [f for f in os.listdir(path_oth) if f.endswith(".nc") and "merged" in f ][0]
@@ -120,8 +119,10 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     #var_era5 = [var for var in era5_ds.data_vars][0]
 
     # Open the precipitation file with xarray
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
+    #precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
         #.rio.write_crs(4326, inplace=True)
+
+    precp_ds = prepare(xr.open_dataset(os.path.join(path, file))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(10.300000190734863, 3.5999999046325684, ))
 
     var_target = [var for var in precp_ds.data_vars][0]
     precp_ds[var_target] = precp_ds[var_target].astype(np.float32)
@@ -129,33 +130,39 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     #precp_ds[var_target] = precp_ds[var_target].rio.reproject_match(era5_ds[var_era5]).rename({'x':'lon','y':'lat'})
 
     logger.info("The {p} raster has spatial dimensions: {r}".format(p = precp_dataset, r= precp_ds.rio.resolution()))
-
-    #precp_ds = prepare(precp_ds)
-    #time_end = config['DEFAULT']['date_end']
-    #time_start = config['DEFAULT']['date_start']
     time_end = config['PRECIP'][precp_dataset]['date_end']
     time_start = config['PRECIP'][precp_dataset]['date_start']
 
     # Open the vegetation file with xarray
-    dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=args.country, regions=args.region))#.rio.write_crs(4326, inplace=True)
+    #dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=args.country, regions=args.region))#.rio.write_crs(4326, inplace=True)
+    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(3.5999999046325684, 10.300000190734863))
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
     dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
     dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
     logger.info("MSG NDVI dataset resolution: {}", dataset.rio.resolution())
     logger.info("{p} precipitation dataset resolution: {r}".format(p=precp_dataset, r=precp_ds.rio.resolution()))
 
-    try:
-        idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, args.dim)
+    if args.convlstm is False:
+        print("Selecting data for GCNN WaveNet")
+        try:
+            idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, args.dim)
+            sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
+                .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
+        except IndexError:
+            logger.error("The dataset {} is out of bounds when using a subset, using original product".format(args.precp_product))
+            sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))
+            args.dim = max(len(sub_precp["lat"]),len(sub_precp["lon"]))
+
+    else:
+        print("Selecting data for ConvLSTM")
+        idx_lat, lat_max, idx_lon, lon_max = crop_image_right(precp_ds, args.dim)
         sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
-            .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
-    except IndexError:
-        logger.error("The dataset {} is out of bounds when using a subset, using original product".format(args.precp_product))
-        sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))
-        args.dim = max(len(sub_precp["lat"]),len(sub_precp["lon"]))
+            .sel(lat=slice(lat_max, idx_lat), lon=slice(idx_lon, lon_max))
+
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
-    sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
-    sub_precp = sub_precp.where(ds.notnull())
+    #sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
+    #sub_precp = sub_precp.where(ds.notnull())
     return sub_precp, ds
 
 

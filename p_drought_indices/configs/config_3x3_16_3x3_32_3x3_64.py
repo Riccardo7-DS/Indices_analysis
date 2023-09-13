@@ -12,7 +12,7 @@ print(root_dir)
 
 class Config:
     gpus = [0, ]
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = "cpu"#torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     #if torch.cuda.is_available():
     #    num_workers = 8 * len(gpus)
     #    train_batch_size = 64
@@ -36,7 +36,7 @@ class Config:
     train_dataset = (0, 10000)
     valid_dataset = (10000, 12000)
     test_dataset = (12000, 15000)
-    epochs = 200
+    epochs = 20
 
     # (type, activation, in_ch, out_ch, kernel_size, padding, stride)
     encoder = [('conv', 'leaky', 1, 16, 3, 1, 2),
