@@ -40,13 +40,13 @@ if __name__=="__main__":
 
     args = parser.parse_args()
     sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product)
-    
-    from p_drought_indices.functions.function_clns import check_xarray_dataset
-    print("Visualizing dataset before imputation...")
-    check_xarray_dataset(args, [sub_precp["tp"], ds])
+
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
 
+    path = os.path.join(config["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
+    model = torch.load(path)
+    model.eval()
 
     import numpy as np
     from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
@@ -71,12 +71,18 @@ if __name__=="__main__":
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
     for batch_idx, (inputs, targets) in enumerate(test_dataloader):
-        inputs = inputs.float().to(config.device)
-        targets = targets.float().to(config.device)
-        print(inputs.shape, targets.shape, inputs.max(), inputs.min())
-        images = torch.cat([inputs, targets], dim=1)
-        _, axarr = plt.subplots(images.shape[0], images.shape[1], figsize=(images.shape[1]*5, images.shape[0]*5))
-        for b in range(images.shape[0]):
-            for n in range(images.shape[1]):
-                axarr[b][n].imshow(images[b, n, 0], cmap='gray')
-        break
+        with torch.no_grad():
+            inputs = inputs.float().to(config.device)
+            targets = targets.float().to(config.device)
+            # Forward pass
+            outputs = model(inputs)
+
+            plt.figure(figsize=(12, 6))
+            plt.subplot(121)
+            plt.title('Input Frame')
+            plt.imshow(inputs[0].cpu().numpy(), cmap='gray')
+
+            plt.subplot(122)
+            plt.title('Predicted Frame')
+            plt.imshow(outputs[0].cpu().numpy(), cmap='gray')
+            plt.show()
