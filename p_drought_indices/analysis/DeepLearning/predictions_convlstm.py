@@ -44,7 +44,7 @@ if __name__=="__main__":
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
 
-    path = os.path.join(config["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
+    path = os.path.join(config["DEFAULT"]["output"], "checkpoints/convlstm_model.pt")
     model = torch.load(path)
     model.eval()
 
