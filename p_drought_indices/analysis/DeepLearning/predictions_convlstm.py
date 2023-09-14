@@ -9,10 +9,15 @@ if __name__=="__main__":
     from torch.utils.data import DataLoader
     import argparse
     import torch
+    from p_drought_indices.analysis.DeepLearning.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
+    from torch.nn import MSELoss
+    from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
+    from torchvision.transforms import transforms 
+
     
     product = "ERA5_land"
     CONFIG_PATH = "config.yaml"
-    config = load_config(CONFIG_PATH)
+    config_file = load_config(CONFIG_PATH)
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
     parser.add_argument('--device',type=str,default='cuda',help='')
@@ -23,7 +28,7 @@ if __name__=="__main__":
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
     parser.add_argument('--nhid',type=int,default=32,help='')
     parser.add_argument('--in_dim',type=int,default=1,help='inputs dimension')
-    parser.add_argument('--batch_size',type=int,default=config["CONVLSTM"]["batch_size"],help='batch size')
+    parser.add_argument('--batch_size',type=int,default=config_file["CONVLSTM"]["batch_size"],help='batch size')
     parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
     parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
     parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
@@ -35,7 +40,7 @@ if __name__=="__main__":
     parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
     parser.add_argument('--seq_length',type=int,default=12,help='')
     #parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
-    parser.add_argument("--dim", type=int, default= config["CONVLSTM"]["pixels"], help="")
+    parser.add_argument("--dim", type=int, default= config_file["CONVLSTM"]["pixels"], help="")
     parser.add_argument("--convlstm", type=bool, default= True, help="")
 
     args = parser.parse_args()
@@ -43,13 +48,25 @@ if __name__=="__main__":
 
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
+    
+    from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
 
-    path = os.path.join(config["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
-    model = torch.load(path)
+
+    path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
+    
+    logger = build_logging(config)
+    model = ConvLSTM(config).to(config.device)
+    criterion = MSELoss().to(config.device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    state = {
+        'state_dict': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+    }
+
+    model.load_state_dict(state['state_dict'])
     model.eval()
 
     import numpy as np
-    from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
     from p_drought_indices.analysis.DeepLearning.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
@@ -74,15 +91,21 @@ if __name__=="__main__":
         with torch.no_grad():
             inputs = inputs.float().to(config.device)
             targets = targets.float().to(config.device)
+            print(inputs.shape, targets.shape, inputs.max(), inputs.min())
             # Forward pass
             outputs = model(inputs)
 
             plt.figure(figsize=(12, 6))
             plt.subplot(121)
             plt.title('Input Frame')
-            plt.imshow(inputs[0].cpu().numpy(), cmap='gray')
+            print(inputs[0, 0, 0].cpu().numpy() )
+            img = inputs[0, 0, 0].cpu().numpy() 
+            plt.imshow(img)
+            plt.show()
 
             plt.subplot(122)
             plt.title('Predicted Frame')
-            plt.imshow(outputs[0].cpu().numpy(), cmap='gray')
+            print(outputs[0, 0, 0])
+            img = outputs[0, 0, 0].cpu().numpy() 
+            plt.imshow(img)
             plt.show()
