@@ -52,7 +52,7 @@ if __name__=="__main__":
     from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
 
 
-    path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
+    path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model_1.pt")
     
     logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
@@ -77,6 +77,8 @@ if __name__=="__main__":
     #### training parameters
     train_data, test_data, train_label, test_label = CNN_split(data, target, 
                                                                split_percentage=train_split)
+    print("First step training data...", train_data)
+    print("First step shape training data...", train_data.shape)
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
     batch_size = config_file["CONVLSTM"]["batch_size"]
     # create a CustomDataset object using the reshaped input data
@@ -87,7 +89,25 @@ if __name__=="__main__":
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
+    pics = 5
     for batch_idx, (inputs, targets) in enumerate(test_dataloader):
+        inputs = inputs.float().to(config.device)
+        targets = targets.float().to(config.device)
+        print(inputs.shape, targets.shape, inputs.max(), inputs.min())
+        #images = torch.cat([inputs, targets], dim=1)
+        fig, axes = plt.subplots(1, pics, figsize=(targets.shape[1]*5, 5))
+        for n in range(pics):
+            img = targets[0, n, 0, :, :]
+            print(img.shape)
+            print(img)
+            axes[n].imshow(img, cmap="RdYlGn")
+    # Show the plot
+    plt.show()
+
+    import sys 
+    sys.exit(0)
+
+    for batch_idx, (inputs, targets) in enumerate(train_dataloader):
         with torch.no_grad():
             inputs = inputs.float().to(config.device)
             targets = targets.float().to(config.device)
@@ -98,14 +118,14 @@ if __name__=="__main__":
             plt.figure(figsize=(12, 6))
             plt.subplot(121)
             plt.title('Input Frame')
-            print(inputs[0, 0, 0].cpu().numpy() )
-            img = inputs[0, 0, 0].cpu().numpy() 
+            print(inputs[0, 4000, 0].detach().cpu().numpy())
+            img = inputs[0, 4000, 0].detach().cpu().numpy()
             plt.imshow(img)
             plt.show()
 
             plt.subplot(122)
             plt.title('Predicted Frame')
-            print(outputs[0, 0, 0])
-            img = outputs[0, 0, 0].cpu().numpy() 
+            print(outputs[0, 4000, 0].detach().cpu().numpy())
+            img = outputs[0, 4000, 0].detach().cpu().numpy()
             plt.imshow(img)
             plt.show()
