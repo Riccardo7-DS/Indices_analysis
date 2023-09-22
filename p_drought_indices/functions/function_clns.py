@@ -281,12 +281,13 @@ def CNN_split(data:np.array, target:np.array, split_percentage:float=0.8):
     n_samples = data.shape[-1]
     train_samples = int(round(split_percentage*n_samples, 0))
 
-    input_data = add_channel(data, n_samples)
-    target_data = add_channel(target, n_samples)
-    train_data = input_data[:,:train_samples,:,:]
-    test_data =  input_data[:,train_samples:,:,:]
-    train_label = target_data[:,:train_samples,:,:]
-    test_label =  target_data[:,train_samples:,:,:]
+    data = np.expand_dims(data.transpose(2,0,1), 0)
+    target = np.expand_dims(target.transpose(2,0,1), 0)
+
+    train_data = data[:,:train_samples,:,:]
+    test_data =  data[:,train_samples:,:,:]
+    train_label = target[:,:train_samples,:,:]
+    test_label =  target[:,train_samples:,:,:]
 
     return train_data, test_data, train_label, test_label
 

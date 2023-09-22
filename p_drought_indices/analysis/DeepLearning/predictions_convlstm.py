@@ -48,6 +48,8 @@ if __name__=="__main__":
 
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
+
+    print("DATA SHAPE: ",data.shape)
     
     from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
 
@@ -77,7 +79,7 @@ if __name__=="__main__":
     #### training parameters
     train_data, test_data, train_label, test_label = CNN_split(data, target, 
                                                                split_percentage=train_split)
-    print("First step training data...", train_data)
+    
     print("First step shape training data...", train_data.shape)
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
     batch_size = config_file["CONVLSTM"]["batch_size"]
@@ -90,16 +92,42 @@ if __name__=="__main__":
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
     pics = 5
-    for batch_idx, (inputs, targets) in enumerate(test_dataloader):
+
+
+    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+    for n in range(pics):
+        img = data[:, :, n]
+        axes[n].imshow(img, cmap="RdYlGn")
+    
+    plt.show()
+
+    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+    for n in range(pics):
+        img = train_data[0,n, 0, :, :] 
+        axes[n].imshow(img, cmap="RdYlGn")
+
+    # Show the plot
+    plt.show()
+
+    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+    for n in range(pics):
+        img = train_dataset.data[0,n, 0, :, :] 
+        axes[n].imshow(img, cmap="RdYlGn")
+    
+    plt.show()
+
+    for batch_idx, (inputs, targets) in enumerate(train_dataloader):
         inputs = inputs.float().to(config.device)
         targets = targets.float().to(config.device)
+
+        inputs = torch.squeeze(inputs)
+        inputs = inputs.reshape(inputs.shape[1], inputs.shape[2], inputs.shape[0])
+        
         print(inputs.shape, targets.shape, inputs.max(), inputs.min())
         #images = torch.cat([inputs, targets], dim=1)
-        fig, axes = plt.subplots(1, pics, figsize=(targets.shape[1]*5, 5))
+        fig, axes = plt.subplots(1, pics, figsize=(inputs.shape[1]*5, 5))
         for n in range(pics):
-            img = targets[0, n, 0, :, :]
-            print(img.shape)
-            print(img)
+            img = inputs[ :, :, n].numpy()
             axes[n].imshow(img, cmap="RdYlGn")
     # Show the plot
     plt.show()
