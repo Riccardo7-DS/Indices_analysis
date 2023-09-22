@@ -22,6 +22,22 @@ class CustomDataset(Dataset):
         y = self.targets[index]
         return x, y
 
+
+
+class CustomConvLSTMDataset(Dataset):
+    def __init__(self, data, targets):
+        self.data = data
+        self.targets = targets
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, index):
+        X = np.expand_dims(self.data[index, :, :, :], axis=1)
+        y = np.expand_dims(self.targets[index, :, :, :], axis=1)
+        return X, y
+
+
 class MyDataset(Dataset):
     """Subclass of PyTorch's Dataset
     """

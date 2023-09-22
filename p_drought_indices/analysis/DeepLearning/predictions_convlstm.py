@@ -54,11 +54,13 @@ if __name__=="__main__":
     logger.info("Starting interpolation...")
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
+
+    print("DATA SHAPE: ",data.shape)
     
     from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
 
 
-    path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
+    path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model_1.pt")
     
     #logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
@@ -85,6 +87,8 @@ if __name__=="__main__":
     logger.info("Splitting data for training...")
     train_data, test_data, train_label, test_label = CNN_split(data, target, 
                                                                split_percentage=train_split)
+    
+    print("First step shape training data...", train_data.shape)
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
     batch_size = config_file["CONVLSTM"]["batch_size"]
     # create a CustomDataset object using the reshaped input data
@@ -95,9 +99,57 @@ if __name__=="__main__":
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
+<<<<<<< HEAD
 
     logger.info("Checking data with images....")
     for batch_idx, (inputs, targets) in enumerate(test_dataloader):
+=======
+    pics = 5
+
+
+    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+    for n in range(pics):
+        img = data[:, :, n]
+        axes[n].imshow(img, cmap="RdYlGn")
+    
+    plt.show()
+
+    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+    for n in range(pics):
+        img = train_data[0,n, 0, :, :] 
+        axes[n].imshow(img, cmap="RdYlGn")
+
+    # Show the plot
+    plt.show()
+
+    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+    for n in range(pics):
+        img = train_dataset.data[0,n, 0, :, :] 
+        axes[n].imshow(img, cmap="RdYlGn")
+    
+    plt.show()
+
+    for batch_idx, (inputs, targets) in enumerate(train_dataloader):
+        inputs = inputs.float().to(config.device)
+        targets = targets.float().to(config.device)
+
+        inputs = torch.squeeze(inputs)
+        inputs = inputs.reshape(inputs.shape[1], inputs.shape[2], inputs.shape[0])
+        
+        print(inputs.shape, targets.shape, inputs.max(), inputs.min())
+        #images = torch.cat([inputs, targets], dim=1)
+        fig, axes = plt.subplots(1, pics, figsize=(inputs.shape[1]*5, 5))
+        for n in range(pics):
+            img = inputs[ :, :, n].numpy()
+            axes[n].imshow(img, cmap="RdYlGn")
+    # Show the plot
+    plt.show()
+
+    import sys 
+    sys.exit(0)
+
+    for batch_idx, (inputs, targets) in enumerate(train_dataloader):
+>>>>>>> 18d558d5358923a158e46388d0339843807f4a25
         with torch.no_grad():
             inputs = inputs.float().to(config.device)
             targets = targets.float().to(config.device)
@@ -108,14 +160,14 @@ if __name__=="__main__":
             plt.figure(figsize=(12, 6))
             plt.subplot(121)
             plt.title('Input Frame')
-            print(inputs[0, 0, 0].cpu().numpy() )
-            img = inputs[0, 0, 0].cpu().numpy() 
+            print(inputs[0, 4000, 0].detach().cpu().numpy())
+            img = inputs[0, 4000, 0].detach().cpu().numpy()
             plt.imshow(img)
             plt.show()
 
             plt.subplot(122)
             plt.title('Predicted Frame')
-            print(outputs[0, 0, 0])
-            img = outputs[0, 0, 0].cpu().numpy() 
+            print(outputs[0, 4000, 0].detach().cpu().numpy())
+            img = outputs[0, 4000, 0].detach().cpu().numpy()
             plt.imshow(img)
             plt.show()
