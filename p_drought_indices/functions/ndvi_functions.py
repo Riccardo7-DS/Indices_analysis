@@ -24,29 +24,25 @@ import numpy as np
 
 def ndvi_colormap():
     # List of upper boundaries for NDVI values (reversed order)
-    vals = [-0.941, -0.824, -0.706, -0.588, -0.471, -0.353, -0.235, -0.118, 0.000, 0.118, 0.235, 0.353, 0.471, 0.588, 0.706, 0.824, 0.941]
+    vals = [-0.2, -0.1, 0.00, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
 
     # List of corresponding colors in hexadecimal format (reversed order)
     cols = [
-        "#770000",
-        "#880000",
-        "#990000",
-        "#AA0000",
-        "#BB0000",
-        "#CC0000",
-        "#DD0000",
-        "#EE0000",
+        "#c0c0c0",
+        "#954535",
         "#FF0000",
-        "#FF8800",
-        "#FFCC00",
-        "#FFFF00",
+        "#E97451",
+        "#FFA500",
+        "#FFD700",
+        "#DFFF00",
         "#CCFF00",
         "#00FF00",
         "#00BB00",
         "#008800",
-        "#006600"
+        "#006600",
+        "#7F00FF"
     ]
-    cmap= ListedColormap(cols)
+    cmap= ListedColormap(cols,  name='custom_colormap')
     bounds = np.array(vals)
     # Normalize the colormap
     norm = BoundaryNorm(bounds, cmap.N)
