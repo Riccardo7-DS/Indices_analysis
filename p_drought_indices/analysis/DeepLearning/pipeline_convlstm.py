@@ -7,7 +7,7 @@ from p_drought_indices.functions.function_clns import load_config, interpolate_p
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from p_drought_indices.analysis.DeepLearning.dataset import CustomDataset
+from p_drought_indices.analysis.DeepLearning.dataset import CustomConvLSTMDataset
 from torch.utils.data import DataLoader
 import pickle
 import argparse
@@ -69,12 +69,13 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     #### training parameters
     train_data, test_data, train_label, test_label = CNN_split(data, target, 
                                                                split_percentage=train_split)
+    
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
     batch_size = config_file["CONVLSTM"]["batch_size"]
 
     # create a CustomDataset object using the reshaped input data
-    train_dataset = CustomDataset(train_data, train_label)
-    test_dataset = CustomDataset(test_data, test_label)
+    train_dataset = CustomConvLSTMDataset(train_data, train_label)
+    test_dataset = CustomConvLSTMDataset(test_data, test_label)
     
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -86,13 +87,13 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     for batch_idx, (inputs, targets) in enumerate(train_dataloader):
         inputs = inputs.float()
         targets = targets.float()
-        print(inputs.shape, targets.shape, inputs.max(), inputs.min())
+        #print(inputs.shape, targets.shape, inputs.max(), inputs.min())
     
     
     for batch_idx, (inputs, targets) in enumerate(test_dataloader):
         inputs = inputs.float()
         targets = targets.float()
-        print(inputs.shape, targets.shape, inputs.max(), inputs.min())
+        #print(inputs.shape, targets.shape, inputs.max(), inputs.min())
 
 
     #### Start training
@@ -181,7 +182,6 @@ if __name__=="__main__":
     
     from p_drought_indices.functions.function_clns import check_xarray_dataset
     print("Visualizing dataset before imputation...")
-    check_xarray_dataset(args, [sub_precp["tp"], ds])
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
     train_split = 0.8
