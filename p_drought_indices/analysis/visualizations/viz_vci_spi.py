@@ -19,7 +19,7 @@ import matplotlib.patches as mpatches
 from matplotlib import gridspec
 import re
 from p_drought_indices.vegetation.NDVI_indices import compute_svi, compute_vci
-from p_drought_indices.analysis.metrics_table import MetricTable
+from p_drought_indices.analysis.spi_analysis.metrics_table import MetricTable
 from p_drought_indices.functions.function_clns import open_xarray_dataset, crop_get_spi,load_config
 import xarray as xr
 import os
