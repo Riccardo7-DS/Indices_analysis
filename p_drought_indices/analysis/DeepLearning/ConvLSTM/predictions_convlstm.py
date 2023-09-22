@@ -13,7 +13,11 @@ if __name__=="__main__":
     from torch.nn import MSELoss
     from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
     from torchvision.transforms import transforms 
+    from loguru import logger
+    import sys
 
+    logger.remove()
+    logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
     
     product = "ERA5_land"
     CONFIG_PATH = "config.yaml"
@@ -44,8 +48,10 @@ if __name__=="__main__":
     parser.add_argument("--convlstm", type=bool, default= True, help="")
 
     args = parser.parse_args()
+    logger.info("Starting preparing data...")
     sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product)
 
+    logger.info("Starting interpolation...")
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
 
@@ -56,7 +62,7 @@ if __name__=="__main__":
 
     path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model_1.pt")
     
-    logger = build_logging(config)
+    #logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
     criterion = MSELoss().to(config.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -67,6 +73,7 @@ if __name__=="__main__":
 
     model.load_state_dict(state['state_dict'])
     model.eval()
+    logger.info("Correctly loaded model")
 
     import numpy as np
     from torch.nn import MSELoss
@@ -77,6 +84,7 @@ if __name__=="__main__":
 
     train_split = 0.8
     #### training parameters
+    logger.info("Splitting data for training...")
     train_data, test_data, train_label, test_label = CNN_split(data, target, 
                                                                split_percentage=train_split)
     
@@ -91,6 +99,11 @@ if __name__=="__main__":
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
+<<<<<<< HEAD
+
+    logger.info("Checking data with images....")
+    for batch_idx, (inputs, targets) in enumerate(test_dataloader):
+=======
     pics = 5
 
 
@@ -136,6 +149,7 @@ if __name__=="__main__":
     sys.exit(0)
 
     for batch_idx, (inputs, targets) in enumerate(train_dataloader):
+>>>>>>> 18d558d5358923a158e46388d0339843807f4a25
         with torch.no_grad():
             inputs = inputs.float().to(config.device)
             targets = targets.float().to(config.device)
