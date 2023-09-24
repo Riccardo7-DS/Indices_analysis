@@ -6,6 +6,7 @@ import xarray as xr
 import os
 import numpy as np
 import torch
+import pandas as pd
 
 
 def get_predicted_dataset(pred, dates, sub_cols):
@@ -52,13 +53,14 @@ if __name__=="__main__":
     parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
     parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
     parser.add_argument('--seq_length',type=int,default=12,help='')
-    parser.add_argument("--country", type=list, default=None, help="Location for dataset")
-    parser.add_argument("--region",type=list, default=["Oromia","SNNPR","Gambela"], help="region location for dataset") #Amhara 
+    parser.add_argument("--country", type=list, default=["Kenya", "Ethiopia","Somalia"], help="Location for dataset")
+    parser.add_argument("--region",type=list, default=None, help="region location for dataset") #"Oromia","SNNPR","Gambela" 
     parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
+    parser.add_argument("--convlstm", type=bool, default= False, help="")
 
     args = parser.parse_args()
 
-    from p_drought_indices.analysis.DeepLearning.pipeline_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
+    from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
     path = config["PRECIP"]["ERA5_land"]["path"]
     args.output_dir = os.path.join(path,  "graph_net")
     checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")

@@ -62,7 +62,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
-    from p_drought_indices.analysis.DeepLearning.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
+    from p_drought_indices.analysis.DeepLearning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
     import numpy as np
     from p_drought_indices.functions.function_clns import load_config
 
