@@ -81,19 +81,18 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
     
-    
     ### check shape of data
     
     for batch_idx, (inputs, targets) in enumerate(train_dataloader):
         inputs = inputs.float()
         targets = targets.float()
-        #print(inputs.shape, targets.shape, inputs.max(), inputs.min())
+        print(inputs.shape, targets.shape, inputs.max(), inputs.min())
     
     
     for batch_idx, (inputs, targets) in enumerate(test_dataloader):
         inputs = inputs.float()
         targets = targets.float()
-        #print(inputs.shape, targets.shape, inputs.max(), inputs.min())
+        print(inputs.shape, targets.shape, inputs.max(), inputs.min())
 
 
     #### Start training
