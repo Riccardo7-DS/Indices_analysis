@@ -9,7 +9,7 @@ if __name__=="__main__":
     from torch.utils.data import DataLoader
     import argparse
     import torch
-    from p_drought_indices.analysis.DeepLearning.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
+    from p_drought_indices.analysis.DeepLearning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
     from torch.nn import MSELoss
     from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
     from torchvision.transforms import transforms 
@@ -78,7 +78,7 @@ if __name__=="__main__":
     import numpy as np
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
-    from p_drought_indices.analysis.DeepLearning.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
+    from p_drought_indices.analysis.DeepLearning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
     import numpy as np
     from p_drought_indices.functions.function_clns import load_config, CNN_split
 

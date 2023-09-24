@@ -6,7 +6,7 @@ import numpy as np
 from scipy.sparse import linalg
 
 import scipy.sparse as sp
-from p_drought_indices.analysis.DeepLearning.gwnet import gwnet
+from p_drought_indices.analysis.DeepLearning.GWNET.gwnet import gwnet
 import torch
 import time
 import argparse
@@ -99,7 +99,7 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     ### specify all the logging
     logger.remove()
     logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
-    if args.spi==False:
+    if args.spi is False:
         logger_name = os.path.join(log_path, f"log_{precp_dataset}_{args.forecast}.log")
     else:
         logger_name = os.path.join(log_path, f"log_{precp_dataset}_spi_{args.latency}.log")
@@ -107,7 +107,7 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         os.remove(logger_name)
     logger.add(logger_name, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
 
-    if args.spi==False:
+    if args.spi is False:
         logger.info(f"Starting NDVI prediction with product {args.precp_product} with {args.forecast} days of features...")
     else:
         logger.info(f"Starting NDVI prediction with product {args.precp_product} {filename} with {args.forecast} days of features...")
@@ -119,10 +119,10 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     #var_era5 = [var for var in era5_ds.data_vars][0]
 
     # Open the precipitation file with xarray
-    #precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
-        #.rio.write_crs(4326, inplace=True)
+    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
+        .rio.write_crs(4326, inplace=True)
 
-    precp_ds = prepare(xr.open_dataset(os.path.join(path, file))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(10.300000190734863, 3.5999999046325684, ))
+    #precp_ds = prepare(xr.open_dataset(os.path.join(path, file))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(10.300000190734863, 3.5999999046325684, ))
 
     var_target = [var for var in precp_ds.data_vars][0]
     precp_ds[var_target] = precp_ds[var_target].astype(np.float32)
@@ -134,8 +134,8 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     time_start = config['PRECIP'][precp_dataset]['date_start']
 
     # Open the vegetation file with xarray
-    #dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=args.country, regions=args.region))#.rio.write_crs(4326, inplace=True)
-    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(3.5999999046325684, 10.300000190734863))
+    dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=args.country, regions=args.region))#.rio.write_crs(4326, inplace=True)
+    #dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(3.5999999046325684, 10.300000190734863))
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
     dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
     dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
@@ -161,16 +161,22 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
 
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
-    #sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
-    #sub_precp = sub_precp.where(ds.notnull())
-    return sub_precp, ds
+    
+    if args.convlstm is True:
+        return sub_precp, ds
+    
+    else:
+        sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
+        sub_precp = sub_precp.where(ds.notnull())
+        return sub_precp, ds
 
 
 def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray, check_matrix:bool=False):
     config = load_config(CONFIG_PATH)
 
     x_df = sub_precp.to_dataframe()
-    if args.spi==False:
+
+    if args.spi is False:
         x_df = x_df.swaplevel(1,2)
     else:
         x_df = x_df.swaplevel(0,2)
@@ -206,11 +212,10 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
     logger.info("The instance have dimensions: {}", y_unstack.shape)
 
     st_df = x_df.reset_index()[["lon","lat"]].drop_duplicates()
-    dim = config["GWNET"]["pixels"]
 
     dest_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
 
-    if os.path.isfile(dest_path) and check_matrix==True:
+    if os.path.isfile(dest_path) and check_matrix is True:
         logger.info("Using previously created adjacency matrix")
     else:
         adj_dist = generate_adj_dist(st_df)
@@ -454,7 +459,7 @@ def masked_mape(preds, labels, null_val=np.nan):
 
 def save_figures(args:dict, epoch:int, train_loss:list, train_mape:list, train_rmse:list, test_loss:list, test_mape:list, test_rmse:list):
     epochs = list(range(1, epoch + 1))
-    if args.spi==False:
+    if args.spi is False:
         output = os.path.join(args.output_dir,  f"images_results/forecast_{args.forecast}")
     else:
         output = os.path.join(args.output_dir,  f"images_results/forecast_{args.precp_product}_SPI_{args.latency}")
@@ -522,6 +527,7 @@ class trainer():
         self.loss = masked_mae
         self.scaler = scaler
         self.clip = 5
+        self.device = device
 
     def train(self, input, real_val):
         self.model.train()
@@ -559,6 +565,26 @@ class trainer():
         rmse = masked_rmse(predict,real,0.0).item()
         return loss.item(),mape,rmse
     
+    def test(self, test_loader):
+        self.model.eval()
+        predictions = []
+        targets = []
+        test_loss = 0
+        with torch.no_grad():
+            for iter, (x, y) in enumerate(test_loader.get_iterator()):
+                testx = torch.Tensor(x).to(self.device)
+                testx = testx.transpose(1,3)
+                y = torch.Tensor(y).to(self.device)
+                y = y.transpose(1, 3)
+                input = nn.functional.pad(testx, (1, 0, 0, 0))
+                output = self.model(input).transpose(1, 3)
+                real = torch.unsqueeze(y[:, 0, :, :], dim=1)
+                loss = self.loss(output, real)
+                test_loss += loss
+                predictions.append(output) #[:,0,:,:].squeeze()
+                targets.append(real)
+            return (test_loss / test_loader.num_batch).item(), predictions, targets
+
 def metric(pred, real):
     mae = masked_mae(pred,real,0.0).item()
     mape = masked_mape(pred,real,0.0).item()
@@ -600,7 +626,6 @@ def main(args, CONFIG_PATH):
 
     dataloader, num_nodes, x_df = get_dataloader(args, CONFIG_PATH, sub_precp, ds, check_matrix=True)
     epochs = config["GWNET"]["epochs"]
-    dim = args.dim
     device = torch.device(args.device)
     adj_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
     adj_mx = load_adj(adj_path,  args.adjtype)
@@ -608,7 +633,12 @@ def main(args, CONFIG_PATH):
     supports = [torch.tensor(i).to(device) for i in adj_mx]
     metrics_recorder = MetricsRecorder()
 
-    if args.spi==True:
+    dictionary = {'predFile': args.output_dir + '/predicted_data/data/' + "pred_{p}_{f}".format(f=str(args.precp_product), 
+                                                                                          p=str(args.forecast)) + '.pkl',
+                  'targetFile': args.output_dir + '/predicted_data/data/' + "target_{p}_{f}".format(f=str(args.precp_product), 
+                                                                                          p=str(args.forecast)) + '.pkl',}
+
+    if args.spi is True:
         checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
     else:
         checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")
@@ -701,29 +731,21 @@ def main(args, CONFIG_PATH):
 
     print(engine.model)
 
-    outputs = []
     realy = torch.Tensor(dataloader['y_test']).to(device)
     realy = realy.transpose(1,3)[:,0,:,:]
-    logger.debug("realy dims is: {}", realy.shape)
 
-    for iter, (x, y) in enumerate(dataloader['test_loader'].get_iterator()):
-        logger.debug("single x shape: {}", x.shape)
-        testx = torch.Tensor(x).to(device)
-        testx = testx.transpose(1,3)
-        with torch.no_grad():
-            preds = engine.model(testx).transpose(1,3)
-        logger.debug("single testx shape: {}", testx.shape)
-        logger.debug("single prediction shape: {}", preds.shape)
-        logger.debug("squeezed pred dims is: {}", preds.squeeze().shape)
-        outputs.append(preds[:,0,:,:].squeeze())
+    test_loss, predictions, targets = engine.test(dataloader["test_loader"])
 
-    
-    logger.debug("outputs dims is: {}", outputs[0].shape)
-
-    yhat = torch.cat(outputs,dim=0)
-    logger.debug("yhat dims is: {}",yhat.shape)
+    yhat = torch.cat(predictions,dim=0).squeeze()
     yhat = yhat[:realy.size(0),...]
-    logger.debug("yhat dims is: {}",yhat.shape)
+
+    output = open(dictionary['predFile'], 'wb')
+    pickle.dump(yhat.cpu().detach().numpy(), output)
+    output.close()
+
+    target = open(dictionary['targetFile'], 'wb')
+    pickle.dump(realy.cpu().detach().numpy(), target)
+    target.close()
 
     logger.success("Training finished")
     logger.info("The valid loss on best model is {}".format(str(round(his_loss[bestid],4))))
@@ -734,8 +756,6 @@ def main(args, CONFIG_PATH):
     for i in range(args.seq_length):
         pred = scaler.inverse_transform(yhat[:,:,i])
         real = realy[:,:,i]
-        logger.info(pred.shape)
-        logger.info(real.shape)
         metrics = metric(pred,real) 
         log = 'Evaluate best model on test data for horizon {:d}, Test MAE: {:.4f}, Test MAPE: {:.4f}, Test RMSE: {:.4f}'
         logger.info(log.format(i+1, metrics[0], metrics[1], metrics[2]))
@@ -775,9 +795,11 @@ if __name__=="__main__":
     parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
     parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
     parser.add_argument('--seq_length',type=int,default=12,help='')
-    parser.add_argument("--country", type=list, default=None, help="Location for dataset")
-    parser.add_argument("--region",type=list, default=["Oromia","SNNPR","Gambela"], help="region location for dataset") #Amhara 
+    parser.add_argument("--country", type=list, default=["Kenya", "Ethiopia","Somalia"], help="Location for dataset")
+    parser.add_argument("--region",type=list, default=None, help="region location for dataset") #"Oromia","SNNPR","Gambela" 
     parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
+    parser.add_argument("--convlstm", type=bool, default= False, help="")
+    
 
     args = parser.parse_args()
     main(args, CONFIG_PATH)
