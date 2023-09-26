@@ -196,10 +196,10 @@ def extract_apply_cloudmask(ds, ds_cl, resample=False, include_water =True,downs
         return mask_clouds, res_xr  ###1) dataset without zeros (clouds) 2) dataset with cloud mask applied
 
 
-def apply_whittaker(datarray:DataArray, prediction="P1D", time_dim="time"):
+def apply_whittaker(datarray:DataArray, lambda_par:int=1, prediction="P1D", time_dim="time"):
     from fusets import WhittakerTransformer
     from fusets._xarray_utils import _extract_dates, _output_dates, _topydate
-    result = WhittakerTransformer().fit_transform(datarray.load(),smoothing_lambda=1,time_dimension=time_dim, prediction_period=prediction)
+    result = WhittakerTransformer().fit_transform(datarray.load(),smoothing_lambda=lambda_par, time_dimension=time_dim, prediction_period=prediction)
     dates = _extract_dates(datarray)
     expected_dates = _output_dates(prediction,dates[0],dates[-1])
     datarray['time'] = datarray.indexes['time'].normalize()

@@ -43,7 +43,7 @@ def create_paths(args:dict, path:str, spi:bool=False):
     if not os.path.exists(adj_path):
         os.makedirs(adj_path)
 
-    log_path = os.path.join(output_dir,  "logs")
+    log_path = os.path.join(output_dir,  "logs_")
     if not os.path.exists(log_path):
         os.makedirs(log_path)
 

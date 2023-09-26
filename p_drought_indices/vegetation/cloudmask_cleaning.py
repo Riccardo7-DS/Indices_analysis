@@ -190,9 +190,23 @@ def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia']
     res_ds.to_netcdf(os.path.join(config['NDVI']['ndvi_path'], 'percentage_ndvi.nc'))
     print("Success") 
 
+def apply_smoother_only(config_file:dict, lambda_par:int):
+    compression_level = 5
+    encoding = {'ndvi': {'zlib': True, 'complevel': compression_level}}
+    res_xr = xr.open_dataset(os.path.join(config_file["NDVI"]["ndvi_prep"], "final_ndvi.nc"))
+    print(f"Applying Whittaker filter with a lambda parameter of {lambda_par}...")
+    result = apply_whittaker(res_xr['ndvi'],lambda_par=lambda_par).to_dataset()
+    result.to_netcdf(os.path.join(config_file['NDVI']['ndvi_path'], f'smoothed_ndvi_lambda_{lambda_par}.nc'),\
+                     encoding=encoding)
+    print("Success")
+
 if __name__=="__main__":
     CONFIG_PATH = "config.yaml"
-    computation_pipeline(CONFIG_PATH, subset=False, drop_water="ESA")
+    lambda_par = 10000
+    #computation_pipeline(CONFIG_PATH, subset=False, drop_water="ESA")
+    config_file = load_config(CONFIG_PATH)
+    apply_smoother_only(config_file, lambda_par)
+    
 
 
 
