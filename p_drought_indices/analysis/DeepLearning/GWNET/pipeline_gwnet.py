@@ -43,7 +43,7 @@ def create_paths(args:dict, path:str, spi:bool=False):
     if not os.path.exists(adj_path):
         os.makedirs(adj_path)
 
-    log_path = os.path.join(output_dir,  "logs_")
+    log_path = os.path.join(output_dir,  "logs")
     if not os.path.exists(log_path):
         os.makedirs(log_path)
 
@@ -68,7 +68,10 @@ def create_paths(args:dict, path:str, spi:bool=False):
     return output_dir, log_path
 
 
-def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='smoothed_ndvi_1_old.nc'):
+def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='ndvi_smoothed_w2s.nc'):
+    
+    from p_drought_indices.functions.function_clns import crop_image_left
+
     config = load_config(CONFIG_PATH)
 
     config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
@@ -136,6 +139,7 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     # Open the vegetation file with xarray
     dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=args.country, regions=args.region))#.rio.write_crs(4326, inplace=True)
     #dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(3.5999999046325684, 10.300000190734863))
+    dataset["ndvi"] = dataset["ndvi"].transpose("time","lat","lon")
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
     dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
     dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
@@ -155,9 +159,9 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
 
     else:
         print("Selecting data for ConvLSTM")
-        idx_lat, lat_max, idx_lon, lon_max = crop_image_right(precp_ds, args.dim)
+        idx_lat, lat_max, idx_lon, lon_min = crop_image_left(precp_ds, args.dim)
         sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
-            .sel(lat=slice(lat_max, idx_lat), lon=slice(idx_lon, lon_max))
+            .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
 
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})

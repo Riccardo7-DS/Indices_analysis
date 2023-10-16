@@ -1,5 +1,5 @@
 if __name__=="__main__":
-    from p_drought_indices.analysis.DeepLearning.pipeline_gwnet import data_preparation 
+    from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import data_preparation 
     import pickle
     import os
     import matplotlib.pyplot as plt

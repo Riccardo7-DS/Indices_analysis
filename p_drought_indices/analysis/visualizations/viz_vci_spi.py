@@ -28,6 +28,9 @@ import calendar
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Union
+from tqdm.auto import tqdm
+import time
+from timeit import default_timer as timer
 
 def get_dates(gap_year=False):
     if gap_year==False:
@@ -48,7 +51,7 @@ def box_plot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, title:str
 
     day_obj = dfDay(ds = ds, var=var)
     df_list = []
-    for day in range(1,days+1):
+    for day in tqdm(range(1,days+1)):
         day_obj.get_day(day)
         locals()[day_obj.df_name] = day_obj.df
         df_list.append(locals()[day_obj.df_name][var])
@@ -93,7 +96,6 @@ class dfDay:
         self.dataset = ds
         self.var = var
 
-  
     def get_day(self, day:int):
         df = self.dataset.where(self.dataset["dayofyear"]==day, drop=True)[self.var].to_dataframe()
         self.df = self._clen_df(df)
@@ -114,10 +116,10 @@ def str_month(month):
     
 def subsetting_whole(df_list_all, months, year=2020):
     last_day = calendar.monthrange(year, months[-1])[1]
-    date_start = f"01-{str_month(months[0])}-{year}"
-    date_end = f"{last_day}-{str_month(months[-1])}-{year}"
-    int_st = time.strptime(date_start, "%d-%m-%Y").tm_yday
-    int_end = time.strptime(date_end, "%d-%m-%Y").tm_yday
+    date_start = f"{year}-{str_month(months[0])}-01"
+    date_end = f"{year}-{str_month(months[-1])}-{last_day}"
+    int_st = time.strptime(date_start, "%Y-%m-%d").tm_yday
+    int_end = time.strptime(date_end, "%Y-%m-%d").tm_yday
     return  df_list_all[int_st-1:int_end]
 
 def get_xarray_time_subset(ds:xr.DataArray,  year:Union[list, int],month:Union[None, list, int]=None,variable:str="ndvi"):
@@ -129,7 +131,29 @@ def get_xarray_time_subset(ds:xr.DataArray,  year:Union[list, int],month:Union[N
         df_list, list_dates= get_subplot_year(ds_subset, year =year, var=variable, months=month)
     return df_list, list_dates
     
-def get_subplot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, months:Union[None, list,int]=None):
+def get_subplot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, 
+                     months:Union[None, list,int]=None, dask_compute:bool=True):
+
+    import dask
+    from dask.diagnostics import ProgressBar
+
+    def process_day(day_of_year, ds, var):
+        subset = ds.sel(time=(ds['time.dayofyear'] == day_of_year))
+        df = subset.to_dataframe().reset_index(drop=True)
+        df = df.dropna(subset=[var])
+        return df[var]
+    
+    def get_idx_dates_months(year, months):
+        print(f"For year {year} obtaining only months {months[0]} to {months[-1]} for boxplot")
+        last_day = calendar.monthrange(year, months[-1])[1]
+        date_start = f"{year}-{str_month(months[0])}-01"
+        date_end = f"{year}-{str_month(months[-1])}-{last_day}"
+        int_st = time.strptime(date_start, "%Y-%m-%d").tm_yday
+        int_end = time.strptime(date_end, "%Y-%m-%d").tm_yday 
+        list_new = pd.date_range(datetime.strptime(date_start,"%Y-%m-%d"), \
+                                 datetime.strptime(date_end,"%Y-%m-%d"), freq="D")\
+                                .to_series().dt.strftime('%d-%b').values
+        return int_st, int_end, list_new
 
     if year==None:
         days = 366
@@ -145,36 +169,49 @@ def get_subplot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, months
     list_dates = get_dates(gap_year=bool_days)
     print(f"days are {days}")
 
-    if (months!=None) & (type(year)==int):
-        print(f"For year {year} obtaining only months {months[0]} to {months[-1]} for boxplot")
-        last_day = calendar.monthrange(year, months[-1])[1]
-        date_start = f"01-{str_month(months[0])}-{year}"
-        date_end = f"{last_day}-{str_month(months[-1])}-{year}"
-        int_st = time.strptime(date_start, "%d-%m-%Y").tm_yday
-        int_end = time.strptime(date_end, "%d-%m-%Y").tm_yday 
-        
-        day_obj = dfDay(ds = ds, var=var)
-        list_new = pd.date_range(datetime.strptime(date_start,"%d-%m-%Y"), datetime.strptime(date_end,"%d-%m-%Y"), freq="D").to_series().dt.strftime('%d-%b').values
-        df_list = []
-        for day in range(int_st,int_end+1):
-            day_obj.get_day(day)
-            locals()[day_obj.df_name] = day_obj.df
-            df_list.append(locals()[day_obj.df_name][var])
+    if dask_compute==True:
+        ds = ds.chunk({'time': -1})
+        if months is None:
+            delayed_results = [dask.delayed(process_day)(day_of_year, ds, var) for day_of_year in range(1, days+1)]
             
-        return df_list, list_new
+        else:
+            int_st, int_end, list_dates = get_idx_dates_months(year, months)
+            delayed_results = [dask.delayed(process_day)(day_of_year, ds, var) for day_of_year in range(int_st, int_end+1)]
 
-    else:
-        print("Calculating the full year for boxplot")
-        day_obj = dfDay(ds = ds, var=var)
-        df_list = []
-        for day in range(1,days+1):
-            day_obj.get_day(day)
-            locals()[day_obj.df_name] = day_obj.df
-            df_list.append(locals()[day_obj.df_name][var])
+        with ProgressBar():
+            # Compute the delayed computations in parallel
+            computed_results = dask.compute(*delayed_results)
 
-        print(f"The days are {len(df_list)}")
+            # The computed_results will be a list of DataFrames
+            dataframes_list = list(computed_results)   
+
+            return dataframes_list, list_dates 
     
-        return df_list, list_dates
+    else:
+
+        if (months!=None) & (type(year)==int):
+            int_st, int_end, list_new = get_idx_dates_months(year, months)
+            day_obj = dfDay(ds = ds, var=var)
+            df_list = []
+            for day in tqdm(range(int_st,int_end+1)):
+                day_obj.get_day(day)
+                locals()[day_obj.df_name] = day_obj.df
+                df_list.append(locals()[day_obj.df_name][var])
+
+            return df_list, list_new
+
+        else:
+            print("Calculating the full year for boxplot")
+            day_obj = dfDay(ds = ds, var=var)
+            df_list = []
+            for day in tqdm(range(1,days+1)):
+                day_obj.get_day(day)
+                locals()[day_obj.df_name] = day_obj.df.compute()
+                df_list.append(locals()[day_obj.df_name][var])
+
+            print(f"The days are {len(df_list)}")
+
+            return df_list, list_dates
 
 def adjust_full_list(year, df_list_all, months=None):
     def str_month(month):
@@ -182,7 +219,7 @@ def adjust_full_list(year, df_list_all, months=None):
             return str(month)
         else:
             return "0" + str(month)
-    
+
     df_list_new = df_list_all.copy()
 
     days=366 if calendar.isleap(year) else 365
@@ -368,19 +405,39 @@ def plot_vci_2009_event(ds, path=None):
         plt.savefig(path)
     plt.show()
 
-def plot_veg_2009_event(ds, path=None):
-    df_list_all, list_dates_all = get_subplot_year(ds)
+def plot_veg_2009_event(ds, df_list_all=None, path=None):
+    if df_list_all is None:
+        df_list_all, list_dates_all = get_subplot_year(ds)
 
     months = [i for i in np.arange(9,13)]
     year = 2009
     df_list_1, list_dates_1 = get_xarray_time_subset(ds=ds, year=year,month=months, variable="ndvi")
     df_list_all_1 = subsetting_whole(df_list_all =df_list_all, year = year, months=months)
 
+    i = max([np.percentile(l, 75) for l in df_list_1])
+    j = max([np.percentile(l, 75) for l in df_list_all_1])
+    max_1 = max(i, j)
+
+    i = min([np.percentile(l, 25) for l in df_list_1])
+    j = min([np.percentile(l, 25) for l in df_list_all_1])
+    min_1 = min(i, j)
+
     months = [i for i in np.arange(1,6)]
     year=2010
     df_list_2, list_dates_2 = get_xarray_time_subset(ds=ds, year=year, month=months, variable="ndvi")
     df_list_all_2 = subsetting_whole(df_list_all =df_list_all, months=months, year = year)
 
+    i = max([np.percentile(l, 75) for l in df_list_2])
+    j = max([np.percentile(l, 75) for l in df_list_all_2])
+    max_2 = max(i, j)
+
+    i = min([np.percentile(l, 25) for l in df_list_2])
+    j = min([np.percentile(l, 25) for l in df_list_all_2])
+    min_2 = min(i, j)
+
+    ndvi_min = min(min_1, min_2)
+
+    ndvi_max = max(max_1, max_2)
 
     fig = plt.figure(figsize=(22,6))
     # set height ratios for subplots
@@ -447,6 +504,8 @@ def plot_veg_2009_event(ds, path=None):
     for whisker in [line2["whiskers"], line4["whiskers"]]:
         for whisk in whisker:
             whisk.set_color("white")
+
+    plt.ylim(ndvi_min-0.05, ndvi_max+0.05)
 
     gs.tight_layout(fig, rect=[0, 0, 1, 0.95])
     plt.suptitle("Daily NDVI boxplot", fontsize=18)
@@ -1000,7 +1059,7 @@ def plot_spi_event(ds:xr.Dataset, variable:str, year:int, months:list, path=None
     plt.show()
 
 
-def plot_veg_event(ds:xr.Dataset, year:int, months:list,  path:str=None, df_list_all:list=None):
+def plot_veg_event(ds:xr.Dataset, year:int, months:list, df_list_all:list=None, path:str=None):
     if df_list_all is None:
         df_list_all, list_dates_all = get_subplot_year(ds)
 
@@ -1137,6 +1196,90 @@ def plot_spi_2009_event(ds, variable, path=None):
     plt.subplots_adjust(top=0.95)
     if path!=None:
         plt.savefig(path)
+    plt.show()
+
+
+
+def plot_whole_period_spi_veg(spi_ds:Union[xr.DataArray, xr.Dataset], 
+                              vci:Union[xr.DataArray, xr.Dataset], 
+                              late:int, var_target:str, 
+                              start_date:str="2006-01-01",end_date:str="2019-12-31"):
+    import matplotlib.dates as mdates
+
+
+    spi_med = spi_ds.sel(time=slice(start_date, end_date))[var_target].median(["lat","lon"])
+    veg_med = vci.sel(time=slice(start_date, end_date))["ndvi"].mean(["lat","lon"])
+    
+    time_vals = spi_med.time.values
+    time_vals = [pd.to_datetime(x).strftime("%Y-%m-%d") for x in time_vals]
+    dates = [pd.to_datetime(i) for i in time_vals]
+    
+    # Convert DataArrays to pandas DataFrames
+    spi_df = spi_med.to_dataframe(name='spi')
+    ndvi_df = veg_med.to_dataframe(name='ndvi')
+    
+    # Calculate spi_color based on conditions
+    spi_color = np.where(spi_med > 0, 'blue', 'red')
+    
+    # Convert DataArrays to pandas DataFrames
+    spi_df = pd.DataFrame({'spi': spi_df["spi"], 'spi_color': spi_color}, index=dates)
+    ndvi_df = pd.DataFrame({'ndvi': ndvi_df["ndvi"]}, index=dates)
+    
+    # Set up the figure and axis
+    fig, ax1 = plt.subplots(figsize=(40, 6))
+    ax2 = ax1.twinx()
+    
+    # Plot SPI as bar chart with colored bars
+    bar_width = 1
+    dates_shifted = spi_df.index.to_series().apply(lambda x: x - pd.DateOffset(days=bar_width/2))
+    ax1.bar(dates_shifted, spi_df['spi'], width=bar_width, color=spi_df['spi_color'], alpha=0.4)
+    
+    # Plot NDVI as a line chart
+    ndvi_df['ndvi'].plot.line(ax=ax2, color='green')
+    
+    # Set labels and titles
+    ax1.set_ylabel(f'SPI {late}', fontsize=16)
+    ax2.set_ylabel('NDVI', fontsize=16)
+    ax1.set_xlabel('Dates', fontsize=16)
+    ax1.yaxis.set_tick_params(labelsize=14)
+    ax2.yaxis.set_tick_params(labelsize=14)
+    #ax1.set_title(f'SPI {late} and VCI Comparison')
+    
+    # Set y-axis limits for SPI and NDVI
+    ndvi_min =  ndvi_df["ndvi"].min() - 0.05
+    ndvi_max =  ndvi_df["ndvi"].max()
+    spi_min = spi_df["spi"].min()
+    spi_max = spi_df["spi"].max()
+    ax1.set_ylim([spi_df["spi"].min(), spi_df["spi"].max()])
+    ax2.set_ylim([ndvi_min, ndvi_max])
+    
+    # Set y-axis tick labels for SPI (blue = >0, red = <=0)
+    #ax1.set_yticklabels(np.where(ax1.get_yticks() > 0, ax1.get_yticks(), '0'))
+    
+    # Adjust x-axis ticks to display one value per year (every 12 months)
+    ax1.xaxis.set_major_locator(mdates.YearLocator())
+    #ax1.xaxis.set_major_locator(mdates.MonthLocator())
+    
+    # Format x-axis date labels
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+    ax1.tick_params(labelsize=18, axis="x",which="both")
+    
+    # Rotate x-axis tick labels for better readability
+    plt.tick_params(rotation=45)
+
+    # Add gray shaded areas for March-May and October-December for every year
+    year_range = pd.date_range(start=start_date, end=end_date, freq='Y')
+    for year in year_range:
+        march_may = pd.date_range(start=year.replace(month=3, day=1), end=year.replace(month=5, day=31), freq='D')
+        jun_sep = pd.date_range(start=year.replace(month=6, day=1), end=year.replace(month=9, day=30), freq='D')
+        oct_dec = pd.date_range(start=year.replace(month=10, day=1), end=year.replace(month=12, day=31), freq='D')
+        ax1.fill_between(march_may,  spi_min,  spi_max, facecolor='lightgray', alpha=0.3)
+        ax1.fill_between(jun_sep,  spi_min,  spi_max, facecolor='silver', alpha=0.3)
+        ax1.fill_between(oct_dec,  spi_min,  spi_max, facecolor='darkgrey', alpha=0.3)
+
+    
+    plt.savefig(f"/media/BIFROST/N2/Riccardo/Indices_analysis/data/images/spi_{late}_vci.png")
+    # Show the plot
     plt.show()
     
 def loop_soil(CONFIG_PATH, level1=True): 

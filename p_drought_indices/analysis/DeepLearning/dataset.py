@@ -25,16 +25,47 @@ class CustomDataset(Dataset):
 
 
 class CustomConvLSTMDataset(Dataset):
-    def __init__(self, data, targets):
+    def __init__(self, config, data, labels):
         self.data = data
-        self.targets = targets
+        self.labels = labels
+        self.image_size = config.image_size
+        self.input_size = config.input_size
+        self.steps_head = config.step_length
+        self.num_timesteps = data.shape[1]
+        self.learning_window = config.num_frames_input
+        self.num_samples = config.num_samples
+        self.output_window = config.num_frames_output
+        self.num_frames = config.num_frames_input + config.num_frames_output
+        self._generate_traing_data()
+        #print('Loaded {} samples ({})'.format(self.__len__(), split))
+
+    def _generate_traing_data(self):
+
+        train_data_processed = np.zeros((self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
+                                         self.num_samples,
+                                         self.learning_window, *self.input_size), dtype=np.float32)
+        
+        label_data_processed = np.zeros((self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
+                                         self.num_samples, 
+                                         self.output_window, *self.input_size), dtype=np.float32)
+
+        current_idx = 0
+        while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
+            train_data_processed[current_idx, 0, :, :, :] = self.data[0, current_idx : current_idx + self.learning_window, :, :]
+            label_data_processed[current_idx, 0, :, :, :] = self.labels[0, current_idx + self.learning_window+ self.steps_head : current_idx + self.learning_window+ self.steps_head + self.output_window, :, :]
+            current_idx +=1
+
+        self.data = train_data_processed.swapaxes(1,2)
+        self.labels = label_data_processed.swapaxes(1,2)
 
     def __len__(self):
         return self.data.shape[0]
 
     def __getitem__(self, index):
-        X = np.expand_dims(self.data[index, :, :, :], axis=1)
-        y = np.expand_dims(self.targets[index, :, :, :], axis=1)
+        #X = np.expand_dims(self.data[index, :, :, :], axis=1)
+        #y = np.expand_dims(self.targets[index, :, :, :], axis=1)
+        X = self.data[index, :, :, :, :]
+        y = self.labels[index,:,  :, :, :]
         return X, y
 
 

@@ -206,3 +206,26 @@ def apply_whittaker(datarray:DataArray, lambda_par:int=1, prediction="P1D", time
     datarray = datarray.assign_coords(time = datarray.indexes['time'].normalize())
     result['time'] = [np.datetime64(i) for i in expected_dates]
     return result
+
+
+def get_missing_datarray(datarray, prediction="P1D"):
+    from fusets._xarray_utils import _extract_dates, _output_dates
+    datarray['time'] = datarray.indexes['time'].normalize()
+    datarray = datarray.assign_coords(time = datarray.indexes['time'].normalize())
+    dates = _extract_dates(datarray)
+    expected_dates = _output_dates(prediction, dates[0],dates[-1])
+    
+    dates = [np.datetime64(i) for i in expected_dates]
+    missing_dates = [i for i in dates if i not in datarray['time'].values]
+    print("Missing dates are:" , missing_dates)
+    lat = datarray["lat"]
+    lon = datarray["lon"]
+    array_zero = np.zeros((len(lat), len(lon), len(missing_dates)))
+    print(array_zero)
+    print(array_zero.shape)
+    new_ds = xr.DataArray(array_zero,
+                            coords={"lat": lat, "lon":lon, "time":missing_dates},
+                            dims= ["lat","lon","time"],
+                            name="ndvi"
+                            )
+    return new_ds

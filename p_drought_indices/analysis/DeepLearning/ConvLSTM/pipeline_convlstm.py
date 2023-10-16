@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torchvision import transforms
 import os
-from p_drought_indices.functions.function_clns import load_config, interpolate_prepare, prepare, CNN_split, CNN_preprocessing, get_lat_lon_window
+from p_drought_indices.functions.function_clns import load_config, subsetting_pipeline, interpolate_prepare, prepare, CNN_split, CNN_preprocessing, get_lat_lon_window
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -18,14 +18,14 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
 
     # Open the NetCDF file with xarray
-    dataset = prepare(xr.open_dataset(os.path.join(config_file['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))).sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
+    dataset = prepare(xr.open_dataset(os.path.join(config_file['NDVI']['ndvi_path'], 'ndvi_smoothed_w2s.nc'))).sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
 
     prod = "ERA5"
     late = 90
 
-    path = config_file['SPI']['ERA5']['path']
-    file = "era5_land_merged.nc" #f"ERA5_spi_gamma_{late}.nc"
-    precp_ds = prepare(xr.open_dataset(os.path.join(path, file)))
+    path = config_file['PRECIP']['ERA5']['path']
+    file = "ERA5_merged.nc" #"era5_land_merged.nc" #f"ERA5_spi_gamma_{late}.nc"
+    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file))))
     var_target = [var for var in precp_ds.data_vars][0] #"spi_gamma_{}".format(late)
     print(f"The {prod} raster has spatial dimensions:", precp_ds.rio.resolution())
 
@@ -74,12 +74,12 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     batch_size = config_file["CONVLSTM"]["batch_size"]
 
     # create a CustomDataset object using the reshaped input data
-    train_dataset = CustomConvLSTMDataset(train_data, train_label)
-    test_dataset = CustomConvLSTMDataset(test_data, test_label)
+    train_dataset = CustomConvLSTMDataset(config, train_data, train_label)
+    test_dataset = CustomConvLSTMDataset(config, test_data, test_label)
     
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
     ### check shape of data
     
@@ -103,7 +103,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     # Define best_score, counter, and patience for early stopping:
     best_score = None
     counter = 0
-    patience = 200
+    patience = 20
     
     logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
@@ -140,7 +140,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
         plt.close()
 
 if __name__=="__main__":
-    from p_drought_indices.analysis.DeepLearning.pipeline_gwnet import data_preparation 
+    from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import data_preparation 
     import pickle
     import os
     import matplotlib.pyplot as plt
@@ -148,7 +148,9 @@ if __name__=="__main__":
     import numpy as np
     from p_drought_indices.analysis.DeepLearning.dataset import CustomDataset
     from torch.utils.data import DataLoader
-    product = "ERA5_land"
+    from loguru import logger
+
+    product = "ERA5"
     CONFIG_PATH = "config.yaml"
     config = load_config(CONFIG_PATH)
     parser = argparse.ArgumentParser()
@@ -175,9 +177,11 @@ if __name__=="__main__":
     #parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
     parser.add_argument("--dim", type=int, default= config["CONVLSTM"]["pixels"], help="")
     parser.add_argument("--convlstm", type=bool, default= True, help="")
+    parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
+    parser.add_argument("--region", type=list, default=None, help="Location for dataset")
 
     args = parser.parse_args()
-    sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product)
+    sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
     
     from p_drought_indices.functions.function_clns import check_xarray_dataset
     print("Visualizing dataset before imputation...")

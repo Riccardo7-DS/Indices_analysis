@@ -1,13 +1,13 @@
 import os
-import cdsapi
 from p_drought_indices.functions.function_clns import load_config
 import xarray as xr
 import numpy as np
-import ee
-
+from loguru import logger
 
 
 def data_collection(config_path:str, dest_path:str, years:list):
+    import cdsapi
+
     config = load_config(config_path)
     cdo_key = config["CDO"]["key"]
     c = cdsapi.Client(key = cdo_key ) #Replace UID:ApiKey with you UID and Api Key
@@ -65,14 +65,49 @@ def pipeline_era5_collection_cds(config_path):
     ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"],"era5_land_merged.nc"))
 
 def process_era5(ds: xr.Dataset, var:str = "tp"):
-    ds = ds.rename({"longitude":'lon', "latitude": "lat"})
+    if "latitude" in ds.dims:
+        ds = ds.rename({"longitude":'lon', "latitude": "lat"})
     attrs = ds[var].attrs
     attrs['units']='mm'
     ds[var] = ds[var]*1000
     ds[var].attrs = attrs
     return ds
 
+"""
+Functions to collect ERA5 data with google cloud
+"""
+
+def query_era5_gs(CONFIG_PATH):
+    import fsspec
+    fs = fsspec.filesystem('gs')
+    import xarray as xr
+    import os
+    from loguru import logger
+    from p_drought_indices.functions.function_clns import load_config, subsetting_pipeline
+
+    config = load_config(CONFIG_PATH)
+    ar_full_37_1h = xr.open_zarr(
+        'gs://gcp-public-data-arco-era5/ar/1959-2022-full_37-1h-0p25deg-chunk-1.zarr-v2/',
+         chunks={'time': 48},
+         consolidated=True
+    ).rename({"latitude":"lat", "longitude":"lon"})
+        
+    test_ds = subsetting_pipeline(CONFIG_PATH, ar_full_37_1h)
+    test_ds = process_era5(test_ds, var="total_precipitation")
+    logger.info("Starting resampling from hourly to daily...")
+    test_ds = test_ds["total_precipitation"].resample(time="1D").sum().to_dataset()
+
+    logger.info("Saving dataset locally...")
+    compress_kwargs = {"total_precipitation": {'zlib': True, 'complevel': 4}} # You can adjust 'complevel' based on your needs
+    test_ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"], "era5_total_precipitation_gc.nc"),
+                      encoding=compress_kwargs)
+
+"""
+Functions to collect ERA5 data with Earth Engine
+"""
+
 def ee_collection(start_date:str, end_date:str):
+    import ee
 
 # Initialize Earth Engine
     ee.Initialize()
@@ -146,6 +181,7 @@ def collect_missing_days(CONFIG_PATH:str):
         ee_collection(day, end_day)
 
 def check_wrong_precp_days(base_path:str):
+    from p_drought_indices.functions.function_clns import subsetting_pipeline
     import pandas as pd
     path = os.path.join(base_path, "era5_land_merged.nc")
     precp_ds = subsetting_pipeline(CONFIG_PATH, xr.open_dataset(path))
@@ -204,7 +240,7 @@ def convert_tif_netcdf(CONFIG_PATH:str, base_path:str, path:str, dest_path, dest
         ds = combined_dataset.rename({"Band1":"tp"}).drop_indexes(["lat","lon","time"])
         #from p_drought_indices.functions.function_clns import subsetting_pipeline
         #ds = subsetting_pipeline(CONFIG_PATH, ds)
-        ds["tp"] = ds["tp"]*1000
+        ds["tp"] = ds["tp"]/1000
         ds["tp"].attrs['units'] = "mm"
     
     else:
@@ -230,19 +266,9 @@ def convert_tif_netcdf(CONFIG_PATH:str, base_path:str, path:str, dest_path, dest
         ds.to_netcdf(os.path.join(base_path, dest_filename), format='NETCDF4', engine='netcdf4')
 
 if __name__=="__main__":
-    from p_drought_indices.precipitation.data_collection.era5_daily_data import ee_collection
-    import xarray as xr
-    import os
-    from p_drought_indices.functions.function_clns import load_config, subsetting_pipeline
-    import ee
-    ee.Authenticate()
-
-    CONFIG_PATH= "../config.yaml"
-    config = load_config(CONFIG_PATH)
-    # Define the date range
-    start_date = '1970-01-01'
-    end_date = '2020-12-31'
-    output_path = os.path.join(config["SPI"]["ERA5"]["path"],'daily/ee_era5_ecmwf.tif')
-    task = ee_collection(start_date, end_date)
-
+    from loguru import logger
+    import sys
+    logger.add(sys.stdout, format="{time} - {level} - {message}", level="INFO")
+    CONFIG_PATH= "config.yaml"
+    query_era5_gs(CONFIG_PATH)
     

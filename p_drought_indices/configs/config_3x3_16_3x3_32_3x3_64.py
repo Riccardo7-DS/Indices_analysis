@@ -12,7 +12,7 @@ print(root_dir)
 
 class Config:
     gpus = [0, ]
-    device = "cpu"#torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     #if torch.cuda.is_available():
     #    num_workers = 8 * len(gpus)
     #    train_batch_size = 64
@@ -25,11 +25,12 @@ class Config:
     test_batch_size = 2 * train_batch_size
     data_file = 'datas/train-images-idx3-ubyte.gz'
 
-    num_frames_input = 10
-    num_frames_output = 10
-    image_size = (28, 28)
+    num_frames_input = 30
+    num_frames_output = 1
+    image_size = (64, 64)
     input_size = (64, 64)
-    step_length = 0.1
+    step_length = 7
+    num_samples = 1
     num_objects = [3]
     display = 10
     draw = 10

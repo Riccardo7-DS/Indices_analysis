@@ -350,6 +350,18 @@ def crop_image_right(temp_ds, target_pixels):
     idx_tagt_lon = dict_lon[idx_lon-target_pixels+1]
     return idx_tagt_lat, lat_max, idx_tagt_lon, lon_max
 
+def crop_image_left(temp_ds, target_pixels):
+    dict_lat = temp_ds["lat"].values
+    lat_max = temp_ds["lat"].max().values
+    idx_lat= np.where(dict_lat==lat_max)[0][0] ###get idx of max lat point
+    idx_tagt_lat = dict_lat[idx_lat+target_pixels-1] 
+    
+    dict_lon = temp_ds["lon"].values
+    lon_min = temp_ds["lon"].min().values
+    idx_lon= np.where(dict_lon==lon_min)[0][0]
+    idx_tagt_lon = dict_lon[idx_lon+target_pixels-1]
+    return idx_tagt_lat, lat_max, idx_tagt_lon, lon_min
+
 
 def check_timeformat_arrays(array_1:xr.DataArray, array_2:xr.DataArray):
     if array_1.indexes["time"][0] == array_2.indexes["time"][0]:

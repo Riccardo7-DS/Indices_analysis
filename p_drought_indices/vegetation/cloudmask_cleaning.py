@@ -17,7 +17,7 @@ import numpy as np
 import re
 import yaml
 from p_drought_indices.functions.function_clns import prepare, load_config, cut_file, open_xarray_dataset, crop_get_thresh
-from p_drought_indices.functions.ndvi_functions import apply_whittaker, drop_water_bodies_esa, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
+from p_drought_indices.functions.ndvi_functions import get_missing_datarray, apply_whittaker, drop_water_bodies_esa, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
 from p_drought_indices.vegetation.NDVI_indices import compute_vci
 from xarray import DataArray
 from p_drought_indices.ancillary_vars.FAO_HWSD import get_water_cover
