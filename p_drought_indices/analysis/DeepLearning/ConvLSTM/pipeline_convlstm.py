@@ -59,7 +59,9 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
 
 def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:float = 0.8):
     import numpy as np
-    from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
+    from p_drought_indices.configs.config_3x3_32_3x3_64_3x3_128 import config
+    #from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
+    from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import MetricsRecorder
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
     from p_drought_indices.analysis.DeepLearning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
@@ -97,7 +99,8 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
 
     #### Start training
     
-    name = '3x3_16_3x3_32_3x3_64'
+    #name = '3x3_16_3x3_32_3x3_64'
+    name = "3x3_32_3x3_64_3x3_128"
 
     ### parrameters for early stopping 
     # Define best_score, counter, and patience for early stopping:
@@ -107,17 +110,34 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     
     logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
+    metrics_recorder = MetricsRecorder()
 
     #criterion = CrossEntropyLoss().to(config.device)
     #criterion = torch.nn.MSELoss().to(config.device)
     criterion = MSELoss().to(config.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     train_records, valid_records, test_records = [], [], []
+    rmse_train, rmse_valid, rmse_test = [], [], []
+    mape_train, mape_valid, mape_test = [], [], []
     for epoch in tqdm(range(config.epochs)):
         epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, optimizer)
+        
         train_records.append(np.mean(epoch_records['loss']))
+        rmse_train.append(np.mean(epoch_records['rmse']))
+        mape_train.append(np.mean(epoch_records['mape']))
+
+        metrics_recorder.add_train_metrics(np.mean(epoch_records['mape']), np.mean(epoch_records['rmse']), np.mean(epoch_records['loss']))
+        log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
+        logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
+        
         epoch_records = valid_loop(config, logger, epoch, model, test_dataloader, criterion)
         valid_records.append(np.mean(epoch_records['loss']))
+        rmse_valid.append(np.mean(epoch_records['rmse']))
+        mape_valid.append(np.mean(epoch_records['mape']))
+        log = 'Epoch: {:03d}, Val Loss: {:.4f}, Val MAPE: {:.4f}, Val RMSE: {:.4f}'
+        logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
+        metrics_recorder.add_val_metrics(np.mean(epoch_records['mape']), np.mean(epoch_records['rmse']), np.mean(epoch_records['loss']))
+
         if best_score is None:
             best_score = epoch_records['loss']
         else:

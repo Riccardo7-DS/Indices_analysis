@@ -141,8 +141,10 @@ class ConvLSTM(nn.Module):
 
 
 def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer):
+    from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import masked_mae, masked_mape, masked_rmse, masked_mse, MetricsRecorder
+
     model.train()
-    epoch_records = {'loss': []}
+    epoch_records = {'loss': [], "mape":[], "rmse":[]}
     num_batchs = len(train_loader)
     for batch_idx, (inputs, targets) in enumerate(train_loader):
         print(inputs.max())
@@ -150,26 +152,36 @@ def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer)
         targets = targets.float().to(config.device)
         outputs = model(inputs)
         losses = criterion(outputs, targets)
+        mape = masked_mape(outputs,targets,0.0).item()
+        rmse = masked_rmse(outputs,targets,0.0).item()
         optimizer.zero_grad()
         losses.backward()
         optimizer.step()
         epoch_records['loss'].append(losses.item())
+        epoch_records["rmse"].append(rmse)
+        epoch_records["mape"].append(mape)
         if batch_idx and batch_idx % config.display == 0:
             logger.info('EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'.format(epoch, batch_idx, num_batchs,
                                                                                 epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
     return epoch_records
 
 def valid_loop(config, logger, epoch, model, valid_loader, criterion):
+    from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import masked_mae, masked_mape, masked_rmse, masked_mse, MetricsRecorder
+
     model.eval()
-    epoch_records = {'loss': []}
+    epoch_records = {'loss': [], "mape":[], "rmse":[]}
     num_batchs = len(valid_loader)
     for batch_idx, (inputs, targets) in enumerate(valid_loader):
         with torch.no_grad():
             inputs = inputs.float().to(config.device)
             targets = targets.float().to(config.device)
             outputs = model(inputs)
+            mape = masked_mape(outputs,targets,0.0).item()
+            rmse = masked_rmse(outputs,targets,0.0).item()
             losses = criterion(outputs, targets)
             epoch_records['loss'].append(losses.item())
+            epoch_records["rmse"].append(rmse)
+            epoch_records["mape"].append(mape)
             if batch_idx and batch_idx % config.display == 0:
                 logger.info('[V] EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'.format(epoch, batch_idx, num_batchs,
                                                                                     epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
