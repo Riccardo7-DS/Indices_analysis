@@ -59,12 +59,12 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
 
 def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:float = 0.8):
     import numpy as np
-    from p_drought_indices.configs.config_3x3_32_3x3_64_3x3_128 import config
-    #from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
+    #from p_drought_indices.configs.config_3x3_32_3x3_64_3x3_128 import config
+    from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
     from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import MetricsRecorder
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
-    from p_drought_indices.analysis.DeepLearning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
+    from p_drought_indices.analysis.DeepLearning.ConvLSTM.ConvLSTM import train_loop, valid_loop, build_logging# ConvLSTM
     import numpy as np
     from p_drought_indices.functions.function_clns import load_config
 
@@ -99,16 +99,17 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
 
     #### Start training
     
-    #name = '3x3_16_3x3_32_3x3_64'
-    name = "3x3_32_3x3_64_3x3_128"
+    name = '3x3_16_3x3_32_3x3_64'
+    #name = "3x3_32_3x3_64_3x3_128"
 
     ### parrameters for early stopping 
     # Define best_score, counter, and patience for early stopping:
     best_score = None
     counter = 0
-    patience = 20
+    patience = 100
     
     logger = build_logging(config)
+    from p_drought_indices.analysis.DeepLearning.ConvLSTM.cvlstm import ConvLSTM
     model = ConvLSTM(config).to(config.device)
     metrics_recorder = MetricsRecorder()
 

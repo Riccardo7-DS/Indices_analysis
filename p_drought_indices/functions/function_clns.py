@@ -321,7 +321,7 @@ def interpolate_prepare(args, sub_precp:xr.Dataset, ds:xr.DataArray):
     data = sub_precp[var].transpose("lat","lon","time").values #.rio.interpolate_na()
     target = np.array(target)
     data = np.array(data)
-    check_xarray_dataset(args, [null_vegetation,  sub_precp[var]],save=False)
+    check_xarray_dataset(args, [null_vegetation,  sub_precp[var]],save=False, plot=False)
     return data, target
 
 
@@ -388,7 +388,7 @@ def check_nulls_overtime(datarray):
     print(filtered_data)
     return filtered_data
 
-def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False):
+def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False, plot:bool=True):
     import matplotlib.pyplot as plt
     import os
     import time
@@ -412,23 +412,18 @@ def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False)
         print("Is null:", data.isnull().sum())
         print("Not null:", data.notnull().sum())
 
-        fig = plt.figure() 
-
-        print("Plotting the dataset...")
-        data.isel(time=0).plot()
+        if plot is True:
+            fig = plt.figure() 
+            print("Plotting the dataset...")
+            data.isel(time=0).plot()
+            plt.close(fig)
         if save is True:
             name = data.name
             if args.spi==False:
                 plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.forecast}/{name}_dataset.png"))
             else:
                 plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.precp_product}_SPI_{args.latency}/{name}_dataset.png"))
-            plt.close(fig)
-        else:
-            plt.show()
-            # Wait for 5 seconds (adjust the time as needed)
-            time.sleep(0.5)
-            # Close the image window
-            plt.close()
+            
     
     if type(data)==list:
         for ds in data:

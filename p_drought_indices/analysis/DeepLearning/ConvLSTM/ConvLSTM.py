@@ -24,6 +24,7 @@ class ConvLSTMBlock(nn.Module):
 
     def forward(self, inputs):
         '''
+
         :param inputs: (B, S, C, H, W)
         :param hidden_state: (hx: (B, S, C, H, W), cx: (B, S, C, H, W))
         :return:
@@ -115,12 +116,13 @@ class Decoder(nn.Module):
         '''
         idx = len(encoder_outputs)-1
         for layer in self.layers:
-            if 'conv_' in layer or 'deconv_' in layer:
+            if 'conv_' in layer or 'deconv_' in layer: #'
                 x = encoder_outputs[idx]
                 B, S, C, H, W = x.shape
                 x = x.view(B*S, C, H, W)
                 x = getattr(self, layer)(x)
                 x = x.view(B, S, x.shape[1], x.shape[2], x.shape[3])
+                
             elif 'convlstm' in layer:
                 idx -= 1
                 x = torch.cat([encoder_outputs[idx], x], dim=2)
@@ -142,15 +144,18 @@ class ConvLSTM(nn.Module):
 
 def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer):
     from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import masked_mae, masked_mape, masked_rmse, masked_mse, MetricsRecorder
-
+    #from torcheval.metrics import R2Score
     model.train()
-    epoch_records = {'loss': [], "mape":[], "rmse":[]}
+    epoch_records = {'loss': [], "mape":[], "rmse":[], "r2":[]}
+    #metric = R2Score()
     num_batchs = len(train_loader)
     for batch_idx, (inputs, targets) in enumerate(train_loader):
         print(inputs.max())
         inputs = inputs.float().to(config.device)
         targets = targets.float().to(config.device)
         outputs = model(inputs)
+        #metric.update(inputs, outputs)
+        print("Output shape:", outputs.shape)
         losses = criterion(outputs, targets)
         mape = masked_mape(outputs,targets,0.0).item()
         rmse = masked_rmse(outputs,targets,0.0).item()

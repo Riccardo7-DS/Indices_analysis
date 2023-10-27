@@ -5,13 +5,12 @@ if __name__=="__main__":
     import matplotlib.pyplot as plt
     from p_drought_indices.functions.function_clns import load_config, prepare, CNN_split, interpolate_prepare
     import numpy as np
-    from p_drought_indices.analysis.DeepLearning.dataset import CustomDataset
+    from p_drought_indices.analysis.DeepLearning.dataset import CustomConvLSTMDataset
     from torch.utils.data import DataLoader
     import argparse
     import torch
     from p_drought_indices.analysis.DeepLearning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
     from torch.nn import MSELoss
-    from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
     from torchvision.transforms import transforms 
     from loguru import logger
     import sys
@@ -19,7 +18,7 @@ if __name__=="__main__":
     logger.remove()
     logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
     
-    product = "ERA5_land"
+    product = "ERA5"
     CONFIG_PATH = "config.yaml"
     config_file = load_config(CONFIG_PATH)
     parser = argparse.ArgumentParser()
@@ -46,21 +45,21 @@ if __name__=="__main__":
     #parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
     parser.add_argument("--dim", type=int, default= config_file["CONVLSTM"]["pixels"], help="")
     parser.add_argument("--convlstm", type=bool, default= True, help="")
+    parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
+    parser.add_argument("--region", type=list, default=None, help="Location for dataset")
 
     args = parser.parse_args()
     logger.info("Starting preparing data...")
-    sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product)
+    sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
 
     logger.info("Starting interpolation...")
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
-
-    print("DATA SHAPE: ",data.shape)
     
-    from p_drought_indices.configs.config_3x3_16_3x3_32_3x3_64 import config
+    from p_drought_indices.configs.config_3x3_32_3x3_64_3x3_128 import config
 
 
-    path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model_1.pt")
+    path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
     
     #logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
@@ -75,12 +74,6 @@ if __name__=="__main__":
     model.eval()
     logger.info("Correctly loaded model")
 
-    import numpy as np
-    from torch.nn import MSELoss
-    import matplotlib.pyplot as plt
-    from p_drought_indices.analysis.DeepLearning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
-    import numpy as np
-    from p_drought_indices.functions.function_clns import load_config, CNN_split
 
     train_split = 0.8
     #### training parameters
@@ -89,85 +82,99 @@ if __name__=="__main__":
                                                                split_percentage=train_split)
     
     print("First step shape training data...", train_data.shape)
-    config_file = load_config(CONFIG_PATH=CONFIG_PATH)
+
     batch_size = config_file["CONVLSTM"]["batch_size"]
     # create a CustomDataset object using the reshaped input data
-    train_dataset = CustomDataset(train_data, train_label)
-    test_dataset = CustomDataset(test_data, test_label)
+    train_dataset = CustomConvLSTMDataset(config, train_data, train_label)
+    test_dataset = CustomConvLSTMDataset(config, test_data, test_label)
+
+    print("train shape", train_dataset)
 
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 
-<<<<<<< HEAD
-
-    logger.info("Checking data with images....")
-    for batch_idx, (inputs, targets) in enumerate(test_dataloader):
-=======
     pics = 5
-
-
+    samples = 5
+    
+    """
     fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
     for n in range(pics):
         img = data[:, :, n]
-        axes[n].imshow(img, cmap="RdYlGn")
+        axes[n].imshow(img, cmap="RdBu")
     
     plt.show()
 
     fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
     for n in range(pics):
-        img = train_data[0,n, 0, :, :] 
-        axes[n].imshow(img, cmap="RdYlGn")
+        img = train_data[ 0, n,  :, :] 
+        axes[n].imshow(img, cmap="RdBu")
 
     # Show the plot
     plt.show()
 
-    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
-    for n in range(pics):
-        img = train_dataset.data[0,n, 0, :, :] 
-        axes[n].imshow(img, cmap="RdYlGn")
-    
+    print("Plotting precipitation from train set")
+    fig, axes = plt.subplots(samples, pics, figsize=(5*5, 5))
+    for x in range(samples):
+        for n in range(pics, 0, -1):
+            img = train_dataset.data[x, -n, 0, :, :]
+            axes[x, n-pics].imshow(img, cmap= "RdBu")
+
     plt.show()
 
-    for batch_idx, (inputs, targets) in enumerate(train_dataloader):
-        inputs = inputs.float().to(config.device)
-        targets = targets.float().to(config.device)
-
-        inputs = torch.squeeze(inputs)
-        inputs = inputs.reshape(inputs.shape[1], inputs.shape[2], inputs.shape[0])
-        
-        print(inputs.shape, targets.shape, inputs.max(), inputs.min())
-        #images = torch.cat([inputs, targets], dim=1)
-        fig, axes = plt.subplots(1, pics, figsize=(inputs.shape[1]*5, 5))
+    print("Plotting vegetation from train set")
+    fig, axes = plt.subplots(samples, pics, figsize=(5*5, 5))
+    for x in range(samples):
         for n in range(pics):
-            img = inputs[ :, :, n].numpy()
-            axes[n].imshow(img, cmap="RdYlGn")
-    # Show the plot
+            img = train_dataset.labels[x, 0 ,0, :, :]
+            axes[x,n].imshow(img, cmap="RdYlGn")
+    
     plt.show()
+    """
+    from p_drought_indices.functions.ndvi_functions import ndvi_colormap
+    cmap_ndvi, norm =ndvi_colormap()
+    plot= False
+    prediction_matrix = np.zeros((len(train_dataloader.dataset),
+                                  *config.input_size),dtype=np.float32)
+    
+    print(prediction_matrix.shape)
 
-    import sys 
-    sys.exit(0)
-
-    for batch_idx, (inputs, targets) in enumerate(train_dataloader):
->>>>>>> 18d558d5358923a158e46388d0339843807f4a25
-        with torch.no_grad():
+    predictions = [] 
+    with torch.no_grad():
+        current_idx = 0
+        for inputs, targets in train_dataloader:
             inputs = inputs.float().to(config.device)
             targets = targets.float().to(config.device)
+            outputs = torch.squeeze(model(inputs)).detach().cpu().numpy()
+            prediction_matrix[current_idx: current_idx +outputs.shape[0], :, :] = outputs
+            current_idx +=outputs.shape[0]
+            #predictions = np.append(predictions, outputs)
+            #inputs = inputs.reshape(inputs.shape[1], inputs.shape[2], inputs.shape[0])
             print(inputs.shape, targets.shape, inputs.max(), inputs.min())
-            # Forward pass
-            outputs = model(inputs)
 
-            plt.figure(figsize=(12, 6))
-            plt.subplot(121)
-            plt.title('Input Frame')
-            print(inputs[0, 4000, 0].detach().cpu().numpy())
-            img = inputs[0, 4000, 0].detach().cpu().numpy()
-            plt.imshow(img)
-            plt.show()
+            if plot is True:
+                #images = torch.cat([inputs, targets], dim=1)
+                fig, axes = plt.subplots(samples, pics, figsize=(inputs.shape[1]*5, 5))
+                for x in range(samples):
+                    for n in range(pics):
+                        img = outputs[x, :, :]
+                        axes[x,n].imshow(img,  cmap=cmap_ndvi, vmax=1, vmin=-0.4)
+                # Show the plot
+                plt.show()
 
-            plt.subplot(122)
-            plt.title('Predicted Frame')
-            print(outputs[0, 4000, 0].detach().cpu().numpy())
-            img = outputs[0, 4000, 0].detach().cpu().numpy()
-            plt.imshow(img)
-            plt.show()
+            # Save the matrix to a .npy file
+        np.save(os.path.join(config_file["DEFAULT"]["output"],"matrix.npy"), prediction_matrix)
+
+        import xarray as xr
+
+        n_samples = data.shape[-1]
+        train_samples = int(round(train_split*n_samples, 0))
+
+        lat = ds["lat"].values
+        lon = ds["lon"].values
+        time = ds.isel(time=slice(0, train_samples-(config.num_frames_input + config.step_length + config.num_frames_output)))["time"].values 
+
+        da = xr.DataArray(prediction_matrix, 
+                        coords={'time': time, 'lat': lat, 'lon': lon},
+                        dims=['time', 'lat', 'lon'],
+                        name="ndvi").to_netcdf(os.path.join(config_file["DEFAULT"]["output"],"predicted_ndvi.nc"))
