@@ -1,9 +1,20 @@
 [tool.poetry]
-name = "p-drought-indices"
+name = "indices-analysis"
 version = "0.1.0"
-description = "\"A package to use Deep Learning models to forecast drought indices\""
+description = ""
 authors = ["Riccardo7-DS <riccardo_dercole@yahoo.it>"]
 readme = "README.md"
+
+packages = [
+    {include = "analysis", from = "src"},
+    {include = "eumetsat_data_collection", from = "src"},
+    {include = "utils", from = "src"},
+    {include = "precipitation", from = "src"},
+    {include = "soil_moisture", from = "src"},
+    {include = "vegetation", from = "src"},
+    {include = "shapefiles", from = "src"},
+    {include = "configs", from = "src"},
+]
 
 [tool.poetry.dependencies]
 python = "^3.9"
