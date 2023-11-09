@@ -95,8 +95,10 @@ class Decoder(nn.Module):
     def _make_layer(self, type, activation, in_ch, out_ch, kernel_size, padding, stride):
         layers = []
         if type == 'conv':
-            layers.append(nn.Conv2d(in_ch, out_ch, kernel_size=kernel_size, padding=padding, stride=stride, bias=False))
-            layers.append(nn.BatchNorm2d(out_ch))
+            layers.append(nn.Conv3d(in_ch, out_ch, kernel_size=(1,3,3), padding=(0,1,1)))
+            layers.append(nn.BatchNorm3d(out_ch))
+            #layers.append(nn.Conv2d(in_ch, out_ch, kernel_size=kernel_size, padding=padding, stride=stride, bias=False))
+            #layers.append(nn.BatchNorm2d(out_ch))
             if activation == 'leaky': layers.append(nn.LeakyReLU(inplace=True))
             elif activation == 'relu': layers.append(nn.ReLU(inplace=True))
             elif activation == 'sigmoid': layers.append(nn.Sigmoid())
@@ -116,7 +118,17 @@ class Decoder(nn.Module):
         '''
         idx = len(encoder_outputs)-1
         for layer in self.layers:
-            if 'conv_' in layer or 'deconv_' in layer: #'
+            if layer.startswith('conv_'):
+                x = encoder_outputs[idx]
+                B, S, C, H, W = x.shape
+                #x = x.view(B*S, C, H, W)
+                x = x.permute(0, 2, 1, 3, 4)
+                #print(idx, layer, "shape of decoder tensor", x.shape)
+                x = getattr(self, layer)(x)
+                x = x.permute(0, 2, 1, 3, 4)
+                #x = x.view(B, S, x.shape[1], x.shape[2], x.shape[3])
+            
+            elif 'deconv_' in layer: #'
                 x = encoder_outputs[idx]
                 B, S, C, H, W = x.shape
                 x = x.view(B*S, C, H, W)
@@ -142,26 +154,35 @@ class ConvLSTM(nn.Module):
         return x
 
 
-def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer):
-    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mae, masked_mape, masked_rmse, masked_mse, MetricsRecorder
+def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer, mask=None):
+    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, masked_mape, masked_rmse, masked_mse, MetricsRecorder
     #from torcheval.metrics import R2Score
     model.train()
     epoch_records = {'loss': [], "mape":[], "rmse":[], "r2":[]}
     #metric = R2Score()
     num_batchs = len(train_loader)
     for batch_idx, (inputs, targets) in enumerate(train_loader):
-        print(inputs.max())
+        #print(inputs.max())
         inputs = inputs.float().to(config.device)
-        targets = targets.float().to(config.device)
-        outputs = model(inputs)
-        #metric.update(inputs, outputs)
-        print("Output shape:", outputs.shape)
-        losses = criterion(outputs, targets)
-        mape = masked_mape(outputs,targets,0.0).item()
-        rmse = masked_rmse(outputs,targets,0.0).item()
+        targets = torch.squeeze(targets.float().to(config.device))
+        outputs = torch.squeeze(model(inputs))
+        outputs = outputs[:, -1, :, :]
+        #print("Output shape:", outputs.shape)
+        if config.masked_loss is False:
+            losses = criterion(outputs, targets)
+        else:
+            if mask is None:
+                raise ValueError("Please provide a mask for loss computation")
+            else:
+                mask = mask.float().to(config.device)
+                losses = masked_mse_loss(criterion, outputs, targets, mask)
+
+        mape = masked_mape(outputs,targets).item()
+        rmse = masked_rmse(outputs,targets).item()
         optimizer.zero_grad()
         losses.backward()
         optimizer.step()
+
         epoch_records['loss'].append(losses.item())
         epoch_records["rmse"].append(rmse)
         epoch_records["mape"].append(mape)
@@ -170,8 +191,8 @@ def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer)
                                                                                 epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
     return epoch_records
 
-def valid_loop(config, logger, epoch, model, valid_loader, criterion):
-    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mae, masked_mape, masked_rmse, masked_mse, MetricsRecorder
+def valid_loop(config, logger, epoch, model, valid_loader, criterion, mask=None):
+    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, masked_mape, masked_rmse, masked_mse, MetricsRecorder
 
     model.eval()
     epoch_records = {'loss': [], "mape":[], "rmse":[]}
@@ -179,11 +200,24 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion):
     for batch_idx, (inputs, targets) in enumerate(valid_loader):
         with torch.no_grad():
             inputs = inputs.float().to(config.device)
-            targets = targets.float().to(config.device)
-            outputs = model(inputs)
+            print(inputs.shape)
+            targets = torch.squeeze(targets.float().to(config.device))
+            outputs = torch.squeeze(model(inputs))
+            if config.masked_loss is False:
+                losses = criterion(outputs, targets)
+            else:
+                if mask is None:
+                    raise ValueError("Please provide a mask for loss computation")
+                else:
+                    mask = mask.float().to(config.device)
+                    losses = masked_mse_loss(criterion, outputs, targets, mask)
+
+            num_dimensions = outputs.dim()
+            if num_dimensions==4:
+                outputs = outputs[:,-1,:,:]
             mape = masked_mape(outputs,targets,0.0).item()
             rmse = masked_rmse(outputs,targets,0.0).item()
-            losses = criterion(outputs, targets)
+
             epoch_records['loss'].append(losses.item())
             epoch_records["rmse"].append(rmse)
             epoch_records["mape"].append(mape)

@@ -1,9 +1,10 @@
 import torch
 from torch import nn
-
+from typing import Union
 
 class ConvLSTMCell(nn.Module):
-    def __init__(self, input_dim, hidden_dim, input2state_kernel_size, state2state_kernel_size):
+    def __init__(self, input_dim, hidden_dim, input2state_kernel_size, state2state_kernel_size,
+                 cnn_dropout:Union[float, None]=None, rnn_dropout:Union[float, None]=None):
         super(ConvLSTMCell, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -22,6 +23,10 @@ class ConvLSTMCell(nn.Module):
                              kernel_size=self.state2state_kernel_size,
                              padding=self.state2state_padding
                              )
+        if cnn_dropout is not None:
+            self.cnn_dropout = nn.Dropout(cnn_dropout)
+        if rnn_dropout is not None:   
+            self.rnn_dropout = nn.Dropout(rnn_dropout)
 
     def forward(self, x, h_pre, c_pre):
         """
@@ -32,7 +37,16 @@ class ConvLSTMCell(nn.Module):
         :return: c_next: batch_size * hidden_dim * weight * height
         """
 
+        if hasattr(self, "cnn_dropout"):
+            x = self.cnn_dropout(x)
+
+        # separate i, f, c o
         conv_xi, conv_xf, conv_xc, conv_xo = torch.split(self.W_x(x), self.hidden_dim, dim=1)
+        
+        if hasattr(self, "rnn_dropout"):
+            h = self.rnn_dropout(h_pre)
+        
+        # separate i, f, c o
         conv_hi, conv_hf, conv_hc, conv_ho = torch.split(self.W_h(h_pre), self.hidden_dim, dim=1)
 
         i = torch.sigmoid(conv_xi + conv_hi)
@@ -45,19 +59,24 @@ class ConvLSTMCell(nn.Module):
 
 
 class ConvLSTMModule(nn.Module):
-    def __init__(self, input_dim, hidden_dim, input2state_kernel_size, state2state_kernel_size, num_layers):
+    def __init__(self, input_dim, hidden_dim, input2state_kernel_size, 
+                 state2state_kernel_size, num_layers,
+                 cnn_dropout, rnn_dropout):
         super(ConvLSTMModule, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.state2state_kernel_size = state2state_kernel_size
         self.input2state_kernel_size = input2state_kernel_size
         self.num_layers = num_layers
+        self.cnn_dropout = cnn_dropout
+        self.rnn_dropout = rnn_dropout
 
         cell_list = []
         for i in range(num_layers):
             tmp_input_dim = self.input_dim if i == 0 else self.hidden_dim
             cell_list.append(
-                ConvLSTMCell(tmp_input_dim, self.hidden_dim, self.input2state_kernel_size, self.state2state_kernel_size)
+                ConvLSTMCell(tmp_input_dim, self.hidden_dim, self.input2state_kernel_size, 
+                             self.state2state_kernel_size, self.cnn_dropout, self.rnn_dropout)
             )
         self.cell_list = nn.ModuleList(cell_list)
 
@@ -102,18 +121,25 @@ class ConvLSTM(nn.Module,):
         self.input2state_kernel_size = input2state_kernel_size
         self.state2state_kernel_size = state2state_kernel_size
         self.num_layers = num_layers
+        self.cnn_dropout = config.cnn_dropout
+        self.rnn_dropout = config.rnn_dropout
 
         self.encoder = ConvLSTMModule(input_dim=self.input_dim,
                                       hidden_dim=self.hidden_dim,
                                       input2state_kernel_size=input2state_kernel_size,
                                       state2state_kernel_size=state2state_kernel_size,
-                                      num_layers=num_layers
+                                      num_layers=num_layers,
+                                      cnn_dropout=self.cnn_dropout,
+                                      rnn_dropout=self.rnn_dropout
+
                                       )
         self.decoder = ConvLSTMModule(input_dim=self.input_dim,
                                       hidden_dim=self.hidden_dim,
                                       input2state_kernel_size=input2state_kernel_size,
                                       state2state_kernel_size=state2state_kernel_size,
-                                      num_layers=num_layers
+                                      num_layers=num_layers,
+                                      cnn_dropout=self.cnn_dropout,
+                                      rnn_dropout=self.rnn_dropout
                                       )
         self.fc = nn.Conv2d(in_channels=self.hidden_dim, out_channels=self.input_dim, kernel_size=(1, 1))
 

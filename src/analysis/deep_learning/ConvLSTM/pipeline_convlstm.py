@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 import pickle
 import argparse
 from tqdm.auto import tqdm
-
+from typing import Union
 
 def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
@@ -56,11 +56,12 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     return sub_precp, ds
 
 
-def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:float = 0.7):
+def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array,
+                  mask:Union[None, np.array]=None, train_split:float = 0.7):
     import numpy as np
     #from configs.config_3x3_32_3x3_64_3x3_128 import config
     from configs.config_3x3_16_3x3_32_3x3_64 import config
-    from analysis.deep_learning.GWNET.pipeline_gwnet import MetricsRecorder
+    from analysis.deep_learning.GWNET.pipeline_gwnet import MetricsRecorder, masked_mse_loss
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
     from analysis.deep_learning.ConvLSTM.ConvLSTM import train_loop, valid_loop, build_logging# ConvLSTM
@@ -68,7 +69,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     from utils.function_clns import load_config
 
     #### training parameters
-    train_data, test_data, train_label, test_label, train_valid, valid_label = CNN_split(data, target, 
+    train_data, val_data, train_label, val_label, test_valid, test_label = CNN_split(data, target, 
                                                                split_percentage=train_split)
     
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
@@ -76,11 +77,11 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
 
     # create a CustomDataset object using the reshaped input data
     train_dataset = CustomConvLSTMDataset(config, train_data, train_label)
-    test_dataset = CustomConvLSTMDataset(config, test_data, test_label)
+    val_dataset = CustomConvLSTMDataset(config, val_data, val_label)
     
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     ### check shape of data
     
@@ -90,7 +91,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
         print(inputs.shape, targets.shape, inputs.max(), inputs.min())
     
     
-    for batch_idx, (inputs, targets) in enumerate(test_dataloader):
+    for batch_idx, (inputs, targets) in enumerate(val_dataloader):
         inputs = inputs.float()
         targets = targets.float()
         print(inputs.shape, targets.shape, inputs.max(), inputs.min())
@@ -104,23 +105,27 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
     ### parrameters for early stopping 
     # Define best_score, counter, and patience for early stopping:
     best_score = None
-    counter = 0
+    #counter = 0
     patience = 20
     
     logger = build_logging(config)
-    from analysis.deep_learning.ConvLSTM.cvlstm import ConvLSTM
+    from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM
     model = ConvLSTM(config).to(config.device)
     metrics_recorder = MetricsRecorder()
 
     #criterion = CrossEntropyLoss().to(config.device)
     #criterion = torch.nn.MSELoss().to(config.device)
-    criterion = MSELoss().to(config.device)
+    if config.masked_loss is False:
+        criterion = MSELoss().to(config.device)
+    else:
+        criterion = MSELoss(reduction='none').to(config.device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     train_records, valid_records, test_records = [], [], []
     rmse_train, rmse_valid, rmse_test = [], [], []
     mape_train, mape_valid, mape_test = [], [], []
     for epoch in tqdm(range(config.epochs)):
-        epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, optimizer)
+        epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, optimizer, mask=mask)
         
         train_records.append(np.mean(epoch_records['loss']))
         rmse_train.append(np.mean(epoch_records['rmse']))
@@ -130,7 +135,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
         logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
         
-        epoch_records = valid_loop(config, logger, epoch, model, test_dataloader, criterion)
+        epoch_records = valid_loop(config, logger, epoch, model, val_dataloader, criterion, mask)
         valid_records.append(np.mean(epoch_records['loss']))
         rmse_valid.append(np.mean(epoch_records['rmse']))
         mape_valid.append(np.mean(epoch_records['mape']))
@@ -147,11 +152,12 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, train_split:f
                 # and save the current model
                 best_score = epoch_records['loss']
                 torch.save({'state_dict':model.state_dict()}, os.path.join(config.checkpoint_dir,"convlstm_model.pt"))
+                logger.info("Saved new pytorch model!")
             else:
                 # val_loss does not improve, we increase the counter, 
                 # stop training if it exceeds the amount of patience
-                counter += 1
-                if counter >= patience:
+                #counter += 1
+                if epoch >=patience: #counter >= patience:
                     break
         plt.plot(range(epoch + 1), train_records, label='train')
         plt.plot(range(epoch + 1), valid_records, label='valid')
@@ -203,8 +209,10 @@ if __name__=="__main__":
     args = parser.parse_args()
     sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
     
+    mask = torch.tensor(np.array(xr.where(ds.isel(time=0).notnull(), 1, 0)))
+
     print("Visualizing dataset before imputation...")
     #sub_precp = sub_precp.to_dataset()
-    data, target = interpolate_prepare(args, sub_precp, ds)
+    data, target = interpolate_prepare(args, sub_precp, ds, interpolate=False)
     train_split = 0.7
-    training_lstm(CONFIG_PATH, data, target, train_split = train_split)
+    training_lstm(CONFIG_PATH, data, target, mask=mask, train_split = train_split)

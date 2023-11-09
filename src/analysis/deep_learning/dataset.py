@@ -31,6 +31,7 @@ class CustomConvLSTMDataset(Dataset):
         self.image_size = config.image_size
         self.input_size = config.input_size
         self.steps_head = config.step_length
+        self.output_channels = config.output_channels
         self.num_timesteps = data.shape[1]
         self.learning_window = config.num_frames_input
         self.num_samples = config.num_samples
@@ -46,7 +47,7 @@ class CustomConvLSTMDataset(Dataset):
                                          self.learning_window, *self.input_size), dtype=np.float32)
         
         label_data_processed = np.zeros((self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
-                                         self.num_samples, 
+                                         self.output_channels, 
                                          self.output_window, *self.input_size), dtype=np.float32)
 
         current_idx = 0
@@ -54,14 +55,14 @@ class CustomConvLSTMDataset(Dataset):
         if self.num_samples == 1:
             while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
                 train_data_processed[current_idx, 0, :, :, :] = self.data[0, current_idx : current_idx + self.learning_window, :, :]
-                label_data_processed[current_idx, 0, :, :, :] = self.labels[0, current_idx + self.learning_window+ self.steps_head : current_idx + self.learning_window+ self.steps_head + self.output_window, :, :]
+                label_data_processed[current_idx, 0, :, :, :] = self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window, :, :]
                 current_idx +=1
         
         elif self.num_samples ==2:
             while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
                 train_data_processed[current_idx, 0, :, :, :] = self.data[0, current_idx : current_idx + self.learning_window, :, :]
                 train_data_processed[current_idx, 1, :, :, :] = self.labels[0, current_idx : current_idx + self.learning_window, :, :]
-                label_data_processed[current_idx, 0, :, :, :] = self.labels[0, current_idx + self.learning_window+ self.steps_head : current_idx + self.learning_window+ self.steps_head + self.output_window, :, :]
+                label_data_processed[current_idx, 0, :, :, :] = self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window, :, :]
                 current_idx +=1
             
         else:

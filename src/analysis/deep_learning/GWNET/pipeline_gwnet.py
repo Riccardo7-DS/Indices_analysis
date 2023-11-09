@@ -446,6 +446,12 @@ def masked_mae(preds, labels, null_val=np.nan):
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
     return torch.mean(loss)
 
+def masked_mse_loss(criterion, preds, labels, mask):
+    loss = criterion(preds, labels)
+    loss = (loss * mask).sum() # gives \sigma_euclidean over unmasked elements
+    non_zero_elements = mask.sum()
+    mse_loss_val = loss / non_zero_elements
+    return mse_loss_val
 
 def masked_mape(preds, labels, null_val=np.nan):
     if np.isnan(null_val):

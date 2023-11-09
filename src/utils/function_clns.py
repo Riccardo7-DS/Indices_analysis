@@ -275,25 +275,27 @@ def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataAr
     return target, data
 
 
-def CNN_split(data:np.array, target:np.array, split_percentage:float=0.7, valid:float=0.1):
+def CNN_split(data:np.array, target:np.array, split_percentage:float=0.7, test_split:float=0.1):
 
+    print(f"{test_split:.0%} of the training data will be used as independent test")
     ###splitting test and train
     n_samples = data.shape[-1]
     train_samples = int(round(split_percentage*n_samples, 0))
-    test_samples = train_samples - int(round(valid*n_samples, 0))
+    test_samples = int(round(test_split*n_samples, 0))
+    val_samples = n_samples - (train_samples + test_samples)
 
     data = np.expand_dims(data.transpose(2,0,1), 0)
     target = np.expand_dims(target.transpose(2,0,1), 0)
 
     train_data = data[:,:train_samples,:,:]
-    test_data =  data[:,train_samples:train_samples+test_samples,:,:]
-    train_valid = data[:,train_samples+test_samples:,:,:]
+    val_data =  data[:,train_samples:train_samples+val_samples,:,:]
+    test_data= data[:,train_samples+ val_samples:,:,:]
 
     train_label = target[:,:train_samples,:,:]
-    test_label =  target[:,train_samples:train_samples+test_samples,:,:]
-    valid_label = target[:,train_samples+test_samples:,:,:]
+    val_label =  target[:,train_samples:train_samples+val_samples,:,:]
+    test_label = target[:,train_samples+ val_samples:,:,:]
 
-    return train_data, test_data, train_label, test_label, train_valid, valid_label
+    return train_data, val_data, train_label, val_label, test_data, test_label
 
 
 def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str,  preprocess_type:Literal["constant", "nearest","median", "None"]="constant", impute_value:Union[None, float, int]=None, split:float=0.8):
@@ -309,23 +311,31 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.Dat
 
     return train_data, test_data, train_label, test_label
 
-def interpolate_prepare(args, sub_precp:xr.Dataset, ds:xr.DataArray):
+def interpolate_prepare(args, sub_precp:xr.Dataset, ds:xr.DataArray, interpolate:bool=True):
     var_target = [var for var in sub_precp.data_vars][0]
     ds = ds.transpose("time","lat","lon")
     sub_precp = sub_precp.transpose("time","lat","lon")
     sub_precp[var_target] = sub_precp[var_target].rio.write_nodata("nan")
-    precip_null = sub_precp[var_target].rio.interpolate_na()
     ds.rio.write_nodata(np.nan, inplace=True)
-    null_vegetation = ds.rio.interpolate_na()
-    sub_precp = sub_precp.assign(null_precp =  precip_null)  
-    var = "null_precp"
+
+    if interpolate is True:
+        precip_null = sub_precp[var_target].rio.interpolate_na()
+    
+        null_vegetation = ds.rio.interpolate_na()
+        sub_precp = sub_precp.assign(null_precp =  precip_null)  
+        var = "null_precp"
+        target = null_vegetation.transpose("lat","lon","time").values #
+        check_xarray_dataset(args, [null_vegetation,  sub_precp[var]],save=False, plot=False)
+    else:
+        target = ds.transpose("lat","lon","time")
+        var = var_target
 
     # Read the data as a numpy array
-    target = null_vegetation.transpose("lat","lon","time").values #
+    
     data = sub_precp[var].transpose("lat","lon","time").values #.rio.interpolate_na()
     target = np.array(target)
     data = np.array(data)
-    check_xarray_dataset(args, [null_vegetation,  sub_precp[var]],save=False, plot=False)
+    
     return data, target
 
 

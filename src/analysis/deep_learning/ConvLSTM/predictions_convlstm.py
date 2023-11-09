@@ -9,8 +9,7 @@ if __name__=="__main__":
     from torch.utils.data import DataLoader
     import argparse
     import torch
-    from analysis.deep_learning.ConvLSTM.ConvLSTM import train_loop, valid_loop, build_logging
-    from analysis.deep_learning.ConvLSTM.cvlstm import ConvLSTM
+    from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
     from torch.nn import MSELoss
     from torchvision.transforms import transforms 
     from loguru import logger
@@ -58,8 +57,6 @@ if __name__=="__main__":
     data, target = interpolate_prepare(args, sub_precp, ds)
     
     from configs.config_3x3_16_3x3_32_3x3_64 import config
-
-
     path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
     
 
@@ -77,77 +74,119 @@ if __name__=="__main__":
     logger.info("Correctly loaded model")
 
 
-    train_split = 0.8
+    train_split = 0.7
+
     #### training parameters
     logger.info("Splitting data for training...")
-    train_data, test_data, train_label, test_label = CNN_split(data, target, 
+    train_data, val_data, train_label, val_label, test_data, test_label = CNN_split(data, target, 
                                                                split_percentage=train_split)
     
     print("First step shape training data...", train_data.shape)
 
+    print("train data:", train_data.shape)
+    print("val data:", val_data.shape)
+    print("test data:", test_data.shape)
+    
+    print("train label:", train_label.shape)
+    print("val label:", val_label.shape)
+    print("test label:", test_label.shape)
+
     batch_size = config_file["CONVLSTM"]["batch_size"]
     # create a CustomDataset object using the reshaped input data
     train_dataset = CustomConvLSTMDataset(config, train_data, train_label)
+    val_dataset = CustomConvLSTMDataset(config, val_data, val_label)
     test_dataset = CustomConvLSTMDataset(config, test_data, test_label)
-
-    print("train shape", train_dataset)
-
+    
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_dataloader = DataLoader(test_dataset,batch_size=batch_size, shuffle=False)
 
+    plot = False
+    evaluate = True
     pics = 5
     samples = 5
-    
-    
-    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
-    for n in range(pics):
-        img = target[:, :, n]
-        axes[n].imshow(img, cmap="RdYlGn")
-    
-    plt.show()
+    dataloader = test_dataloader
 
-    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
-    for n in range(pics):
-        img = train_label[ 0, n,  :, :] 
-        axes[n].imshow(img, cmap="RdYlGn")
-
-    # Show the plot
-    plt.show()
-
-    # print("Plotting precipitation from train set")
-    # fig, axes = plt.subplots(samples, pics, figsize=(5*5, 5))
-    # for x in range(samples):
-    #     for n in range(pics, 0, -1):
-    #         img = test_dataset.labels[x, -n, 0, :, :]
-    #         axes[x, n-pics].imshow(img, cmap= "RdBu")
-
-    # plt.show()
-
-    print("Plotting vegetation from train set")
-    fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
-    for n in range(pics):
-        img = train_dataset.labels[n, 0 ,0, :, :]
-        axes[n].imshow(img, cmap="RdYlGn")
-    
-    plt.show()
-    
-
-    from utils.ndvi_functions import ndvi_colormap
-    cmap_ndvi, norm =ndvi_colormap()
-    plot= True
-    prediction_matrix = np.zeros((len(train_dataloader.dataset),
+    prediction_matrix = np.zeros((len(dataloader.dataset),
                                   *config.input_size),dtype=np.float32)
     
-    print(prediction_matrix.shape)
+    print("Prediction matrix shape", prediction_matrix.shape)
 
-    predictions = [] 
-    with torch.no_grad():
+    if evaluate is True:
+        from analysis.deep_learning.ConvLSTM.ConvLSTM import valid_loop
+        from analysis.deep_learning.GWNET.pipeline_gwnet import MetricsRecorder
+
+        metrics_recorder = MetricsRecorder()
+
+        valid_records =[]
+        rmse_valid = []
+        mape_valid = []
+        epoch = 1
+
+        epoch_records = valid_loop(config, logger, epoch, model, dataloader, criterion)
+        valid_records.append(np.mean(epoch_records['loss']))
+        rmse_valid.append(np.mean(epoch_records['rmse']))
+        mape_valid.append(np.mean(epoch_records['mape']))
+        log = 'Epoch: {:03d}, Val Loss: {:.4f}, Val MAPE: {:.4f}, Val RMSE: {:.4f}'
+        logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
+        metrics_recorder.add_val_metrics(np.mean(epoch_records['mape']), np.mean(epoch_records['rmse']), np.mean(epoch_records['loss']))
+
+        """
         current_idx = 0
-        for inputs, targets in train_dataloader:
+        for inputs, targets in dataloader:
             inputs = inputs.float().to(config.device)
             targets = targets.float().to(config.device)
-            outputs = torch.squeeze(model(inputs)).detach().cpu().numpy()[:, 0, :, :]
+            outputs = torch.squeeze(model(inputs)).detach().cpu().numpy()
+            num_dimensions = outputs.ndim
+            if num_dimensions==4:
+                outputs = outputs[:,0,:,:]
+            elif num_dimensions==3:
+                outputs = outputs[0,:,:]
+            prediction_matrix[current_idx: current_idx +outputs.shape[0], :, :] = outputs
+            current_idx +=outputs.shape[0]
+        """
+    
+
+    if plot is True:
+        from utils.ndvi_functions import ndvi_colormap
+        cmap_ndvi, norm =ndvi_colormap()
+
+        fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+        for n in range(pics):
+            img = target[:, :, n]
+            axes[n].imshow(img, cmap="RdYlGn")
+
+        plt.show()
+
+        fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+        for n in range(pics):
+            img = train_label[ 0, n,  :, :] 
+            axes[n].imshow(img, cmap="RdYlGn")
+
+        plt.show()
+
+        print("Plotting vegetation from train set")
+        fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
+        for n in range(pics):
+            img = val_dataset.labels[n, 0 ,0, :, :]
+            axes[n].imshow(img, cmap="RdYlGn")
+
+        plt.show()
+
+
+    #predictions = [] 
+    with torch.no_grad():
+        current_idx = 0
+        for inputs, targets in dataloader:
+            inputs = inputs.float().to(config.device)
+            targets = targets.float().to(config.device)
+            outputs = torch.squeeze(model(inputs)).detach().cpu().numpy()
+            num_dimensions = outputs.ndim
+            if num_dimensions==4:
+                outputs = outputs[:,0,:,:]
+            elif num_dimensions==3:
+                outputs = outputs[0,:,:]
             prediction_matrix[current_idx: current_idx +outputs.shape[0], :, :] = outputs
             current_idx +=outputs.shape[0]
             #predictions = np.append(predictions, outputs)
@@ -164,18 +203,34 @@ if __name__=="__main__":
                 plt.show()
 
             # Save the matrix to a .npy file
-        np.save(os.path.join(config_file["DEFAULT"]["output"],"matrix.npy"), prediction_matrix)
+        #np.save(os.path.join(config_file["DEFAULT"]["output"],"matrix.npy"), prediction_matrix)
 
+        
+    def get_subset_datarray(ds, train_split:float, test_split:float, dataset:str="test"):
         import xarray as xr
-
-        n_samples = data.shape[-1]
-        train_samples = int(round(train_split*n_samples, 0))
+        n_samples = ds.sizes["time"] #data.shape[-1]
+        train_samples =  int(round(train_split* n_samples, 0))
+        test_samples = int(round(test_split* n_samples, 0))
+        val_samples = n_samples - train_samples - test_samples
 
         lat = ds["lat"].values
         lon = ds["lon"].values
-        time = ds.isel(time=slice(0, train_samples-(config.num_frames_input + config.step_length + config.num_frames_output)))["time"].values 
+        if dataset == "train":
+            time = ds.isel(time=slice(0, train_samples-(config.num_frames_input + config.step_length + config.num_frames_output)))["time"].values 
+        
+        elif dataset == "val":
+            time = ds.isel(time=slice(train_samples, train_samples + val_samples-(config.num_frames_input + config.step_length + config.num_frames_output)))["time"].values 
+        
+        elif dataset == "test":
+            time = ds.isel(time=slice(train_samples + val_samples, n_samples -(config.num_frames_input + config.step_length + config.num_frames_output)))["time"].values 
 
+        else:
+            raise NotImplementedError("You must chose between train, test and val sets!")
+        
         da = xr.DataArray(prediction_matrix, 
                         coords={'time': time, 'lat': lat, 'lon': lon},
                         dims=['time', 'lat', 'lon'],
-                        name="ndvi").to_netcdf(os.path.join(config_file["DEFAULT"]["output"],"predicted_ndvi.nc"))
+                        name="ndvi").to_netcdf(os.path.join(config_file["DEFAULT"]["output"],"predicted_ndvi_test.nc"))
+        return da
+    
+    get_subset_datarray(ds, train_split, test_split=0.1, dataset="test")
