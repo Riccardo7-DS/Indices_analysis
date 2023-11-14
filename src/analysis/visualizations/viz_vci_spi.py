@@ -28,9 +28,12 @@ import calendar
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Union
+<<<<<<< HEAD:src/analysis/visualizations/viz_vci_spi.py
 from tqdm.auto import tqdm
 import time
 from timeit import default_timer as timer
+=======
+>>>>>>> origin/main:p_drought_indices/analysis/visualizations/viz_vci_spi.py
 
 def get_dates(gap_year=False):
     if gap_year==False:
@@ -1059,7 +1062,11 @@ def plot_spi_event(ds:xr.Dataset, variable:str, year:int, months:list, path=None
     plt.show()
 
 
+<<<<<<< HEAD:src/analysis/visualizations/viz_vci_spi.py
 def plot_veg_event(ds:xr.Dataset, year:int, months:list, df_list_all:list=None, path:str=None):
+=======
+def plot_veg_event(ds:xr.Dataset, year:int, months:list,  path:str=None, df_list_all:list=None):
+>>>>>>> origin/main:p_drought_indices/analysis/visualizations/viz_vci_spi.py
     if df_list_all is None:
         df_list_all, list_dates_all = get_subplot_year(ds)
 
