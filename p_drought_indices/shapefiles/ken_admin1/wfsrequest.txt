@@ -1,1 +1,0 @@
-http://riskprofilesundrr.org/geoserver/wfs?format_options=charset%3AUTF-8&typename=geonode%3Ake_bou_gaul_admin1_20180614&outputFormat=SHAPE-ZIP&version=1.0.0&service=WFS&request=GetFeature

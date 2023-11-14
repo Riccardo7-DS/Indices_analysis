@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "indices-analysis"
+version = "0.1.0"
+description = ""
+authors = ["Riccardo7-DS <riccardo_dercole@yahoo.it>"]
+readme = "README.md"
+
+packages = [
+    {include = "analysis", from = "src"},
+    {include = "eumetsat_data_collection", from = "src"},
+    {include = "utils", from = "src"},
+    {include = "precipitation", from = "src"},
+    {include = "soil_moisture", from = "src"},
+    {include = "vegetation", from = "src"},
+    {include = "shapefiles", from = "src"},
+    {include = "configs", from = "src"},
+]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
