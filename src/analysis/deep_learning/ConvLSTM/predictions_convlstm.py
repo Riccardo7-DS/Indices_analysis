@@ -14,6 +14,7 @@ if __name__=="__main__":
     from torchvision.transforms import transforms 
     from loguru import logger
     import sys
+    import xarray as xr
 
     logger.remove()
     logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
@@ -31,8 +32,6 @@ if __name__=="__main__":
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
     parser.add_argument('--nhid',type=int,default=32,help='')
     parser.add_argument('--in_dim',type=int,default=1,help='inputs dimension')
-    parser.add_argument('--batch_size',type=int,default=config_file["CONVLSTM"]["batch_size"],help='batch size')
-    parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
     parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
     parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
     parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
@@ -47,32 +46,35 @@ if __name__=="__main__":
     parser.add_argument("--convlstm", type=bool, default= True, help="")
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
+    parser.add_argument("--normalize", type=bool, default=False, help="normalization")
 
     args = parser.parse_args()
     logger.info("Starting preparing data...")
     sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
-
+    mask = torch.tensor(np.array(xr.where(ds.isel(time=0).notnull(), 1, 0)))
+    
     logger.info("Starting interpolation...")
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
     
     from configs.config_3x3_16_3x3_32_3x3_64 import config
-    path = os.path.join(config_file["DEFAULT"]["output"], "checkpoints\convlstm_model.pt")
-    
+    import time
 
     #logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
     criterion = MSELoss().to(config.device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    state = {
-        'state_dict': model.state_dict(),
-        'optimizer': optimizer.state_dict(),
-    }
+    #optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
-    model.load_state_dict(state['state_dict'])
+    checkpoint = [f for f in os.listdir(config.checkpoint_dir) if "checkpoint_epoch_2" in f][0]
+
+    path =  os.path.join(config.checkpoint_dir, checkpoint) 
+    print("The file was last modified at", time.ctime(os.path.getmtime(path)))
+
+    checkpoint = torch.load(path)
+    model.load_state_dict(checkpoint["state_dict"])
     model.eval()
-    logger.info("Correctly loaded model")
 
+    logger.info("Correctly loaded model")
 
     train_split = 0.7
 
@@ -91,7 +93,7 @@ if __name__=="__main__":
     print("val label:", val_label.shape)
     print("test label:", test_label.shape)
 
-    batch_size = config_file["CONVLSTM"]["batch_size"]
+    batch_size = config.batch_size
     # create a CustomDataset object using the reshaped input data
     train_dataset = CustomConvLSTMDataset(config, train_data, train_label)
     val_dataset = CustomConvLSTMDataset(config, val_data, val_label)
@@ -124,15 +126,15 @@ if __name__=="__main__":
         mape_valid = []
         epoch = 1
 
-        epoch_records = valid_loop(config, logger, epoch, model, dataloader, criterion)
+        epoch_records = valid_loop(config, logger, epoch, model, dataloader, criterion, mask)
         valid_records.append(np.mean(epoch_records['loss']))
         rmse_valid.append(np.mean(epoch_records['rmse']))
         mape_valid.append(np.mean(epoch_records['mape']))
-        log = 'Epoch: {:03d}, Val Loss: {:.4f}, Val MAPE: {:.4f}, Val RMSE: {:.4f}'
+        log = 'Epoch: {:03d}, Test Loss: {:.4f}, Test MAPE: {:.4f}, Test RMSE: {:.4f}'
         logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
         metrics_recorder.add_val_metrics(np.mean(epoch_records['mape']), np.mean(epoch_records['rmse']), np.mean(epoch_records['loss']))
 
-        """
+        
         current_idx = 0
         for inputs, targets in dataloader:
             inputs = inputs.float().to(config.device)
@@ -145,7 +147,6 @@ if __name__=="__main__":
                 outputs = outputs[0,:,:]
             prediction_matrix[current_idx: current_idx +outputs.shape[0], :, :] = outputs
             current_idx +=outputs.shape[0]
-        """
     
 
     if plot is True:
@@ -174,39 +175,8 @@ if __name__=="__main__":
 
         plt.show()
 
-
-    #predictions = [] 
-    with torch.no_grad():
-        current_idx = 0
-        for inputs, targets in dataloader:
-            inputs = inputs.float().to(config.device)
-            targets = targets.float().to(config.device)
-            outputs = torch.squeeze(model(inputs)).detach().cpu().numpy()
-            num_dimensions = outputs.ndim
-            if num_dimensions==4:
-                outputs = outputs[:,0,:,:]
-            elif num_dimensions==3:
-                outputs = outputs[0,:,:]
-            prediction_matrix[current_idx: current_idx +outputs.shape[0], :, :] = outputs
-            current_idx +=outputs.shape[0]
-            #predictions = np.append(predictions, outputs)
-            #inputs = inputs.reshape(inputs.shape[1], inputs.shape[2], inputs.shape[0])
-            print(inputs.shape, targets.shape, inputs.max(), inputs.min())
-
-            if plot is True:
-                #images = torch.cat([inputs, targets], dim=1)
-                fig, axes = plt.subplots(1, pics, figsize=(inputs.shape[1]*5, 5))
-                for n in range(pics):
-                    img = outputs[n, :, :]
-                    axes[n].imshow(img,  cmap=cmap_ndvi, vmax=1, vmin=-0.4)
-                # Show the plot
-                plt.show()
-
-            # Save the matrix to a .npy file
-        #np.save(os.path.join(config_file["DEFAULT"]["output"],"matrix.npy"), prediction_matrix)
-
         
-    def get_subset_datarray(ds, train_split:float, test_split:float, dataset:str="test"):
+    def get_subset_datarray(ds, prediction_matrix, train_split:float, test_split:float, dataset:str="test"):
         import xarray as xr
         n_samples = ds.sizes["time"] #data.shape[-1]
         train_samples =  int(round(train_split* n_samples, 0))
@@ -233,4 +203,4 @@ if __name__=="__main__":
                         name="ndvi").to_netcdf(os.path.join(config_file["DEFAULT"]["output"],"predicted_ndvi_test.nc"))
         return da
     
-    get_subset_datarray(ds, train_split, test_split=0.1, dataset="test")
+    get_subset_datarray(ds, prediction_matrix, train_split, test_split=0.1, dataset="test")

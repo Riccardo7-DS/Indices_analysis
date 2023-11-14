@@ -88,6 +88,7 @@ class Decoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.layers = []
+        self.config = config
         for idx, params in enumerate(config.decoder):
             setattr(self, params[0]+'_'+str(idx), self._make_layer(*params))
             self.layers.append(params[0]+'_'+str(idx))
@@ -95,10 +96,12 @@ class Decoder(nn.Module):
     def _make_layer(self, type, activation, in_ch, out_ch, kernel_size, padding, stride):
         layers = []
         if type == 'conv':
-            layers.append(nn.Conv3d(in_ch, out_ch, kernel_size=(1,3,3), padding=(0,1,1)))
-            layers.append(nn.BatchNorm3d(out_ch))
-            #layers.append(nn.Conv2d(in_ch, out_ch, kernel_size=kernel_size, padding=padding, stride=stride, bias=False))
-            #layers.append(nn.BatchNorm2d(out_ch))
+            if self.config.decoder_3d is True:
+                layers.append(nn.Conv3d(in_ch, out_ch, kernel_size=(1,3,3), padding=(0,1,1)))
+                layers.append(nn.BatchNorm3d(out_ch))
+            else:
+                layers.append(nn.Conv2d(in_ch, out_ch, kernel_size=kernel_size, padding=padding, stride=stride, bias=False))
+                layers.append(nn.BatchNorm2d(out_ch))
             if activation == 'leaky': layers.append(nn.LeakyReLU(inplace=True))
             elif activation == 'relu': layers.append(nn.ReLU(inplace=True))
             elif activation == 'sigmoid': layers.append(nn.Sigmoid())
@@ -109,6 +112,7 @@ class Decoder(nn.Module):
             layers.append(nn.BatchNorm2d(out_ch))
             if activation == 'leaky': layers.append(nn.LeakyReLU(inplace=True))
             elif activation == 'relu': layers.append(nn.ReLU(inplace=True))
+            elif activation == "linear": layers.append(nn.Linear(inplace=True))
         return nn.Sequential(*layers)
 
     def forward(self, encoder_outputs):
@@ -119,22 +123,26 @@ class Decoder(nn.Module):
         idx = len(encoder_outputs)-1
         for layer in self.layers:
             if layer.startswith('conv_'):
-                x = encoder_outputs[idx]
-                B, S, C, H, W = x.shape
-                #x = x.view(B*S, C, H, W)
-                x = x.permute(0, 2, 1, 3, 4)
-                #print(idx, layer, "shape of decoder tensor", x.shape)
-                x = getattr(self, layer)(x)
-                x = x.permute(0, 2, 1, 3, 4)
-                #x = x.view(B, S, x.shape[1], x.shape[2], x.shape[3])
-            
+                if self.config.decoder_3d is True:
+                    x = encoder_outputs[idx]
+                    B, S, C, H, W = x.shape
+                    x = x.permute(0, 2, 1, 3, 4)
+                    x = getattr(self, layer)(x)
+                    x = x.permute(0, 2, 1, 3, 4)
+                else:
+                    x = encoder_outputs[idx]
+                    B, S, C, H, W = x.shape
+                    x = x.view(B*S, C, H, W)
+                    x = getattr(self, layer)(x)
+                    x = x.view(B, S, x.shape[1], x.shape[2], x.shape[3])
+
             elif 'deconv_' in layer: #'
                 x = encoder_outputs[idx]
                 B, S, C, H, W = x.shape
                 x = x.view(B*S, C, H, W)
                 x = getattr(self, layer)(x)
                 x = x.view(B, S, x.shape[1], x.shape[2], x.shape[3])
-                
+
             elif 'convlstm' in layer:
                 idx -= 1
                 x = torch.cat([encoder_outputs[idx], x], dim=2)
@@ -166,7 +174,11 @@ def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer,
         inputs = inputs.float().to(config.device)
         targets = torch.squeeze(targets.float().to(config.device))
         outputs = torch.squeeze(model(inputs))
-        outputs = outputs[:, -1, :, :]
+        num_dimensions = outputs.dim()
+        if num_dimensions==4:
+            outputs = outputs[:,-1,:,:]
+        elif num_dimensions == 3:
+            outputs = outputs[-1, :, :]
         #print("Output shape:", outputs.shape)
         if config.masked_loss is False:
             losses = criterion(outputs, targets)
@@ -200,9 +212,15 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion, mask=None)
     for batch_idx, (inputs, targets) in enumerate(valid_loader):
         with torch.no_grad():
             inputs = inputs.float().to(config.device)
-            print(inputs.shape)
+            #print(inputs.shape)
             targets = torch.squeeze(targets.float().to(config.device))
             outputs = torch.squeeze(model(inputs))
+            num_dimensions = outputs.dim()
+            if num_dimensions==4:
+                outputs = outputs[:,-1,:,:]
+            elif num_dimensions == 3:
+                outputs = outputs[-1, :, :]
+
             if config.masked_loss is False:
                 losses = criterion(outputs, targets)
             else:
@@ -212,11 +230,9 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion, mask=None)
                     mask = mask.float().to(config.device)
                     losses = masked_mse_loss(criterion, outputs, targets, mask)
 
-            num_dimensions = outputs.dim()
-            if num_dimensions==4:
-                outputs = outputs[:,-1,:,:]
-            mape = masked_mape(outputs,targets,0.0).item()
-            rmse = masked_rmse(outputs,targets,0.0).item()
+            
+            mape = masked_mape(outputs,targets).item()
+            rmse = masked_rmse(outputs,targets).item()
 
             epoch_records['loss'].append(losses.item())
             epoch_records["rmse"].append(rmse)
@@ -225,7 +241,6 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion, mask=None)
                 logger.info('[V] EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'.format(epoch, batch_idx, num_batchs,
                                                                                     epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
     return epoch_records
-
 
 
 def build_logging(config):

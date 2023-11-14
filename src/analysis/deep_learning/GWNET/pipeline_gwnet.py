@@ -101,13 +101,15 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     ### specify all the logging
     logger.remove()
     logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
+    
     if args.spi is False:
         logger_name = os.path.join(log_path, f"log_{precp_dataset}_{args.forecast}.log")
     else:
         logger_name = os.path.join(log_path, f"log_{precp_dataset}_spi_{args.latency}.log")
     if os.path.exists(logger_name): 
         os.remove(logger_name)
-    logger.add(logger_name, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
+
+    #logger.add(logger_name, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
 
     if args.spi is False:
         logger.info(f"Starting NDVI prediction with product {args.precp_product} with {args.forecast} days of features...")
@@ -145,6 +147,14 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     logger.info("MSG NDVI dataset resolution: {}", dataset.rio.resolution())
     logger.info("{p} precipitation dataset resolution: {r}".format(p=precp_dataset, r=precp_ds.rio.resolution()))
 
+    ##### Normalization
+    if args.normalize is True:
+        dataset["ndvi"] = (dataset["ndvi"]+1)/2
+        scaler = StandardScaler(mean=np.nanmean(precp_ds[var_target]), 
+                                           std=np.nanstd(precp_ds[var_target]))
+        
+        precp_ds[var_target] = scaler.transform(precp_ds[var_target])
+        
     if args.convlstm is False:
         print("Selecting data for GCNN WaveNet")
         try:
@@ -165,6 +175,9 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
     
+
+
+
     if args.convlstm is True:
         return sub_precp, ds
     
