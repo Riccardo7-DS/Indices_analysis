@@ -1,21 +1,12 @@
-<<<<<<< HEAD:src/analysis/deep_learning/GWNET/pipeline_gwnet.py
 from analysis.deep_learning.dataset import MyDataset
 from utils.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays, crop_image_right
-=======
-from p_drought_indices.analysis.DeepLearning.dataset import MyDataset
-from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays, crop_image_right
->>>>>>> origin/main:src/analysis/deep_learning/GWNET/GWNET/pipeline_gwnet.py
 import xarray as xr
 import os
 import numpy as np
 from scipy.sparse import linalg
 
 import scipy.sparse as sp
-<<<<<<< HEAD:src/analysis/deep_learning/GWNET/pipeline_gwnet.py
 from analysis.deep_learning.GWNET.gwnet import gwnet
-=======
-from p_drought_indices.analysis.DeepLearning.GWNET.gwnet import gwnet
->>>>>>> origin/main:src/analysis/deep_learning/GWNET/GWNET/pipeline_gwnet.py
 import torch
 import time
 import argparse
@@ -27,10 +18,6 @@ import pickle
 import matplotlib.pyplot as plt
 from loguru import logger
 import sys
-<<<<<<< HEAD:src/analysis/deep_learning/GWNET/pipeline_gwnet.py
-=======
-from osgeo import gdal
->>>>>>> origin/main:src/analysis/deep_learning/GWNET/GWNET/pipeline_gwnet.py
 
 CONFIG_PATH = "config.yaml"
 
@@ -55,7 +42,6 @@ def create_paths(args:dict, path:str, spi:bool=False):
     if not os.path.exists(adj_path):
         os.makedirs(adj_path)
 
-<<<<<<< HEAD:src/analysis/deep_learning/GWNET/pipeline_gwnet.py
     log_path = os.path.join(output_dir,  "logs")
     if not os.path.exists(log_path):
         os.makedirs(log_path)
@@ -116,71 +102,12 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     logger.remove()
     logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
     
-=======
-    log_path = os.path.join(output_dir,  "logs_")
-    if not os.path.exists(log_path):
-        os.makedirs(log_path)
-
-    if args.spi==False:
-        img_path = os.path.join(output_dir,  f"images_results/forecast_{args.forecast}")
-        if not os.path.exists(img_path):
-            os.makedirs(img_path)
-
-        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{args.forecast}")
-        if not os.path.exists(checkp_path):
-            os.makedirs(checkp_path)
-    
-    else:
-        img_path = os.path.join(output_dir,  f"images_results/forecast_{args.precp_product}_SPI_{args.latency}")
-        if not os.path.exists(img_path):
-            os.makedirs(img_path)
-
-        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
-        if not os.path.exists(checkp_path):
-            os.makedirs(checkp_path)
-    
-    return output_dir, log_path
-
-
-def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='smoothed_ndvi_1_old.nc'):
-    config = load_config(CONFIG_PATH)
-
-    config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
-                          config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
-    config_dir_precp = [config['PRECIP']['IMERG']['path'],config['PRECIP']['GPCC']['path'], config['PRECIP']['CHIRPS']['path'], 
-                        config['PRECIP']['ERA5']['path'],  config['PRECIP']['TAMSTAT']['path'],config['PRECIP']['MSWEP']['path'],
-                        config["PRECIP"]["ERA5_land"]["path"]]
-    
-    list_precp_prods = ["ERA5", "GPCC","CHIRPS","SPI_ERA5", "SPI_GPCC","SPI_CHIRPS","ERA5_land"]
-    
-    if precp_dataset not in list_precp_prods:
-        raise ValueError(f"Precipitation product must be one of {list_precp_prods}")
-    
-    if "SPI" in precp_dataset:
-        precp_dataset = precp_dataset.replace("SPI_","")
-        path = [f for f in config_directories if precp_dataset in f][0]
-        late = args.latency
-        filename = "spi_gamma_{}".format(late)
-        file = [f for f in os.listdir(path) if filename in f][0]
-    else:
-        path = [f for f in config_dir_precp if precp_dataset in f][0]
-        file = f"{precp_dataset}_merged.nc"
-
-    ### create all the paths
-    output_dir, log_path = create_paths(args, path)
-    args.output_dir = output_dir
-
-    ### specify all the logging
-    logger.remove()
-    logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
->>>>>>> origin/main:src/analysis/deep_learning/GWNET/GWNET/pipeline_gwnet.py
     if args.spi is False:
         logger_name = os.path.join(log_path, f"log_{precp_dataset}_{args.forecast}.log")
     else:
         logger_name = os.path.join(log_path, f"log_{precp_dataset}_spi_{args.latency}.log")
     if os.path.exists(logger_name): 
         os.remove(logger_name)
-<<<<<<< HEAD:src/analysis/deep_learning/GWNET/pipeline_gwnet.py
 
     #logger.add(logger_name, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
 
@@ -222,11 +149,15 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
 
     ##### Normalization
     if args.normalize is True:
-        dataset["ndvi"] = (dataset["ndvi"]+1)/2
-        scaler = StandardScaler(mean=np.nanmean(precp_ds[var_target]), 
+        ndvi_scaler = StandardScaler(mean=np.nanmean(dataset["ndvi"]), 
+                                           std=np.nanstd(dataset["ndvi"]))
+        
+        precp_scaler = StandardScaler(mean=np.nanmean(precp_ds[var_target]), 
                                            std=np.nanstd(precp_ds[var_target]))
         
-        precp_ds[var_target] = scaler.transform(precp_ds[var_target])
+        dataset["ndvi"] = ndvi_scaler.transform(dataset["ndvi"])
+        
+        precp_ds[var_target] = precp_scaler.transform(precp_ds[var_target])
         
     if args.convlstm is False:
         print("Selecting data for GCNN WaveNet")
@@ -244,66 +175,10 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         idx_lat, lat_max, idx_lon, lon_min = crop_image_left(precp_ds, args.dim)
         sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
             .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
-=======
-    logger.add(logger_name, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
-
-    if args.spi is False:
-        logger.info(f"Starting NDVI prediction with product {args.precp_product} with {args.forecast} days of features...")
-    else:
-        logger.info(f"Starting NDVI prediction with product {args.precp_product} {filename} with {args.forecast} days of features...")
-
-    # Open the precipitation to use for reprojection file with xarray
-    #path_oth = config['PRECIP']["ERA5"]['path']
-    #file_oth = [f for f in os.listdir(path_oth) if f.endswith(".nc") and "merged" in f ][0]
-    #era5_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path_oth, file_oth)),countries=None, regions=args.location))
-    #var_era5 = [var for var in era5_ds.data_vars][0]
-
-    # Open the precipitation file with xarray
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
-        .rio.write_crs(4326, inplace=True)
-
-    #precp_ds = prepare(xr.open_dataset(os.path.join(path, file))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(10.300000190734863, 3.5999999046325684, ))
-
-    var_target = [var for var in precp_ds.data_vars][0]
-    precp_ds[var_target] = precp_ds[var_target].astype(np.float32)
-    precp_ds[var_target].rio.write_nodata("nan", inplace=True)
-    #precp_ds[var_target] = precp_ds[var_target].rio.reproject_match(era5_ds[var_era5]).rename({'x':'lon','y':'lat'})
-
-    logger.info("The {p} raster has spatial dimensions: {r}".format(p = precp_dataset, r= precp_ds.rio.resolution()))
-    time_end = config['PRECIP'][precp_dataset]['date_end']
-    time_start = config['PRECIP'][precp_dataset]['date_start']
-
-    # Open the vegetation file with xarray
-    dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=args.country, regions=args.region))#.rio.write_crs(4326, inplace=True)
-    #dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(3.5999999046325684, 10.300000190734863))
-    dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
-    dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
-    dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
-    logger.info("MSG NDVI dataset resolution: {}", dataset.rio.resolution())
-    logger.info("{p} precipitation dataset resolution: {r}".format(p=precp_dataset, r=precp_ds.rio.resolution()))
-
-    if args.convlstm is False:
-        print("Selecting data for GCNN WaveNet")
-        try:
-            idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, args.dim)
-            sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
-                .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
-        except IndexError:
-            logger.error("The dataset {} is out of bounds when using a subset, using original product".format(args.precp_product))
-            sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))
-            args.dim = max(len(sub_precp["lat"]),len(sub_precp["lon"]))
-
-    else:
-        print("Selecting data for ConvLSTM")
-        idx_lat, lat_max, idx_lon, lon_max = crop_image_right(precp_ds, args.dim)
-        sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
-            .sel(lat=slice(lat_max, idx_lat), lon=slice(idx_lon, lon_max))
->>>>>>> origin/main:src/analysis/deep_learning/GWNET/GWNET/pipeline_gwnet.py
 
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
     
-<<<<<<< HEAD:src/analysis/deep_learning/GWNET/pipeline_gwnet.py
 
 
 
@@ -316,17 +191,6 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         return sub_precp, ds
 
 
-=======
-    if args.convlstm is True:
-        return sub_precp, ds
-    
-    else:
-        sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
-        sub_precp = sub_precp.where(ds.notnull())
-        return sub_precp, ds
-
-
->>>>>>> origin/main:src/analysis/deep_learning/GWNET/GWNET/pipeline_gwnet.py
 def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray, check_matrix:bool=False):
     config = load_config(CONFIG_PATH)
 
