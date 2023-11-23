@@ -286,14 +286,11 @@ def CNN_split(data:np.array, target:np.array, split_percentage:float=0.7, test_s
 
     data = np.expand_dims(data.transpose(2,0,1), 0)
     target = np.expand_dims(target.transpose(2,0,1), 0)
-<<<<<<< HEAD:src/utils/function_clns.py
-=======
 
     train_data = data[:,:train_samples,:,:]
     test_data =  data[:,train_samples:,:,:]
     train_label = target[:,:train_samples,:,:]
     test_label =  target[:,train_samples:,:,:]
->>>>>>> origin/main:p_drought_indices/functions/function_clns.py
 
     train_data = data[:,:train_samples,:,:]
     val_data =  data[:,train_samples:train_samples+val_samples,:,:]
@@ -319,16 +316,11 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.Dat
 
     return train_data, test_data, train_label, test_label
 
-<<<<<<< HEAD:src/utils/function_clns.py
 def interpolate_prepare(args, sub_precp:xr.Dataset, ds:xr.DataArray, interpolate:bool=True):
-=======
-def interpolate_prepare(args, sub_precp:xr.Dataset, ds:xr.DataArray):
->>>>>>> origin/main:p_drought_indices/functions/function_clns.py
     var_target = [var for var in sub_precp.data_vars][0]
     ds = ds.transpose("time","lat","lon")
     sub_precp = sub_precp.transpose("time","lat","lon")
     sub_precp[var_target] = sub_precp[var_target].rio.write_nodata("nan")
-<<<<<<< HEAD:src/utils/function_clns.py
     ds.rio.write_nodata(np.nan, inplace=True)
 
     if interpolate is True:
@@ -349,20 +341,6 @@ def interpolate_prepare(args, sub_precp:xr.Dataset, ds:xr.DataArray):
     target = np.array(target)
     data = np.array(data)
     
-=======
-    precip_null = sub_precp[var_target].rio.interpolate_na()
-    ds.rio.write_nodata(np.nan, inplace=True)
-    null_vegetation = ds.rio.interpolate_na()
-    sub_precp = sub_precp.assign(null_precp =  precip_null)  
-    var = "null_precp"
-
-    # Read the data as a numpy array
-    target = null_vegetation.transpose("lat","lon","time").values #
-    data = sub_precp[var].transpose("lat","lon","time").values #.rio.interpolate_na()
-    target = np.array(target)
-    data = np.array(data)
-    check_xarray_dataset(args, [null_vegetation,  sub_precp[var]],save=False)
->>>>>>> origin/main:p_drought_indices/functions/function_clns.py
     return data, target
 
 
@@ -391,7 +369,6 @@ def crop_image_right(temp_ds, target_pixels):
     idx_tagt_lon = dict_lon[idx_lon-target_pixels+1]
     return idx_tagt_lat, lat_max, idx_tagt_lon, lon_max
 
-<<<<<<< HEAD:src/utils/function_clns.py
 def crop_image_left(temp_ds, target_pixels):
     dict_lat = temp_ds["lat"].values
     lat_max = temp_ds["lat"].max().values
@@ -404,8 +381,6 @@ def crop_image_left(temp_ds, target_pixels):
     idx_tagt_lon = dict_lon[idx_lon+target_pixels-1]
     return idx_tagt_lat, lat_max, idx_tagt_lon, lon_min
 
-=======
->>>>>>> origin/main:p_drought_indices/functions/function_clns.py
 
 def check_timeformat_arrays(array_1:xr.DataArray, array_2:xr.DataArray):
     if array_1.indexes["time"][0] == array_2.indexes["time"][0]:
@@ -432,11 +407,7 @@ def check_nulls_overtime(datarray):
     print(filtered_data)
     return filtered_data
 
-<<<<<<< HEAD:src/utils/function_clns.py
 def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False, plot:bool=True):
-=======
-def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False):
->>>>>>> origin/main:p_drought_indices/functions/function_clns.py
     import matplotlib.pyplot as plt
     import os
     import time
@@ -460,35 +431,18 @@ def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False)
         print("Is null:", data.isnull().sum())
         print("Not null:", data.notnull().sum())
 
-<<<<<<< HEAD:src/utils/function_clns.py
         if plot is True:
             fig = plt.figure() 
             print("Plotting the dataset...")
             data.isel(time=0).plot()
             plt.close(fig)
-=======
-        fig = plt.figure() 
-
-        print("Plotting the dataset...")
-        data.isel(time=0).plot()
->>>>>>> origin/main:p_drought_indices/functions/function_clns.py
         if save is True:
             name = data.name
             if args.spi==False:
                 plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.forecast}/{name}_dataset.png"))
             else:
                 plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.precp_product}_SPI_{args.latency}/{name}_dataset.png"))
-<<<<<<< HEAD:src/utils/function_clns.py
             
-=======
-            plt.close(fig)
-        else:
-            plt.show()
-            # Wait for 5 seconds (adjust the time as needed)
-            time.sleep(0.5)
-            # Close the image window
-            plt.close()
->>>>>>> origin/main:p_drought_indices/functions/function_clns.py
     
     if type(data)==list:
         for ds in data:

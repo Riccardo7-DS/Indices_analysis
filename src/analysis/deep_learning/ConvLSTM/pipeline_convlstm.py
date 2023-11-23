@@ -73,10 +73,8 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array,
     train_data, val_data, train_label, val_label, test_valid, test_label = CNN_split(data, target, 
                                                                split_percentage=train_split)
     
-    config_file = load_config(CONFIG_PATH=CONFIG_PATH)
-
     batch_size = config.batch_size
-    early_stopping = EarlyStopping(patience=3, verbose=True)
+    early_stopping = EarlyStopping(config, verbose=True)
 
     # create a CustomDataset object using the reshaped input data
     train_dataset = CustomConvLSTMDataset(config, train_data, train_label)
@@ -109,8 +107,9 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array,
     # Define best_score, counter, and patience for early stopping:
     
     logger = build_logging(config)
-    from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM
-    model = ConvLSTM(config).to(config.device)
+    #from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM
+    from analysis.deep_learning.ConvLSTM.clstm import ConvLSTM
+    model = ConvLSTM(config, config.num_samples, [64, 64, 128],  (3,3), 3, True, True, False).to(config.device)
     metrics_recorder = MetricsRecorder()
 
     #criterion = CrossEntropyLoss().to(config.device)
@@ -218,9 +217,9 @@ if __name__=="__main__":
     args = parser.parse_args()
     sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
     
-    
-
-    mask = torch.tensor(np.array(xr.where(ds.isel(time=0).notnull(), 1, 0)))
+    from ancillary_vars.esa_landuse import drop_water_bodies_esa_downsample
+    mask_ds = drop_water_bodies_esa_downsample(CONFIG_PATH, ds.isel(time=0))
+    mask = torch.tensor(np.array(xr.where(mask_ds.notnull(), 1, 0)))
 
     print("Visualizing dataset before imputation...")
     #sub_precp = sub_precp.to_dataset()

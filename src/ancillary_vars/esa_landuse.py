@@ -139,19 +139,39 @@ def get_level_1(ds):
     ds = df["level1"].to_xarray().to_dataset()
     return ds.rename({"level1":"Band1"})
 
-def get_cover_dataset(CONFIG_PATH:str, datarray:xr.DataArray, img_path:str, img_name:str="esa_cover.nc",level1=True, resample=True)->xr.Dataset:
+def get_cover_dataset(CONFIG_PATH:str, datarray:xr.DataArray, img_path:str, 
+                      img_name:str="esa_cover.nc",level1=True, 
+                      resample=True)->xr.Dataset:
+    
     ds_cover = prepare(xr.open_dataset(os.path.join(img_path, img_name)))
     if level1==True:
         ds_cover = get_level_1(ds_cover)
     ds_cover = subsetting_pipeline(CONFIG_PATH, ds_cover)
     if resample ==True:
-        ds = datarray.rio.reproject_match(ds_cover["Band1"],resampling = Resampling.mode).rename({"x":"lon","y":"lat"})
+        ds = datarray.rio.reproject_match(ds_cover["Band1"],
+                    resampling = Resampling.mode).rename({"x":"lon","y":"lat"})
         ds = ds.to_dataset().assign(Band1=ds_cover["Band1"])
     
     else:
         ds = datarray.to_dataset().assign(Band1=ds_cover["Band1"])
     ds["Band1"] = ds["Band1"].expand_dims({"time":len(ds["time"])})
     return ds
+
+
+def drop_water_bodies_esa_downsample(CONFIG_PATH, ds):
+    from ancillary_vars.esa_landuse import get_cover_dataset, get_level_1
+    from rasterio.enums import Resampling
+    config = load_config(CONFIG_PATH)
+
+    img_path = os.path.join(config["DEFAULT"]["images"], "chirps_esa")
+    ds_cover = prepare(xr.open_dataset(os.path.join(img_path, "esa_cover.nc")))
+    ds_cover = subsetting_pipeline(CONFIG_PATH, get_level_1(ds_cover))
+    ds_cover = ds_cover["Band1"].rio.reproject_match(ds,
+                        resampling = Resampling.mode).rename({"x":"lon","y":"lat"})
+    if "time" in ds.dims:
+        ds_cover = ds_cover.expand_dims({"time":len(ds["time"])})
+    water_mask = xr.where((ds_cover==80) | (ds_cover==200), 1,0)
+    return ds.where(water_mask==0)
 
 if __name__ == "__main__":
     from ancillary_vars.esa_landuse import export_land_cover

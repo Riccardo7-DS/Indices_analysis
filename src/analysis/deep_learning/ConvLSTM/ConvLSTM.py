@@ -163,7 +163,7 @@ class ConvLSTM(nn.Module):
 
 
 def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer, mask=None):
-    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, masked_mape, masked_rmse, masked_mse, MetricsRecorder
+    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, mask_mape, mask_rmse, MetricsRecorder
     #from torcheval.metrics import R2Score
     model.train()
     epoch_records = {'loss': [], "mape":[], "rmse":[], "r2":[]}
@@ -173,7 +173,7 @@ def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer,
         #print(inputs.max())
         inputs = inputs.float().to(config.device)
         targets = torch.squeeze(targets.float().to(config.device))
-        outputs = torch.squeeze(model(inputs))
+        outputs = torch.squeeze(model(inputs)[0][0])
         num_dimensions = outputs.dim()
         if num_dimensions==4:
             outputs = outputs[:,-1,:,:]
@@ -189,8 +189,8 @@ def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer,
                 mask = mask.float().to(config.device)
                 losses = masked_mse_loss(criterion, outputs, targets, mask)
 
-        mape = masked_mape(outputs,targets).item()
-        rmse = masked_rmse(outputs,targets).item()
+        mape = mask_mape(outputs,targets, mask).item()
+        rmse = mask_rmse(outputs,targets, mask).item()
         optimizer.zero_grad()
         losses.backward()
         optimizer.step()
@@ -204,7 +204,7 @@ def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer,
     return epoch_records
 
 def valid_loop(config, logger, epoch, model, valid_loader, criterion, mask=None):
-    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, masked_mape, masked_rmse, masked_mse, MetricsRecorder
+    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, mask_mape, mask_rmse, masked_mse, MetricsRecorder
 
     model.eval()
     epoch_records = {'loss': [], "mape":[], "rmse":[]}
@@ -214,7 +214,7 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion, mask=None)
             inputs = inputs.float().to(config.device)
             #print(inputs.shape)
             targets = torch.squeeze(targets.float().to(config.device))
-            outputs = torch.squeeze(model(inputs))
+            outputs = torch.squeeze(model(inputs)[0][0])
             num_dimensions = outputs.dim()
             if num_dimensions==4:
                 outputs = outputs[:,-1,:,:]
@@ -231,8 +231,8 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion, mask=None)
                     losses = masked_mse_loss(criterion, outputs, targets, mask)
 
             
-            mape = masked_mape(outputs,targets).item()
-            rmse = masked_rmse(outputs,targets).item()
+            mape = mask_mape(outputs,targets, mask).item()
+            rmse = mask_rmse(outputs,targets, mask).item()
 
             epoch_records['loss'].append(losses.item())
             epoch_records["rmse"].append(rmse)

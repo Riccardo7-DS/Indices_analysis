@@ -46,7 +46,7 @@ if __name__=="__main__":
     parser.add_argument("--convlstm", type=bool, default= True, help="")
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
-    parser.add_argument("--normalize", type=bool, default=False, help="normalization")
+    parser.add_argument("--normalize", type=bool, default=True, help="normalization")
 
     args = parser.parse_args()
     logger.info("Starting preparing data...")
@@ -60,12 +60,13 @@ if __name__=="__main__":
     from configs.config_3x3_16_3x3_32_3x3_64 import config
     import time
 
-    #logger = build_logging(config)
     model = ConvLSTM(config).to(config.device)
-    criterion = MSELoss().to(config.device)
-    #optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    if config.masked_loss is False:
+        criterion = MSELoss().to(config.device)
+    else:
+        criterion = MSELoss(reduction='none').to(config.device)
 
-    checkpoint = [f for f in os.listdir(config.checkpoint_dir) if "checkpoint_epoch_2" in f][0]
+    checkpoint = [f for f in os.listdir(config.checkpoint_dir) if config.model_name in f][0]
 
     path =  os.path.join(config.checkpoint_dir, checkpoint) 
     print("The file was last modified at", time.ctime(os.path.getmtime(path)))

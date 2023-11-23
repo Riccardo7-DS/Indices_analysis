@@ -16,11 +16,11 @@ import yaml
 import numpy as np
 import re
 import yaml
-from p_drought_indices.functions.function_clns import prepare, load_config, cut_file, open_xarray_dataset, crop_get_thresh
-from p_drought_indices.functions.ndvi_functions import get_missing_datarray, apply_whittaker, drop_water_bodies_esa, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
-from p_drought_indices.vegetation.NDVI_indices import compute_vci
+from utils.function_clns import prepare, load_config, cut_file, open_xarray_dataset, crop_get_thresh
+from utils.ndvi_functions import get_missing_datarray, apply_whittaker, drop_water_bodies_esa, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
+from vegetation.NDVI_indices import compute_vci
 from xarray import DataArray
-from p_drought_indices.ancillary_vars.FAO_HWSD import get_water_cover
+from ancillary_vars.FAO_HWSD import get_water_cover
 from tqdm.auto import tqdm
 import xskillscore as xs
 from typing import Literal, Union
@@ -28,12 +28,12 @@ import logging
 
 
 def extract_clean_cloudmask_dataset(config_file, path, other_path):
-    from p_drought_indices.functions.process_xarray import subsetting_loop
+    from utils.process_xarray import subsetting_loop
     new_path = config_file["NDVI"]["cloud_path"]
     dest_path = os.path.join(new_path, "processed")
     subsetting_loop(CONFIG_PATH, new_path, delete_grid_mapping=True)
 
-    from p_drought_indices.functions.ndvi_functions import add_time
+    from utils.ndvi_functions import add_time
 
     list_files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith(".nc")]
     new_path = os.path.join(path, "time")

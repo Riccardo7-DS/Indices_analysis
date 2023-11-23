@@ -71,7 +71,7 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     
     from utils.function_clns import crop_image_left
 
-    config = load_config(CONFIG_PATH)
+    config= load_config(CONFIG_PATH)
 
     config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
                           config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
@@ -111,10 +111,11 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
 
     #logger.add(logger_name, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
 
-    if args.spi is False:
-        logger.info(f"Starting NDVI prediction with product {args.precp_product} with {args.forecast} days of features...")
+    if args.convlstm is True:
+        from configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
+        logger.info(f"Starting NDVI prediction with product {args.precp_product} with {model_config.num_frames_input} days of features...")
     else:
-        logger.info(f"Starting NDVI prediction with product {args.precp_product} {filename} with {args.forecast} days of features...")
+        logger.info(f"Starting NDVI prediction with product {args.precp_product} with {args.forecast} days of features...")
 
     # Open the precipitation to use for reprojection file with xarray
     #path_oth = config['PRECIP']["ERA5"]['path']
@@ -123,8 +124,9 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     #var_era5 = [var for var in era5_ds.data_vars][0]
 
     # Open the precipitation file with xarray
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
-        .rio.write_crs(4326, inplace=True)
+    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, \
+                        xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
+                        .rio.write_crs(4326, inplace=True)
 
     #precp_ds = prepare(xr.open_dataset(os.path.join(path, file))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(10.300000190734863, 3.5999999046325684, ))
 
@@ -138,8 +140,10 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     time_start = config['PRECIP'][precp_dataset]['date_start']
 
     # Open the vegetation file with xarray
-    dataset = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset)),countries=args.country, regions=args.region))#.rio.write_crs(4326, inplace=True)
-    #dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], ndvi_dataset))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(3.5999999046325684, 10.300000190734863))
+    dataset = prepare(subsetting_pipeline(CONFIG_PATH, \
+                                        xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], \
+                                        ndvi_dataset)),countries=args.country,regions=args.region))#.rio.write_crs(4326, inplace=True)
+
     dataset["ndvi"] = dataset["ndvi"].transpose("time","lat","lon")
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
     dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
@@ -149,6 +153,7 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
 
     ##### Normalization
     if args.normalize is True:
+
         ndvi_scaler = StandardScaler(mean=np.nanmean(dataset["ndvi"]), 
                                            std=np.nanstd(dataset["ndvi"]))
         
@@ -178,12 +183,9 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
 
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
-    
-
-
 
     if args.convlstm is True:
-        return sub_precp, ds
+        return sub_precp, ds, ndvi_scaler
     
     else:
         sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
@@ -433,6 +435,10 @@ def load_adj(pkl_filename, adjtype):
         assert error, "adj type not defined"
     return adj
 
+"""
+Metrics with null values
+"""
+
 def masked_mse(preds, labels, null_val=np.nan):
     if np.isnan(null_val):
         mask = ~torch.isnan(labels)
@@ -449,7 +455,6 @@ def masked_mse(preds, labels, null_val=np.nan):
 def masked_rmse(preds, labels, null_val=np.nan):
     return torch.sqrt(masked_mse(preds=preds, labels=labels, null_val=null_val))
 
-
 def masked_mae(preds, labels, null_val=np.nan):
     if np.isnan(null_val):
         mask = ~torch.isnan(labels)
@@ -463,13 +468,6 @@ def masked_mae(preds, labels, null_val=np.nan):
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
     return torch.mean(loss)
 
-def masked_mse_loss(criterion, preds, labels, mask):
-    loss = criterion(preds, labels)
-    loss = (loss * mask).sum() # gives \sigma_euclidean over unmasked elements
-    non_zero_elements = mask.sum()
-    mse_loss_val = loss / non_zero_elements
-    return mse_loss_val
-
 def masked_mape(preds, labels, null_val=np.nan):
     if np.isnan(null_val):
         mask = ~torch.isnan(labels)
@@ -482,6 +480,48 @@ def masked_mape(preds, labels, null_val=np.nan):
     loss = loss * mask
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
     return torch.mean(loss)
+
+"""
+Metrics with custom mask
+"""
+
+def mask_mae(preds, labels, mask):
+    loss = torch.abs(preds-labels)
+    mask = mask.float()
+    loss = loss * mask
+    loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
+    return torch.mean(loss)
+
+def mask_rmse(preds, labels, mask):
+    mse = mask_mse(preds=preds, labels=labels, mask=mask)
+    return torch.sqrt(mse)
+
+def mask_mape(preds, labels, mask):
+    loss = torch.abs((preds-labels)/labels)
+    mask = mask.float()
+    loss = (loss * mask).sum() 
+    #loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
+    non_zero_elements = mask.sum()
+    mape_loss_val = loss / non_zero_elements
+    return mape_loss_val
+
+def mask_mse(preds, labels, mask):
+    loss = (preds-labels)**2
+    mask = mask.float()
+    loss = (loss * mask).sum() 
+    #loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
+    non_zero_elements = mask.sum()
+    mse_loss_val = loss / non_zero_elements
+    return mse_loss_val
+
+def masked_mse_loss(criterion, preds, labels, mask):
+    loss = criterion(preds, labels)
+    mask = mask.float()
+    loss = (loss * mask).sum() # gives \sigma_euclidean over unmasked elements
+    non_zero_elements = mask.sum()
+    mse_loss_val = loss / non_zero_elements
+    return mse_loss_val
+
 
 def save_figures(args:dict, epoch:int, train_loss:list, train_mape:list, train_rmse:list, test_loss:list, test_mape:list, test_rmse:list):
     epochs = list(range(1, epoch + 1))
