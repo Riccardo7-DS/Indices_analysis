@@ -203,6 +203,19 @@ def train_loop(config, logger, epoch, model, train_loader, criterion, optimizer,
                                                                                 epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
     return epoch_records
 
+
+def evaluate_hist2d(real_img, pred_img):
+    
+    nbins=200
+    bin0=np.linspace(0, nbins,nbins+1)
+    mdata=np.isnan(real_img)==0
+    h,xed,yed=np.histogram2d(real_img[mdata], 
+                pred_img[mdata], bins=[bin0,bin0], density=None, weights=None)
+    
+    n=n+h
+    
+
+
 def valid_loop(config, logger, epoch, model, valid_loader, criterion, mask=None):
     from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, mask_mape, mask_rmse, masked_mse, MetricsRecorder
 
