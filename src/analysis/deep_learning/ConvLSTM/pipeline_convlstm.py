@@ -12,6 +12,7 @@ import pickle
 import argparse
 from tqdm.auto import tqdm
 from typing import Union
+from analysis.deep_learning.GWNET.pipeline_gwnet import StandardScaler
 
 def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
@@ -56,7 +57,7 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     return sub_precp, ds
 
 
-def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array,
+def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:StandardScaler,
                   mask:Union[None, np.array]=None, train_split:float = 0.7):
     import numpy as np
     #from configs.config_3x3_32_3x3_64_3x3_128 import config
@@ -108,8 +109,9 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array,
     
     logger = build_logging(config)
     #from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM
-    from analysis.deep_learning.ConvLSTM.clstm import ConvLSTM
-    model = ConvLSTM(config, config.num_samples, [64, 64, 128],  (3,3), 3, True, True, False).to(config.device)
+    from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM
+    #model = ConvLSTM(config, config.num_samples, [64, 64, 128],  (3,3), 3, True, True, False).to(config.device)
+    model = ConvLSTM(config).to(config.device)
     metrics_recorder = MetricsRecorder()
 
     #criterion = CrossEntropyLoss().to(config.device)
@@ -123,7 +125,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array,
     rmse_train, rmse_valid, rmse_test = [], [], []
     mape_train, mape_valid, mape_test = [], [], []
     for epoch in tqdm(range(config.epochs)):
-        epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, optimizer, mask=mask)
+        epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, optimizer, ndvi_scaler, mask=mask, draw_scatter=True)
         
         train_records.append(np.mean(epoch_records['loss']))
         rmse_train.append(np.mean(epoch_records['rmse']))
@@ -133,7 +135,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array,
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
         logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
         
-        epoch_records = valid_loop(config, logger, epoch, model, val_dataloader, criterion, mask)
+        epoch_records = valid_loop(config, logger, epoch, model, val_dataloader, criterion, ndvi_scaler, mask, draw_scatter=True)
         valid_records.append(np.mean(epoch_records['loss']))
         rmse_valid.append(np.mean(epoch_records['rmse']))
         mape_valid.append(np.mean(epoch_records['mape']))
@@ -215,7 +217,7 @@ if __name__=="__main__":
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
     args = parser.parse_args()
-    sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
+    sub_precp, ds, ndvi_scaler = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
     
     from ancillary_vars.esa_landuse import drop_water_bodies_esa_downsample
     mask_ds = drop_water_bodies_esa_downsample(CONFIG_PATH, ds.isel(time=0))
@@ -225,4 +227,4 @@ if __name__=="__main__":
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds, interpolate=True)
     train_split = 0.7
-    training_lstm(CONFIG_PATH, data, target, mask=mask, train_split = train_split)
+    training_lstm(CONFIG_PATH, data, target, mask=mask, train_split = train_split, ndvi_scaler=ndvi_scaler)

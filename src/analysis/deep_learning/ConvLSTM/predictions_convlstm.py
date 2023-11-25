@@ -50,7 +50,7 @@ if __name__=="__main__":
 
     args = parser.parse_args()
     logger.info("Starting preparing data...")
-    sub_precp, ds = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
+    sub_precp, ds, ndvi_scaler = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
     mask = torch.tensor(np.array(xr.where(ds.isel(time=0).notnull(), 1, 0)))
     
     logger.info("Starting interpolation...")
@@ -127,7 +127,8 @@ if __name__=="__main__":
         mape_valid = []
         epoch = 1
 
-        epoch_records = valid_loop(config, logger, epoch, model, dataloader, criterion, mask)
+        epoch_records = valid_loop(config, logger, epoch, model, dataloader, criterion,
+                                   ndvi_scaler, mask, draw_scatter=True)
         valid_records.append(np.mean(epoch_records['loss']))
         rmse_valid.append(np.mean(epoch_records['rmse']))
         mape_valid.append(np.mean(epoch_records['mape']))
