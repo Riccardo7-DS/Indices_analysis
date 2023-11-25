@@ -27,13 +27,13 @@ class Config:
     masked_loss = True
     model_name = "checkpoint_epoch_19"
 
-    num_frames_input = 90
+    num_frames_input = 30
     num_frames_output = 1
     output_channels = 1
 
     image_size = (64, 64)
     input_size = (64, 64)
-    step_length = 1 #### the jump in the future
+    step_length = 7 #### the jump in the future
     num_samples = 2 #### the number of channels to use
     num_objects = [3]
     display = 100

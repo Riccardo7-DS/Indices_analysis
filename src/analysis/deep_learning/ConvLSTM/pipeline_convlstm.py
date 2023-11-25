@@ -18,14 +18,17 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     config_file = load_config(CONFIG_PATH=CONFIG_PATH)
 
     # Open the NetCDF file with xarray
-    dataset = prepare(xr.open_dataset(os.path.join(config_file['NDVI']['ndvi_path'], 'ndvi_smoothed_w2s.nc'))).sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
+    dataset = prepare(xr.open_dataset(os.path.join(config_file['NDVI']['ndvi_path'], 
+                                                   'ndvi_smoothed_w2s.nc')))\
+        .sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
 
     prod = "ERA5"
     late = 90
 
     path = config_file['PRECIP']['ERA5']['path']
     file = "ERA5_merged.nc" #"era5_land_merged.nc" #f"ERA5_spi_gamma_{late}.nc"
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, xr.open_dataset(os.path.join(path, file))))
+    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, 
+                                           xr.open_dataset(os.path.join(path, file))))
     var_target = [var for var in precp_ds.data_vars][0] #"spi_gamma_{}".format(late)
     print(f"The {prod} raster has spatial dimensions:", precp_ds.rio.resolution())
 
@@ -48,7 +51,10 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
         ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target])#.rename({'x':'lon','y':'lat'})
         
 
-        train_data, test_data, train_label, test_label = CNN_preprocessing(ds, sub_precp, var_origin="ndvi", var_target=var_target, preprocess_type=preprocess_type,  split=train_split)
+        train_data, test_data, train_label, test_label = CNN_preprocessing(ds, sub_precp, var_origin="ndvi", 
+                                                                           var_target=var_target, 
+                                                                           preprocess_type=preprocess_type,  
+                                                                           split=train_split)
         # Save the image data using pickle
         with open(file_path, 'wb') as file:
             pickle.dump((train_data, test_data, train_label, test_label), file)
@@ -105,9 +111,13 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
     #name = "3x3_32_3x3_64_3x3_128"
     
     logger = build_logging(config)
-    from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM
-    #model = ConvLSTM(config, config.num_samples, [64, 64, 128],  (3,3), 3, True, True, False).to(config.device)
-    model = ConvLSTM(config).to(config.device)
+
+    from analysis.deep_learning.ConvLSTM.clstm import ConvLSTM
+
+    model = ConvLSTM(config.num_samples, 
+                     [64, 64, 128],  
+                     (3,3), 3, True, True, False).to(config.device)
+    #model = ConvLSTM(config).to(config.device)
     metrics_recorder = MetricsRecorder()
 
     #criterion = CrossEntropyLoss().to(config.device)
@@ -120,9 +130,11 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
     train_records, valid_records, test_records = [], [], []
     rmse_train, rmse_valid, rmse_test = [], [], []
     mape_train, mape_valid, mape_test = [], [], []
+
     for epoch in tqdm(range(config.epochs)):
 
-        epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, optimizer, ndvi_scaler, mask=mask, draw_scatter=True)
+        epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, 
+                                   optimizer, ndvi_scaler, mask=mask, draw_scatter=args.scatterplot)
         
         train_records.append(np.mean(epoch_records['loss']))
         rmse_train.append(np.mean(epoch_records['rmse']))
@@ -131,16 +143,24 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
         metrics_recorder.add_train_metrics(np.mean(epoch_records['mape']), 
                                            np.mean(epoch_records['rmse']), 
                                            np.mean(epoch_records['loss']))
-        log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
-        logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
         
-        epoch_records = valid_loop(config, logger, epoch, model, val_dataloader, criterion, ndvi_scaler, mask, draw_scatter=True)
+        log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
+        logger.info(log.format(epoch, np.mean(epoch_records['loss']), 
+                               np.mean(epoch_records['mape']), 
+                               np.mean(epoch_records['rmse'])))
+        
+        epoch_records = valid_loop(config, logger, epoch, model, val_dataloader, criterion, 
+                                   ndvi_scaler, mask, draw_scatter=args.scatterplot)
+        
         valid_records.append(np.mean(epoch_records['loss']))
         rmse_valid.append(np.mean(epoch_records['rmse']))
         mape_valid.append(np.mean(epoch_records['mape']))
-        log = 'Epoch: {:03d}, Val Loss: {:.4f}, Val MAPE: {:.4f}, Val RMSE: {:.4f}'
 
-        logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
+        log = 'Epoch: {:03d}, Val Loss: {:.4f}, Val MAPE: {:.4f}, Val RMSE: {:.4f}'
+        logger.info(log.format(epoch, np.mean(epoch_records['loss']), 
+                               np.mean(epoch_records['mape']), 
+                               np.mean(epoch_records['rmse'])))
+        
         metrics_recorder.add_val_metrics(np.mean(epoch_records['mape']), 
                                          np.mean(epoch_records['rmse']), 
                                          np.mean(epoch_records['loss']))
@@ -151,7 +171,9 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
             'optimizer': optimizer.state_dict()
         }
 
-        early_stopping( np.mean(epoch_records['loss']), model_dict, epoch, config.checkpoint_dir)
+        early_stopping( np.mean(epoch_records['loss']), 
+                       model_dict, epoch, config.checkpoint_dir)
+        
         if early_stopping.early_stop:
             print("Early stopping")
             break
@@ -202,8 +224,13 @@ if __name__=="__main__":
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
+    parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
+
     args = parser.parse_args()
-    sub_precp, ds, ndvi_scaler = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
+
+    sub_precp, ds, ndvi_scaler = data_preparation(args, CONFIG_PATH, 
+                                                  precp_dataset=args.precp_product, 
+                                                  ndvi_dataset="ndvi_smoothed_w2s.nc")
     
     from ancillary_vars.esa_landuse import drop_water_bodies_esa_downsample
     mask_ds = drop_water_bodies_esa_downsample(CONFIG_PATH, ds.isel(time=0))
@@ -213,4 +240,5 @@ if __name__=="__main__":
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds, interpolate=True)
     train_split = 0.7
-    training_lstm(CONFIG_PATH, data, target, mask=mask, train_split = train_split, ndvi_scaler=ndvi_scaler)
+    training_lstm(CONFIG_PATH, data, target, mask=mask, train_split = train_split, 
+                  ndvi_scaler=ndvi_scaler)

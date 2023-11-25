@@ -181,7 +181,7 @@ def train_loop(config, logger, epoch, model, train_loader, criterion,
 
         inputs = inputs.float().to(config.device)
         targets = torch.squeeze(targets.float().to(config.device))
-        outputs = torch.squeeze(model(inputs)) #[0][0]
+        outputs = torch.squeeze(model(inputs)[0][0])
 
         num_dimensions = outputs.dim()
 
@@ -195,7 +195,6 @@ def train_loop(config, logger, epoch, model, train_loader, criterion,
             img_real = targets.detach().cpu().numpy()
             img_pred = scaler.inverse_transform(img_pred)
             img_real = scaler.inverse_transform(img_real)
-
             h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins)
             n = n+h
 
@@ -219,8 +218,9 @@ def train_loop(config, logger, epoch, model, train_loader, criterion,
         epoch_records["rmse"].append(rmse)
         epoch_records["mape"].append(mape)
         if batch_idx and batch_idx % config.display == 0:
-            logger.info('EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'.format(epoch, batch_idx, num_batchs,
-                                                                                epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
+            logger.info('EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'\
+                        .format(epoch, batch_idx, num_batchs,
+                                epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
 
     if draw_scatter is True:
         plot_scatter_hist(n,  bin0)
@@ -229,7 +229,6 @@ def train_loop(config, logger, epoch, model, train_loader, criterion,
 
 
 def evaluate_hist2d(real_img, pred_img, nbins):
-    
     mdata=np.isnan(real_img)==0
     h, xed,yed=np.histogram2d(real_img[mdata], 
                 pred_img[mdata], bins=nbins, density=None, weights=None)
@@ -247,6 +246,8 @@ def plot_scatter_hist(n, bin0):
     a0=ax.pcolor(bin0,bin0,n,norm=LogNorm(vmin=1, vmax=np.nanmax(n)))
     plt.colorbar(a0)
     plt.show()
+    plt.pause(3)
+    plt.close()
 
 
 def valid_loop(config, logger, epoch, model, valid_loader, criterion, 
@@ -268,7 +269,7 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion,
             inputs = inputs.float().to(config.device)
             #print(inputs.shape)
             targets = torch.squeeze(targets.float().to(config.device))
-            outputs = torch.squeeze(model(inputs)) #[0][0]
+            outputs = torch.squeeze(model(inputs)[0][0])
 
             num_dimensions = outputs.dim()
             if num_dimensions==4:
@@ -281,9 +282,8 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion,
                 img_real = targets.cpu().detach().numpy().flatten()
                 img_pred = scaler.inverse_transform(img_pred)
                 img_real = scaler.inverse_transform(img_real)
-
-            h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins)
-            n = n+h
+                h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins)
+                n = n+h
 
             if config.masked_loss is False:
                 losses = criterion(outputs, targets)
@@ -302,8 +302,9 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion,
             epoch_records["rmse"].append(rmse)
             epoch_records["mape"].append(mape)
             if batch_idx and batch_idx % config.display == 0:
-                logger.info('[V] EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'.format(epoch, batch_idx, num_batchs,
-                                                                                    epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
+                logger.info('[V] EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'\
+                            .format(epoch, batch_idx, num_batchs,
+                                    epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
     if draw_scatter is True:
         plot_scatter_hist(n,  bin0)
     
@@ -314,7 +315,8 @@ def build_logging(config):
     logging.basicConfig(level=logging.DEBUG,
                         format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
                         datefmt='%m-%d %H:%M',
-                        filename=os.path.join(config.log_dir, time.strftime("%Y%d%m_%H%M") + '.log'),
+                        filename=os.path.join(config.log_dir, 
+                                              time.strftime("%Y%d%m_%H%M") + '.log'),
                         filemode='w')
     console = logging.StreamHandler()
     console.setLevel(logging.INFO)

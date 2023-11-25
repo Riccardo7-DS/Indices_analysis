@@ -86,7 +86,7 @@ class ConvLSTM(nn.Module):
         >> h = last_states[0][0]  # 0 for layer index, 0 for h index
     """
 
-    def __init__(self, config, input_dim, hidden_dim, kernel_size, num_layers,
+    def __init__(self, input_dim, hidden_dim, kernel_size, num_layers,
                  batch_first=False, bias=True, return_all_layers=False):
         super(ConvLSTM, self).__init__()
 
@@ -105,7 +105,6 @@ class ConvLSTM(nn.Module):
         self.batch_first = batch_first
         self.bias = bias
         self.return_all_layers = return_all_layers
-        self.batch_size = config.batch_size
 
         cell_list = []
         for i in range(0, self.num_layers):
@@ -117,7 +116,6 @@ class ConvLSTM(nn.Module):
                                           bias=self.bias))
 
         self.cell_list = nn.ModuleList(cell_list)
-        self.linear = torch.nn.Linear(hidden_dim[-1], 1)
 
     def forward(self, input_tensor, hidden_state=None):
         """
@@ -172,13 +170,7 @@ class ConvLSTM(nn.Module):
             layer_output_list = layer_output_list[-1:]
             last_state_list = last_state_list[-1:]
 
-            convlstm_output = layer_output_list[0][:, -1, :,  :, :]
-            #flattened_output = convlstm_output.view(convlstm_output.shape[0], -1)
-            regression_output = self.linear(convlstm_output)
-
-
-        #return layer_output_list, last_state_list
-        return regression_output
+        return last_state_list
 
     def _init_hidden(self, batch_size, image_size):
         init_states = []
