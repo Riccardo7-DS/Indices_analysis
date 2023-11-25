@@ -103,12 +103,8 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
     
     name = '3x3_16_3x3_32_3x3_64'
     #name = "3x3_32_3x3_64_3x3_128"
-
-    ### parrameters for early stopping 
-    # Define best_score, counter, and patience for early stopping:
     
     logger = build_logging(config)
-    #from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM
     from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM
     #model = ConvLSTM(config, config.num_samples, [64, 64, 128],  (3,3), 3, True, True, False).to(config.device)
     model = ConvLSTM(config).to(config.device)
@@ -125,13 +121,16 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
     rmse_train, rmse_valid, rmse_test = [], [], []
     mape_train, mape_valid, mape_test = [], [], []
     for epoch in tqdm(range(config.epochs)):
+
         epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, optimizer, ndvi_scaler, mask=mask, draw_scatter=True)
         
         train_records.append(np.mean(epoch_records['loss']))
         rmse_train.append(np.mean(epoch_records['rmse']))
         mape_train.append(np.mean(epoch_records['mape']))
 
-        metrics_recorder.add_train_metrics(np.mean(epoch_records['mape']), np.mean(epoch_records['rmse']), np.mean(epoch_records['loss']))
+        metrics_recorder.add_train_metrics(np.mean(epoch_records['mape']), 
+                                           np.mean(epoch_records['rmse']), 
+                                           np.mean(epoch_records['loss']))
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
         logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
         
@@ -140,8 +139,11 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
         rmse_valid.append(np.mean(epoch_records['rmse']))
         mape_valid.append(np.mean(epoch_records['mape']))
         log = 'Epoch: {:03d}, Val Loss: {:.4f}, Val MAPE: {:.4f}, Val RMSE: {:.4f}'
+
         logger.info(log.format(epoch, np.mean(epoch_records['loss']), np.mean(epoch_records['mape']), np.mean(epoch_records['rmse'])))
-        metrics_recorder.add_val_metrics(np.mean(epoch_records['mape']), np.mean(epoch_records['rmse']), np.mean(epoch_records['loss']))
+        metrics_recorder.add_val_metrics(np.mean(epoch_records['mape']), 
+                                         np.mean(epoch_records['rmse']), 
+                                         np.mean(epoch_records['loss']))
 
         model_dict = {
             'epoch': epoch,
@@ -154,22 +156,6 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
             print("Early stopping")
             break
 
-        # if best_score is None:
-        #     best_score = epoch_records['loss']
-        # else:
-        #     # Check if val_loss improves or not.
-        #     if epoch_records['loss'] < best_score:
-        #         # val_loss improves, we update the latest best_score, 
-        #         # and save the current model
-        #         best_score = epoch_records['loss']
-        #         torch.save(model.state_dict(), os.path.join(config.checkpoint_dir,"convlstm_model.pth"))
-        #         logger.info("Saved new pytorch model!")
-        #     else:
-        #         # val_loss does not improve, we increase the counter, 
-        #         # stop training if it exceeds the amount of patience
-        #         #counter += 1
-        #         if epoch >= patience: #counter >= patience:
-        #             break
         plt.plot(range(epoch + 1), train_records, label='train')
         plt.plot(range(epoch + 1), valid_records, label='valid')
         plt.legend()

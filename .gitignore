@@ -5,4 +5,3 @@ __pycache__/
 *.csv
 .vscode/
 .gitattributes
-configs/
