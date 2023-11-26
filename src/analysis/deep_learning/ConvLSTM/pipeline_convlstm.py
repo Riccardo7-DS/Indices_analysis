@@ -115,7 +115,7 @@ def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:S
     from analysis.deep_learning.ConvLSTM.clstm import ConvLSTM
 
     model = ConvLSTM(config.num_samples, 
-                     [64, 64, 128],  
+                     [64, 64, 64],  
                      (3,3), 3, True, True, False).to(config.device)
     #model = ConvLSTM(config).to(config.device)
     metrics_recorder = MetricsRecorder()
@@ -224,7 +224,7 @@ if __name__=="__main__":
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
-    parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
+    parser.add_argument("--scatterplot", type=bool, default=False, help="Whether to visualize scatterplot")
 
     args = parser.parse_args()
 

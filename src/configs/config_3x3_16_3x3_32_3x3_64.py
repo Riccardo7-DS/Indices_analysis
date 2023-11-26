@@ -27,7 +27,7 @@ class Config:
     masked_loss = True
     model_name = "checkpoint_epoch_19"
 
-    num_frames_input = 30
+    num_frames_input = 90
     num_frames_output = 1
     output_channels = 1
 
