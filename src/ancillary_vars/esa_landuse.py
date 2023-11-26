@@ -158,14 +158,14 @@ def get_cover_dataset(CONFIG_PATH:str, datarray:xr.DataArray, img_path:str,
     return ds
 
 
-def drop_water_bodies_esa_downsample(CONFIG_PATH, ds):
+def drop_water_bodies_esa_downsample(ds):
     from ancillary_vars.esa_landuse import get_cover_dataset, get_level_1
     from rasterio.enums import Resampling
-    config = load_config(CONFIG_PATH)
+    from utils.function_clns import config
 
     img_path = os.path.join(config["DEFAULT"]["images"], "chirps_esa")
     ds_cover = prepare(xr.open_dataset(os.path.join(img_path, "esa_cover.nc")))
-    ds_cover = subsetting_pipeline(CONFIG_PATH, get_level_1(ds_cover))
+    ds_cover = subsetting_pipeline(get_level_1(ds_cover))
     ds_cover = ds_cover["Band1"].rio.reproject_match(ds,
                         resampling = Resampling.mode).rename({"x":"lon","y":"lat"})
     if "time" in ds.dims:

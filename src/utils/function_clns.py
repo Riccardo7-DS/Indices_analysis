@@ -11,6 +11,9 @@ def load_config(CONFIG_PATH):
     with open(CONFIG_PATH) as file:
         config = yaml.safe_load(file)
         return config
+    
+from definitions import CONFIG_PATH
+config = load_config(CONFIG_PATH)
 
 def prepare(ds):
         ds.rio.write_crs("epsg:4326", inplace=True)
@@ -23,12 +26,11 @@ def cut_file(xr_df, gdf):
     clipped = xr_df.rio.clip(gdf.geometry.apply(mapping), gdf.crs, drop=True)
     return clipped
 
-def subsetting_pipeline(CONFIG_PATH:str, xr_df:Union[xr.DataArray, xr.Dataset], 
+def subsetting_pipeline(xr_df:Union[xr.DataArray, xr.Dataset], 
                         countries:Union[list, None] = ['Ethiopia','Kenya', 'Somalia'], 
                         regions: Union[list, None] = None,
                         invert=False):
-    
-    config = load_config(CONFIG_PATH)
+    from utils.function_clns import config
     if regions is None and countries is None:
         raise ValueError("You must specify either a list of countries or regions")
     if regions is not None and countries is not None:
@@ -316,7 +318,10 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.Dat
 
     return train_data, test_data, train_label, test_label
 
-def interpolate_prepare(args, sub_precp:xr.Dataset, ds:xr.DataArray, interpolate:bool=True):
+def interpolate_prepare(args, sub_precp:xr.Dataset, 
+                        ds:xr.DataArray, 
+                        interpolate:bool=True):
+    
     var_target = [var for var in sub_precp.data_vars][0]
     ds = ds.transpose("time","lat","lon")
     sub_precp = sub_precp.transpose("time","lat","lon")
@@ -413,6 +418,7 @@ def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False,
     import time
     
     def datarray_check(data):
+        from utils.function_clns import config
         # Detect and inspect coordinates
         for dim in data.dims:
             if dim != "time":
@@ -439,9 +445,12 @@ def check_xarray_dataset(args, data: Union[xr.DataArray, list], save:bool=False,
         if save is True:
             name = data.name
             if args.spi==False:
-                plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.forecast}/{name}_dataset.png"))
+                plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_\
+                                         {config[args.pipeline]['forecast']}/{name}_dataset.png"))
             else:
-                plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_{args.precp_product}_SPI_{args.latency}/{name}_dataset.png"))
+                plt.savefig(os.path.join(args.output_dir, f"images_results/forecast_\
+                                         {args.precp_product}_SPI_{config[args.pipeline]['latency']}\
+                                         {name}_dataset.png"))
             
     
     if type(data)==list:
