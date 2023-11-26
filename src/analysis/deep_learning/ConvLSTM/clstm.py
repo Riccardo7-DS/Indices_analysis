@@ -60,8 +60,8 @@ class ConvLSTMCell(nn.Module):
 
 class Flatten(torch.nn.Module):
     def forward(self, input):
-        b, seq_len, _, h, w = input.size()
-        return input.view(b, seq_len, -1)
+        b, c, h, w = input.size()
+        return input.view(b, -1)
     
 
 class ConvLSTM(nn.Module):
@@ -123,7 +123,7 @@ class ConvLSTM(nn.Module):
 
         self.cell_list = nn.ModuleList(cell_list)
         self.flatten = Flatten()
-        self.linear2 = torch.nn.Linear(hidden_channels[-1]*(2 if self.bidirectional else 1)*16, 2)
+        self.linear = torch.nn.Linear(hidden_dim[-1]*64*64, 1)
 
     def forward(self, input_tensor, hidden_state=None):
         """
@@ -174,11 +174,20 @@ class ConvLSTM(nn.Module):
             layer_output_list.append(layer_output)
             last_state_list.append([h, c])
 
-        if not self.return_all_layers:
-            layer_output_list = layer_output_list[-1:]
-            last_state_list = last_state_list[-1:]
+        layer_output_list = layer_output_list[-1:]
+        last_state_list = last_state_list[-1:]
+        # Use the final output of the last layer
+        layer_output = layer_output_list[0][:, -1, :, :, :]
 
-        return layer_output_list, last_state_list
+        flattened_output = self.flatten(layer_output)
+        regression_output = self.linear(flattened_output)
+        return regression_output
+
+
+        
+
+        
+    
 
     def _init_hidden(self, batch_size, image_size):
         init_states = []
