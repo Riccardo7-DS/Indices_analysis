@@ -19,7 +19,9 @@ import matplotlib.pyplot as plt
 from loguru import logger
 import sys
 
-CONFIG_PATH = "config.yaml"
+class Config:
+    def __init__(self, config_data):
+        self.__dict__.update(config_data)
 
 def generate_adj_dist(df, normalized_k=0.05,):
     coord = df[['lat', 'lon']].values
@@ -47,31 +49,34 @@ def create_paths(args:dict, path:str, spi:bool=False):
         os.makedirs(log_path)
 
     if args.spi==False:
-        img_path = os.path.join(output_dir,  f"images_results/forecast_{args.forecast}")
+        img_path = os.path.join(output_dir,  f"images_results/forecast_{config.GWNET.forecast}")
         if not os.path.exists(img_path):
             os.makedirs(img_path)
 
-        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{args.forecast}")
+        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{config.GWNET.forecast}")
         if not os.path.exists(checkp_path):
             os.makedirs(checkp_path)
     
     else:
-        img_path = os.path.join(output_dir,  f"images_results/forecast_{args.precp_product}_SPI_{args.latency}")
+        img_path = os.path.join(output_dir,  
+                                f"images_results/forecast_{args.precp_product}_SPI_{config.GWNET.latency}")
         if not os.path.exists(img_path):
             os.makedirs(img_path)
 
-        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
+        checkp_path = os.path.join(output_dir,  
+                                   f"checkpoints/forecast_{args.precp_product}_SPI_{config.GWNET.latency}")
         if not os.path.exists(checkp_path):
             os.makedirs(checkp_path)
     
     return output_dir, log_path
 
 
-def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_dataset:str='ndvi_smoothed_w2s.nc'):
+def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", 
+                     ndvi_dataset:str='ndvi_smoothed_w2s.nc'):
     
     from utils.function_clns import crop_image_left
 
-    config= load_config(CONFIG_PATH)
+    config = Config(config)
 
     config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
                           config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
@@ -148,11 +153,12 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
     dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
     dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
+    
     logger.info("MSG NDVI dataset resolution: {}", dataset.rio.resolution())
     logger.info("{p} precipitation dataset resolution: {r}".format(p=precp_dataset, r=precp_ds.rio.resolution()))
 
     ##### Normalization
-    if args.normalize is True:
+    if config.GWNET.normalize is True:
 
         ndvi_scaler = StandardScaler(mean=np.nanmean(dataset["ndvi"]), 
                                            std=np.nanstd(dataset["ndvi"]))
@@ -193,7 +199,9 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", ndvi_datas
         return sub_precp, ds
 
 
-def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArray, check_matrix:bool=False):
+def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, 
+                   ds:xr.DataArray, check_matrix:bool=False):
+    
     config = load_config(CONFIG_PATH)
 
     x_df = sub_precp.to_dataframe()
@@ -202,6 +210,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
         x_df = x_df.swaplevel(1,2)
     else:
         x_df = x_df.swaplevel(0,2)
+
     for col in ["spatial_ref","crs"]:
         if col in x_df:
             x_df.drop(columns={col}, inplace=True)
@@ -235,7 +244,8 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
 
     st_df = x_df.reset_index()[["lon","lat"]].drop_duplicates()
 
-    dest_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
+    dest_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), \
+        f"{args.precp_product}_{args.dim}_adj_dist.pkl")
 
     if os.path.isfile(dest_path) and check_matrix is True:
         logger.info("Using previously created adjacency matrix")
@@ -243,7 +253,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, ds:xr.DataArra
         adj_dist = generate_adj_dist(st_df)
         with open(dest_path, 'wb') as f:
             pickle.dump(adj_dist, f, protocol=2)
-        logger.info(f"Created new adjacency matrix {args.precp_product}_{args.dim}")
+        logger.info(f"Created new adjacency matrix {config.GWNET.precp_product}_{config.GWNET.dim}")
 
     seq_length_x = seq_length_y = args.forecast
     y_start = 1
@@ -657,8 +667,8 @@ def metric(pred, real):
     rmse = masked_rmse(pred,real,0.0).item()
     return mae,mape,rmse
 
-def build_model(args):
-    device = torch.device(args.device)
+def build_model(args, config):
+    device = torch.device(config.GWNET.device)
     adj_mx = load_adj(args.adjdata,args.adjtype)
     dataloader = load_dataset(args.data, args.batch_size, args.batch_size, args.batch_size)
     scaler = dataloader['scaler']
@@ -675,14 +685,13 @@ def build_model(args):
         supports = None
 
 
-    engine = trainer(scaler, args.in_dim, args.seq_length, args.num_nodes, args.nhid, args.dropout,
-                         args.learning_rate, args.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
+    engine = trainer(scaler, config.GWNET.in_dim, config.GWNET.seq_length, args.num_nodes, config.GWNET.nhid, config.GWNET.dropout,
+                         config.GWNET.learning_rate, config.GWNET.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
                          adjinit)
     return engine, scaler, dataloader, adj_mx
 
-def main(args, CONFIG_PATH):
-    config = load_config(CONFIG_PATH)
-    sub_precp, ds =  data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product)
+def main(args, config):
+    sub_precp, ds, _ =  data_preparation(args, CONFIG_PATH, precp_dataset=config.GWNET.precp_product)
     logger.info("Prepared data from {s} to {e}".format(s=sub_precp["time"].values[0], e=sub_precp["time"].values[-1]))
 
     print("Checking precipitation dataset...")
@@ -691,7 +700,7 @@ def main(args, CONFIG_PATH):
     check_xarray_dataset(args, ds, save=True)
 
     dataloader, num_nodes, x_df = get_dataloader(args, CONFIG_PATH, sub_precp, ds, check_matrix=True)
-    epochs = config["GWNET"]["epochs"]
+    epochs = config.GWNET.epochs
     device = torch.device(args.device)
     adj_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
     adj_mx = load_adj(adj_path,  args.adjtype)
@@ -837,33 +846,21 @@ def main(args, CONFIG_PATH):
 if __name__=="__main__":
     import time
     # get the start time
-    product = "ERA5_land"
+
     start = time.time()
     config = load_config(CONFIG_PATH)
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
-    parser.add_argument('--device',type=str,default='cuda',help='')
+
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
     parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
     parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
-    parser.add_argument('--nhid',type=int,default=32,help='')
-    parser.add_argument('--in_dim',type=int,default=1,help='inputs dimension')
-    parser.add_argument('--batch_size',type=int,default=config["GWNET"]["batch_size"],help='batch size')
-    parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
-    parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
-    parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
-    parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
+
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
-    parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
-    parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
-    parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
-    parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
-    parser.add_argument('--seq_length',type=int,default=12,help='')
     parser.add_argument("--country", type=list, default=["Kenya", "Ethiopia","Somalia"], help="Location for dataset")
-    parser.add_argument("--region",type=list, default=None, help="region location for dataset") #"Oromia","SNNPR","Gambela" 
-    parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
+    parser.add_argument("--region",type=list, default=None, help="region location for dataset")
     parser.add_argument("--convlstm", type=bool, default= False, help="")
     
 
