@@ -1,5 +1,5 @@
 from analysis.deep_learning.dataset import MyDataset
-from utils.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays, crop_image_right
+from utils.function_clns import config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays, crop_image_right
 import xarray as xr
 import os
 import numpy as np
@@ -19,10 +19,6 @@ import matplotlib.pyplot as plt
 from loguru import logger
 import sys
 
-class Config:
-    def __init__(self, config_data):
-        self.__dict__.update(config_data)
-
 def generate_adj_dist(df, normalized_k=0.05,):
     coord = df[['lat', 'lon']].values
     dist_mx = cdist(coord, coord,
@@ -35,6 +31,7 @@ def generate_adj_dist(df, normalized_k=0.05,):
     return adj_mx
 
 def create_paths(args:dict, path:str, spi:bool=False):
+    from utils.function_clns import config
     ### Create all the paths
     output_dir = os.path.join(path,  "graph_net")
     if not os.path.exists(output_dir):
@@ -49,34 +46,32 @@ def create_paths(args:dict, path:str, spi:bool=False):
         os.makedirs(log_path)
 
     if args.spi==False:
-        img_path = os.path.join(output_dir,  f"images_results/forecast_{config.GWNET.forecast}")
+        img_path = os.path.join(output_dir,  f"images_results/forecast_{config['GWNET']['forecast']}")
         if not os.path.exists(img_path):
             os.makedirs(img_path)
 
-        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{config.GWNET.forecast}")
+        checkp_path = os.path.join(output_dir,  f"checkpoints/forecast_{config['GWNET']['forecast']}")
         if not os.path.exists(checkp_path):
             os.makedirs(checkp_path)
     
     else:
         img_path = os.path.join(output_dir,  
-                                f"images_results/forecast_{args.precp_product}_SPI_{config.GWNET.latency}")
+                                f"images_results/forecast_{args.precp_product}_SPI_{config['GWNET']['latency']}")
         if not os.path.exists(img_path):
             os.makedirs(img_path)
 
         checkp_path = os.path.join(output_dir,  
-                                   f"checkpoints/forecast_{args.precp_product}_SPI_{config.GWNET.latency}")
+                                   f"checkpoints/forecast_{args.precp_product}_SPI_{config['GWNET']['latency']}")
         if not os.path.exists(checkp_path):
             os.makedirs(checkp_path)
     
     return output_dir, log_path
 
 
-def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5", 
+def data_preparation(args, precp_dataset:str="ERA5", 
                      ndvi_dataset:str='ndvi_smoothed_w2s.nc'):
     
-    from utils.function_clns import crop_image_left
-
-    config = Config(config)
+    from utils.function_clns import config, crop_image_left
 
     config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
                           config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
@@ -108,19 +103,22 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5",
     logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
     
     if args.spi is False:
-        logger_name = os.path.join(log_path, f"log_{precp_dataset}_{args.forecast}.log")
+        logger_name = os.path.join(log_path, f"log_{precp_dataset}_{config[args.pipeline]['forecast']}.log")
     else:
-        logger_name = os.path.join(log_path, f"log_{precp_dataset}_spi_{args.latency}.log")
+        logger_name = os.path.join(log_path, f"log_{precp_dataset}_spi_{config[args.pipeline]['latency']}.log")
+    
     if os.path.exists(logger_name): 
         os.remove(logger_name)
 
     #logger.add(logger_name, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
 
-    if args.convlstm is True:
+    if args.pipeline == "CONVLSTM":
         from configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
-        logger.info(f"Starting NDVI prediction with product {args.precp_product} with {model_config.num_frames_input} days of features...")
+        logger.info(f"Starting NDVI prediction with product {config['CONVLSTM']['precp_product']} \
+                    with {model_config.num_frames_input} days of features...")
     else:
-        logger.info(f"Starting NDVI prediction with product {args.precp_product} with {args.forecast} days of features...")
+        logger.info(f"Starting NDVI prediction with product {config['GWNET']['precp_product']} \
+                    with {args.forecast} days of features...")
 
     # Open the precipitation to use for reprojection file with xarray
     #path_oth = config['PRECIP']["ERA5"]['path']
@@ -129,8 +127,9 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5",
     #var_era5 = [var for var in era5_ds.data_vars][0]
 
     # Open the precipitation file with xarray
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, \
-                        xr.open_dataset(os.path.join(path, file)),countries=args.country, regions=args.region ))\
+    precp_ds = prepare(subsetting_pipeline(
+                        xr.open_dataset(os.path.join(path, file)),countries=args.country, 
+                        regions=args.region ))\
                         .rio.write_crs(4326, inplace=True)
 
     #precp_ds = prepare(xr.open_dataset(os.path.join(path, file))).sel(lon=slice(33.099998474121094, 42.900001525878906), lat=slice(10.300000190734863, 3.5999999046325684, ))
@@ -140,14 +139,15 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5",
     precp_ds[var_target].rio.write_nodata("nan", inplace=True)
     #precp_ds[var_target] = precp_ds[var_target].rio.reproject_match(era5_ds[var_era5]).rename({'x':'lon','y':'lat'})
 
-    logger.info("The {p} raster has spatial dimensions: {r}".format(p = precp_dataset, r= precp_ds.rio.resolution()))
+    logger.info("The {p} raster has spatial dimensions: {r}"
+                .format(p = precp_dataset, r= precp_ds.rio.resolution()))
     time_end = config['PRECIP'][precp_dataset]['date_end']
     time_start = config['PRECIP'][precp_dataset]['date_start']
 
     # Open the vegetation file with xarray
-    dataset = prepare(subsetting_pipeline(CONFIG_PATH, \
-                                        xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], \
-                                        ndvi_dataset)),countries=args.country,regions=args.region))#.rio.write_crs(4326, inplace=True)
+    dataset = prepare(subsetting_pipeline(
+                        xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], \
+                        ndvi_dataset)),countries=args.country,regions=args.region))
 
     dataset["ndvi"] = dataset["ndvi"].transpose("time","lat","lon")
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
@@ -155,10 +155,11 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5",
     dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
     
     logger.info("MSG NDVI dataset resolution: {}", dataset.rio.resolution())
-    logger.info("{p} precipitation dataset resolution: {r}".format(p=precp_dataset, r=precp_ds.rio.resolution()))
+    logger.info("{p} precipitation dataset resolution: {r}"
+                .format(p=precp_dataset, r=precp_ds.rio.resolution()))
 
     ##### Normalization
-    if config.GWNET.normalize is True:
+    if args.normalize is True:
 
         ndvi_scaler = StandardScaler(mean=np.nanmean(dataset["ndvi"]), 
                                            std=np.nanstd(dataset["ndvi"]))
@@ -170,27 +171,28 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5",
         
         precp_ds[var_target] = precp_scaler.transform(precp_ds[var_target])
         
-    if args.convlstm is False:
+    if args.pipeline == "GWNET":
         print("Selecting data for GCNN WaveNet")
         try:
-            idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, args.dim)
+            idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, config['GWNET']['dim'])
             sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
                 .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
         except IndexError:
-            logger.error("The dataset {} is out of bounds when using a subset, using original product".format(args.precp_product))
+            logger.error("The dataset {} is out of bounds when using a subset, using original product"\
+                         .format(args['GWNET']['precp_product']))
             sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))
             args.dim = max(len(sub_precp["lat"]),len(sub_precp["lon"]))
 
     else:
         print("Selecting data for ConvLSTM")
-        idx_lat, lat_max, idx_lon, lon_min = crop_image_left(precp_ds, args.dim)
+        idx_lat, lat_max, idx_lon, lon_min = crop_image_left(precp_ds, config["CONVLSTM"]["dim"])
         sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
             .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
 
 
     ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
 
-    if args.convlstm is True:
+    if args.pipeline=="CONVLSTM":
         return sub_precp, ds, ndvi_scaler
     
     else:
@@ -199,10 +201,10 @@ def data_preparation(args, CONFIG_PATH:str, precp_dataset:str="ERA5",
         return sub_precp, ds
 
 
-def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray, 
+def get_dataloader(args, sub_precp:xr.DataArray, 
                    ds:xr.DataArray, check_matrix:bool=False):
     
-    config = load_config(CONFIG_PATH)
+    from utils.function_clns import config
 
     x_df = sub_precp.to_dataframe()
 
@@ -253,7 +255,7 @@ def get_dataloader(args, CONFIG_PATH:str, sub_precp:xr.DataArray,
         adj_dist = generate_adj_dist(st_df)
         with open(dest_path, 'wb') as f:
             pickle.dump(adj_dist, f, protocol=2)
-        logger.info(f"Created new adjacency matrix {config.GWNET.precp_product}_{config.GWNET.dim}")
+        logger.info(f"Created new adjacency matrix {config['GWNET']['precp_product']}_{config['GWNET']['dim']}")
 
     seq_length_x = seq_length_y = args.forecast
     y_start = 1

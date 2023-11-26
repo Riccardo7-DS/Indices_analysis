@@ -63,8 +63,9 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     return sub_precp, ds
 
 
-def training_lstm(CONFIG_PATH:str, data:np.array, target:np.array, ndvi_scaler:StandardScaler,
+def training_convlstm(data:np.array, target:np.array, ndvi_scaler:StandardScaler,
                   mask:Union[None, np.array]=None, train_split:float = 0.7):
+                  
     import numpy as np
     #from configs.config_3x3_32_3x3_64_3x3_128 import config
     from configs.config_3x3_16_3x3_32_3x3_64 import config
@@ -189,15 +190,13 @@ if __name__=="__main__":
     import pickle
     import os
     import matplotlib.pyplot as plt
-    from utils.function_clns import load_config, prepare, CNN_split, interpolate_prepare
+    from utils.function_clns import config, prepare, CNN_split, interpolate_prepare
     import numpy as np
-    from analysis.deep_learning.dataset import CustomDataset
     from torch.utils.data import DataLoader
     from loguru import logger
 
     product = "ERA5"
-    CONFIG_PATH = "config.yaml"
-    config = load_config(CONFIG_PATH)
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
     parser.add_argument('--device',type=str,default='cuda',help='')
@@ -215,12 +214,8 @@ if __name__=="__main__":
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
     parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
-    parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
-    parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
-    parser.add_argument('--seq_length',type=int,default=12,help='')
-    #parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
-    parser.add_argument("--dim", type=int, default= config["CONVLSTM"]["pixels"], help="")
-    parser.add_argument("--convlstm", type=bool, default= True, help="")
+    
+    parser.add_argument("--pipeline", type=str, default= "CONVLSTM", help="")
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
@@ -228,17 +223,17 @@ if __name__=="__main__":
 
     args = parser.parse_args()
 
-    sub_precp, ds, ndvi_scaler = data_preparation(args, CONFIG_PATH, 
-                                                  precp_dataset=args.precp_product, 
+    sub_precp, ds, ndvi_scaler = data_preparation(args, 
+                                                  precp_dataset=config[args.pipeline]['precp_product'], 
                                                   ndvi_dataset="ndvi_smoothed_w2s.nc")
     
     from ancillary_vars.esa_landuse import drop_water_bodies_esa_downsample
-    mask_ds = drop_water_bodies_esa_downsample(CONFIG_PATH, ds.isel(time=0))
+    mask_ds = drop_water_bodies_esa_downsample(ds.isel(time=0))
     mask = torch.tensor(np.array(xr.where(mask_ds.notnull(), 1, 0)))
 
     print("Visualizing dataset before imputation...")
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds, interpolate=True)
     train_split = 0.7
-    training_lstm(CONFIG_PATH, data, target, mask=mask, train_split = train_split, 
+    training_convlstm(data, target, mask=mask, train_split = train_split, 
                   ndvi_scaler=ndvi_scaler)
