@@ -162,9 +162,12 @@ class ConvLSTM(nn.Module):
         return x
 
 
-def train_loop(config, logger, epoch, model, train_loader, criterion, 
+def train_loop(config, args, logger, epoch, model, train_loader, criterion, 
                optimizer, scaler=None, mask=None, draw_scatter:bool=False):
-    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, mask_mape, mask_rmse, MetricsRecorder
+    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, mask_mape, mask_rmse, MetricsRecorder, create_paths
+
+    output_dir, log_path, img_path, checkpoint_dir= create_paths(args)
+    
     #from torcheval.metrics import R2Score
     model.train()
     epoch_records = {'loss': [], "mape":[], "rmse":[], "r2":[]}
@@ -181,20 +184,21 @@ def train_loop(config, logger, epoch, model, train_loader, criterion,
 
         inputs = inputs.float().to(config.device)
         targets = torch.squeeze(targets.float().to(config.device))
-        outputs = torch.squeeze(model(inputs)[0][0])
+        outputs = torch.squeeze(model(inputs))
 
-        num_dimensions = outputs.dim()
+        # num_dimensions = outputs.dim()
 
-        if num_dimensions==4:
-            outputs = outputs[:,-1,:,:]
-        elif num_dimensions == 3:
-            outputs = outputs[-1, :, :]
+        # if num_dimensions==4:
+        #     outputs = outputs[:,-1,:,:]
+        # elif num_dimensions == 3:
+        #     outputs = outputs[-1, :, :]
 
         if draw_scatter is True:
             img_pred = outputs.detach().cpu().numpy()
             img_real = targets.detach().cpu().numpy()
-            img_pred = scaler.inverse_transform(img_pred)
-            img_real = scaler.inverse_transform(img_real)
+            if args.normalize is True:
+                img_pred = scaler.inverse_transform(img_pred)
+                img_real = scaler.inverse_transform(img_real)
             h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins)
             n = n+h
 
@@ -223,7 +227,7 @@ def train_loop(config, logger, epoch, model, train_loader, criterion,
                                 epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
 
     if draw_scatter is True:
-        plot_scatter_hist(n,  bin0)
+        plot_scatter_hist(n,  bin0, img_path)
 
     return epoch_records
 
@@ -235,9 +239,10 @@ def evaluate_hist2d(real_img, pred_img, nbins):
     
     return h, xed, yed
     
-def plot_scatter_hist(n, bin0):
+def plot_scatter_hist(n, bin0, path=None):
     import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm
+    import os
 
     n[n<=0]=np.nan
     fig, ax = plt.subplots(1, 1, figsize=(12, 6))
@@ -245,15 +250,19 @@ def plot_scatter_hist(n, bin0):
     #a0=ax[0].imshow(np.log10(n),origin='lower')
     a0=ax.pcolor(bin0,bin0,n,norm=LogNorm(vmin=1, vmax=np.nanmax(n)))
     plt.colorbar(a0)
-    plt.show()
-    plt.pause(3)
-    plt.close()
+    #plt.show()
+    #plt.pause(3)
+    #plt.close()
+    if path is not None:
+        name = "scatterplot.png"
+        plt.savefig(os.path.join(path,name))
 
 
-def valid_loop(config, logger, epoch, model, valid_loader, criterion, 
+def valid_loop(config, args, logger, epoch, model, valid_loader, criterion, 
                scaler=None, mask=None, draw_scatter:bool=False):
     
-    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, mask_mape, mask_rmse, masked_mse, MetricsRecorder
+    from analysis.deep_learning.GWNET.pipeline_gwnet import masked_mse_loss, mask_mape, mask_rmse, masked_mse, MetricsRecorder, create_paths
+    output_dir, log_path, img_path, checkpoint_dir= create_paths(args)
 
     model.eval()
     epoch_records = {'loss': [], "mape":[], "rmse":[]}
@@ -269,19 +278,20 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion,
             inputs = inputs.float().to(config.device)
             #print(inputs.shape)
             targets = torch.squeeze(targets.float().to(config.device))
-            outputs = torch.squeeze(model(inputs)[0][0])
+            outputs = torch.squeeze(model(inputs))
 
-            num_dimensions = outputs.dim()
-            if num_dimensions==4:
-                outputs = outputs[:,-1,:,:]
-            elif num_dimensions == 3:
-                outputs = outputs[-1, :, :]
+            # num_dimensions = outputs.dim()
+            # if num_dimensions==4:
+            #     outputs = outputs[:,-1,:,:]
+            # elif num_dimensions == 3:
+            #     outputs = outputs[-1, :, :]
 
             if draw_scatter is True:
                 img_pred = outputs.cpu().detach().numpy().flatten()
                 img_real = targets.cpu().detach().numpy().flatten()
-                img_pred = scaler.inverse_transform(img_pred)
-                img_real = scaler.inverse_transform(img_real)
+                if args.normalize is True:
+                    img_pred = scaler.inverse_transform(img_pred)
+                    img_real = scaler.inverse_transform(img_real)
                 h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins)
                 n = n+h
 
@@ -306,7 +316,7 @@ def valid_loop(config, logger, epoch, model, valid_loader, criterion,
                             .format(epoch, batch_idx, num_batchs,
                                     epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
     if draw_scatter is True:
-        plot_scatter_hist(n,  bin0)
+        plot_scatter_hist(n,  bin0, img_path)
     
     return epoch_records
 

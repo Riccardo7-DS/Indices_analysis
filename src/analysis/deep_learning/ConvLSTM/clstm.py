@@ -61,7 +61,7 @@ class ConvLSTMCell(nn.Module):
 class Flatten(torch.nn.Module):
     def forward(self, input):
         b, c, h, w = input.size()
-        return input.view(b, -1)
+        return input.reshape(b*c, w, h)
     
 
 class ConvLSTM(nn.Module):
@@ -123,7 +123,14 @@ class ConvLSTM(nn.Module):
 
         self.cell_list = nn.ModuleList(cell_list)
         self.flatten = Flatten()
-        self.linear = torch.nn.Linear(hidden_dim[-1]*64*64, 1)
+        self.linear1 = torch.nn.Sigmoid()
+
+        self.linear2 = torch.nn.Linear(64, 64)
+
+        self.decoder_CNN = nn.Conv3d(in_channels=hidden_dim[-1],
+                                     out_channels=1,
+                                     kernel_size=(1, 3, 3),
+                                     padding=(0, 1, 1))
 
     def forward(self, input_tensor, hidden_state=None):
         """
@@ -161,27 +168,32 @@ class ConvLSTM(nn.Module):
 
         for layer_idx in range(self.num_layers):
 
-            h, c = hidden_state[layer_idx]
+            h_, c = hidden_state[layer_idx]
             output_inner = []
             for t in range(seq_len):
-                h, c = self.cell_list[layer_idx](input_tensor=cur_layer_input[:, t, :, :, :],
-                                                 cur_state=[h, c])
-                output_inner.append(h)
+                h_, c = self.cell_list[layer_idx](input_tensor=cur_layer_input[:, t, :, :, :],
+                                                 cur_state=[h_, c])
+                output_inner.append(h_)
 
             layer_output = torch.stack(output_inner, dim=1)
             cur_layer_input = layer_output
 
             layer_output_list.append(layer_output)
-            last_state_list.append([h, c])
+            last_state_list.append([h_, c])
 
         layer_output_list = layer_output_list[-1:]
         last_state_list = last_state_list[-1:]
         # Use the final output of the last layer
         layer_output = layer_output_list[0][:, -1, :, :, :]
 
-        flattened_output = self.flatten(layer_output)
-        regression_output = self.linear(flattened_output)
-        return regression_output
+        output_decoder = self.decoder_CNN(layer_output.unsqueeze(2)) ### b, s, d=c, w, h
+        #output_linear = self.linear1(output_decoder.squeeze())
+
+        #output_linear = self.linear2(layer_output.permute(0,2,1,3).view(-1, layer_output.shape[2] , w))
+        output_linear = self.linear2(output_decoder.squeeze().view(b* h, w))
+        output_linear = output_linear.view(b, h, w)
+
+        return output_linear
 
 
         

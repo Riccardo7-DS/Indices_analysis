@@ -63,19 +63,21 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     return sub_precp, ds
 
 
-def training_convlstm(data:np.array, target:np.array, ndvi_scaler:StandardScaler,
+def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:StandardScaler,
                   mask:Union[None, np.array]=None, train_split:float = 0.7):
                   
     import numpy as np
     #from configs.config_3x3_32_3x3_64_3x3_128 import config
     from configs.config_3x3_16_3x3_32_3x3_64 import config
-    from analysis.deep_learning.GWNET.pipeline_gwnet import MetricsRecorder, masked_mse_loss
+    from analysis.deep_learning.GWNET.pipeline_gwnet import MetricsRecorder, create_paths
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
     from analysis.deep_learning.ConvLSTM.ConvLSTM import train_loop, valid_loop, build_logging# ConvLSTM
     import numpy as np
     from utils.function_clns import load_config
     from analysis.deep_learning.dataset import EarlyStopping
+
+    output_dir, log_path, img_path, checkpoint_dir= create_paths(args)
 
     #### training parameters
     train_data, val_data, train_label, val_label, test_valid, test_label = CNN_split(data, target, 
@@ -85,8 +87,8 @@ def training_convlstm(data:np.array, target:np.array, ndvi_scaler:StandardScaler
     early_stopping = EarlyStopping(config, verbose=True)
 
     # create a CustomDataset object using the reshaped input data
-    train_dataset = CustomConvLSTMDataset(config, train_data, train_label)
-    val_dataset = CustomConvLSTMDataset(config, val_data, val_label)
+    train_dataset = CustomConvLSTMDataset(config, args, train_data, train_label)
+    val_dataset = CustomConvLSTMDataset(config, args, val_data, val_label)
     
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -108,15 +110,15 @@ def training_convlstm(data:np.array, target:np.array, ndvi_scaler:StandardScaler
 
     #### Start training
     
-    name = '3x3_16_3x3_32_3x3_64'
+    #name = '3x3_16_3x3_32_3x3_64'
     #name = "3x3_32_3x3_64_3x3_128"
     
-    logger = build_logging(config)
+#    logger = build_logging(config)
 
     from analysis.deep_learning.ConvLSTM.clstm import ConvLSTM
 
     model = ConvLSTM(config.num_samples, 
-                     [64, 64, 64],  
+                     [32, 32, 32],  
                      (3,3), 3, True, True, False).to(config.device)
     #model = ConvLSTM(config).to(config.device)
     metrics_recorder = MetricsRecorder()
@@ -134,8 +136,8 @@ def training_convlstm(data:np.array, target:np.array, ndvi_scaler:StandardScaler
 
     for epoch in tqdm(range(config.epochs)):
 
-        epoch_records = train_loop(config, logger, epoch, model, train_dataloader, criterion, 
-                                   optimizer, ndvi_scaler, mask=mask, draw_scatter=args.scatterplot)
+        epoch_records = train_loop(config, args, logger, epoch, model, train_dataloader, criterion, 
+                                   optimizer, ndvi_scaler, mask=mask, draw_scatter=False)
         
         train_records.append(np.mean(epoch_records['loss']))
         rmse_train.append(np.mean(epoch_records['rmse']))
@@ -150,7 +152,7 @@ def training_convlstm(data:np.array, target:np.array, ndvi_scaler:StandardScaler
                                np.mean(epoch_records['mape']), 
                                np.mean(epoch_records['rmse'])))
         
-        epoch_records = valid_loop(config, logger, epoch, model, val_dataloader, criterion, 
+        epoch_records = valid_loop(config, args, logger,  epoch, model, val_dataloader, criterion, 
                                    ndvi_scaler, mask, draw_scatter=args.scatterplot)
         
         valid_records.append(np.mean(epoch_records['loss']))
@@ -173,7 +175,7 @@ def training_convlstm(data:np.array, target:np.array, ndvi_scaler:StandardScaler
         }
 
         early_stopping( np.mean(epoch_records['loss']), 
-                       model_dict, epoch, config.checkpoint_dir)
+                       model_dict, epoch, checkpoint_dir)
         
         if early_stopping.early_stop:
             print("Early stopping")
@@ -182,7 +184,7 @@ def training_convlstm(data:np.array, target:np.array, ndvi_scaler:StandardScaler
         plt.plot(range(epoch + 1), train_records, label='train')
         plt.plot(range(epoch + 1), valid_records, label='valid')
         plt.legend()
-        plt.savefig(os.path.join(config.output_dir, '{}.png'.format(name)))
+        plt.savefig(os.path.join(img_path, f'learning_curve_feat_{config.num_frames_input}.png'))
         plt.close()
 
 if __name__=="__main__":
@@ -218,7 +220,7 @@ if __name__=="__main__":
     parser.add_argument("--pipeline", type=str, default= "CONVLSTM", help="")
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
-    parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
+    parser.add_argument("--normalize", type=bool, default=False, help="Input data normalization")
     parser.add_argument("--scatterplot", type=bool, default=False, help="Whether to visualize scatterplot")
 
     args = parser.parse_args()

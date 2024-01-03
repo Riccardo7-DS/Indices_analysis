@@ -25,12 +25,12 @@ class CustomDataset(Dataset):
 
 
 class CustomConvLSTMDataset(Dataset):
-    def __init__(self, config, data, labels):
+    def __init__(self, config, args, data, labels):
         self.data = data
         self.labels = labels
         self.image_size = config.image_size
         self.input_size = config.input_size
-        self.steps_head = config.step_length
+        self.steps_head = args.step_length
         self.output_channels = config.output_channels
         self.num_timesteps = data.shape[1]
         self.learning_window = config.num_frames_input
@@ -138,9 +138,7 @@ class EarlyStopping:
             self.counter += 1
             print(
                 f'EarlyStopping counter: {self.counter} out of {self.patience}'
-            )
-            self.save_checkpoint(val_loss, model, epoch, save_path)
-            
+            )            
             if self.counter >= self.patience:
                 self.early_stop = True
         else:

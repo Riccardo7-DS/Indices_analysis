@@ -6,11 +6,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 import os
+import yaml
 import torch
 root_dir = os.path.join(os.getcwd(), '.')
 print(root_dir)
 
 class Config:
+
     gpus = [0, ]
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     #if torch.cuda.is_available():
@@ -25,15 +27,15 @@ class Config:
     test_batch_size = 2 * train_batch_size
     data_file = 'datas/train-images-idx3-ubyte.gz'
     masked_loss = True
-    model_name = "checkpoint_epoch_19"
+    model_name = "checkpoint_epoch_99"
 
-    num_frames_input = 10
+    num_frames_input = 90
     num_frames_output = 1
     output_channels = 1
 
     image_size = (64, 64)
     input_size = (64, 64)
-    step_length = 7 #### the jump in the future
+    step_length = 1 #### the jump in the future
     num_samples = 2 #### the number of channels to use
     num_objects = [3]
     display = 100
@@ -42,7 +44,7 @@ class Config:
     cnn_dropout = None
     decoder_3d = False
     epochs = 100
-    patience = 100
+    patience = 5
     learning_rate = 1e-4
     batch_size= 8
 
@@ -61,14 +63,15 @@ class Config:
                ('convlstm', '', 32, 16, 3, 1, 1),
                ('deconv', 'leaky', 16, 16, 4, 1, 2),
                ('convlstm', '', 16+num_samples, 16, 3, 1, 1),
-               ('conv', 'linear', 16, 1, 1, 0, 1)]
+               ('conv', 'sigmoid', 16, 1, 1, 0, 1)]
 
     data_dir = os.path.join(root_dir, 'data')
     output_dir = os.path.join(root_dir, 'output')
+
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    checkpoint_dir =  os.path.join(output_dir, 'checkpoints', f'days_{step_length}')
+    checkpoint_dir =  os.path.join(output_dir, 'checkpoints')
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
     model_dir = os.path.join(output_dir, 'model')

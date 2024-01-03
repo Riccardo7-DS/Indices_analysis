@@ -1,27 +1,28 @@
 if __name__=="__main__":
-    from analysis.deep_learning.GWNET.pipeline_gwnet import data_preparation 
+    from analysis.deep_learning.GWNET.pipeline_gwnet import data_preparation, create_paths
     import pickle
     import os
     import matplotlib.pyplot as plt
-    from utils.function_clns import load_config, prepare, CNN_split, interpolate_prepare
+    from utils.function_clns import config as config_file, prepare, CNN_split, interpolate_prepare
     import numpy as np
     from analysis.deep_learning.dataset import CustomConvLSTMDataset
     from torch.utils.data import DataLoader
     import argparse
     import torch
-    from analysis.deep_learning.ConvLSTM.ConvLSTM import ConvLSTM, train_loop, valid_loop, build_logging
+    from analysis.deep_learning.ConvLSTM.ConvLSTM import train_loop, valid_loop, build_logging
     from torch.nn import MSELoss
     from torchvision.transforms import transforms 
     from loguru import logger
     import sys
     import xarray as xr
+    from configs.config_3x3_16_3x3_32_3x3_64 import config
+    from analysis.deep_learning.ConvLSTM.clstm import ConvLSTM
+    import time
 
     logger.remove()
     logger.add(sys.stderr, format = "{time:YYYY-MM-DD at HH:mm:ss} | <lvl>{level}</lvl> {level.icon} | <lvl>{message}</lvl>", colorize = True)
     
     product = "ERA5"
-    CONFIG_PATH = "config.yaml"
-    config_file = load_config(CONFIG_PATH)
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
     parser.add_argument('--device',type=str,default='cuda',help='')
@@ -36,39 +37,47 @@ if __name__=="__main__":
     parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
     parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
     parser.add_argument('--expid',type=int,default=1,help='experiment id')
-    parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
     parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
-    parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
-    parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
-    parser.add_argument('--seq_length',type=int,default=12,help='')
+
     #parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
-    parser.add_argument("--dim", type=int, default= config_file["CONVLSTM"]["pixels"], help="")
-    parser.add_argument("--convlstm", type=bool, default= True, help="")
+    parser.add_argument("--pipeline", type=str, default="CONVLSTM", help="")
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
-    parser.add_argument("--normalize", type=bool, default=True, help="normalization")
+    parser.add_argument("--normalize", type=bool, default=False, help="normalization")
+    parser.add_argument("--scatterplot", type=bool, default=True, help="scatterplot")
+    parser.add_argument('--step_length',type=int,default=1,help='days in the future')
 
     args = parser.parse_args()
     logger.info("Starting preparing data...")
-    sub_precp, ds, ndvi_scaler = data_preparation(args, CONFIG_PATH, precp_dataset=args.precp_product, ndvi_dataset="ndvi_smoothed_w2s.nc")
+
+    output_dir, log_path, img_path, checkpoint_dir = create_paths(args)
+
+    sub_precp, ds, ndvi_scaler = data_preparation(args, 
+                                                  precp_dataset=config_file[args.pipeline]['precp_product'],
+                                                  ndvi_dataset="ndvi_smoothed_w2s.nc")
+    
     mask = torch.tensor(np.array(xr.where(ds.isel(time=0).notnull(), 1, 0)))
     
     logger.info("Starting interpolation...")
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
     
-    from configs.config_3x3_16_3x3_32_3x3_64 import config
-    import time
 
-    model = ConvLSTM(config).to(config.device)
+    #model = ConvLSTM(config).to(config.device)
+
+    
+    model = ConvLSTM(config.num_samples, 
+                     [32, 32, 32],  
+                     (3,3), 3, True, True, False).to(config.device)
+
     if config.masked_loss is False:
         criterion = MSELoss().to(config.device)
     else:
         criterion = MSELoss(reduction='none').to(config.device)
 
-    checkpoint = [f for f in os.listdir(config.checkpoint_dir) if config.model_name in f][0]
+    checkpoint = [f for f in os.listdir(checkpoint_dir) if config.model_name in f][0]
 
-    path =  os.path.join(config.checkpoint_dir, checkpoint) 
+    path =  os.path.join(checkpoint_dir, checkpoint) 
     print("The file was last modified at", time.ctime(os.path.getmtime(path)))
 
     checkpoint = torch.load(path)
@@ -96,9 +105,9 @@ if __name__=="__main__":
 
     batch_size = config.batch_size
     # create a CustomDataset object using the reshaped input data
-    train_dataset = CustomConvLSTMDataset(config, train_data, train_label)
-    val_dataset = CustomConvLSTMDataset(config, val_data, val_label)
-    test_dataset = CustomConvLSTMDataset(config, test_data, test_label)
+    train_dataset = CustomConvLSTMDataset(config, args, train_data, train_label)
+    val_dataset = CustomConvLSTMDataset(config, args, val_data, val_label)
+    test_dataset = CustomConvLSTMDataset(config, args, test_data, test_label)
     
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -127,7 +136,7 @@ if __name__=="__main__":
         mape_valid = []
         epoch = 1
 
-        epoch_records = valid_loop(config, logger, epoch, model, dataloader, criterion,
+        epoch_records = valid_loop(config, args, logger, epoch, model, dataloader, criterion,
                                    ndvi_scaler, mask, draw_scatter=True)
         valid_records.append(np.mean(epoch_records['loss']))
         rmse_valid.append(np.mean(epoch_records['rmse']))
@@ -142,11 +151,11 @@ if __name__=="__main__":
             inputs = inputs.float().to(config.device)
             targets = targets.float().to(config.device)
             outputs = torch.squeeze(model(inputs)).detach().cpu().numpy()
-            num_dimensions = outputs.ndim
-            if num_dimensions==4:
-                outputs = outputs[:,0,:,:]
-            elif num_dimensions==3:
-                outputs = outputs[0,:,:]
+            # num_dimensions = outputs.ndim
+            # if num_dimensions==4:
+            #     outputs = outputs[:,0,:,:]
+            # elif num_dimensions==3:
+            #     outputs = outputs[0,:,:]
             prediction_matrix[current_idx: current_idx +outputs.shape[0], :, :] = outputs
             current_idx +=outputs.shape[0]
     
@@ -180,6 +189,7 @@ if __name__=="__main__":
         
     def get_subset_datarray(ds, prediction_matrix, train_split:float, test_split:float, dataset:str="test"):
         import xarray as xr
+        from utils.function_clns import config as config_file
         n_samples = ds.sizes["time"] #data.shape[-1]
         train_samples =  int(round(train_split* n_samples, 0))
         test_samples = int(round(test_split* n_samples, 0))
