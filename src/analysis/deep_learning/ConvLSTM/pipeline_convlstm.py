@@ -72,7 +72,7 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
     from analysis.deep_learning.GWNET.pipeline_gwnet import MetricsRecorder, create_paths
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
-    from analysis.deep_learning.ConvLSTM.ConvLSTM import train_loop, valid_loop, build_logging# ConvLSTM
+    from analysis.deep_learning.ConvLSTM.clstm_unet import train_loop, valid_loop, build_logging# ConvLSTM
     import numpy as np
     from utils.function_clns import load_config
     from analysis.deep_learning.dataset import EarlyStopping

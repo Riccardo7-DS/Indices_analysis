@@ -9,7 +9,7 @@ if __name__=="__main__":
     from torch.utils.data import DataLoader
     import argparse
     import torch
-    from analysis.deep_learning.ConvLSTM.ConvLSTM import train_loop, valid_loop, build_logging
+    from analysis.deep_learning.ConvLSTM.clstm_unet import train_loop, valid_loop, build_logging
     from torch.nn import MSELoss
     from torchvision.transforms import transforms 
     from loguru import logger
@@ -126,7 +126,7 @@ if __name__=="__main__":
     print("Prediction matrix shape", prediction_matrix.shape)
 
     if evaluate is True:
-        from analysis.deep_learning.ConvLSTM.ConvLSTM import valid_loop
+        from analysis.deep_learning.ConvLSTM.clstm_unet import valid_loop
         from analysis.deep_learning.GWNET.pipeline_gwnet import MetricsRecorder
 
         metrics_recorder = MetricsRecorder()
