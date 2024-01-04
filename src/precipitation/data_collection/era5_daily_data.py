@@ -77,29 +77,39 @@ def process_era5(ds: xr.Dataset, var:str = "tp"):
 Functions to collect ERA5 data with google cloud
 """
 
-def query_era5_gs(CONFIG_PATH):
+def query_era5_gs():
     import fsspec
     fs = fsspec.filesystem('gs')
     import xarray as xr
     import os
     from loguru import logger
-    from p_drought_indices.functions.function_clns import load_config, subsetting_pipeline
+    from utils.function_clns import config, subsetting_pipeline
 
-    config = load_config(CONFIG_PATH)
     ar_full_37_1h = xr.open_zarr(
         'gs://gcp-public-data-arco-era5/ar/1959-2022-full_37-1h-0p25deg-chunk-1.zarr-v2/',
          chunks={'time': 48},
          consolidated=True
     ).rename({"latitude":"lat", "longitude":"lon"})
         
-    test_ds = subsetting_pipeline(CONFIG_PATH, ar_full_37_1h)
+    test_ds = subsetting_pipeline(ar_full_37_1h)
+
+    ### change one timeframe in order to accomodate for how ERA5 computes the accumulations
+    #1st January 2017 time = 01 - 23  will give you total precipitation data to cover 00 - 23 UTC for 1st January 2017
+    #2nd January 2017 time = 00 will give you total precipitation data to cover 23 - 24 UTC for 1st January 2017
+    test_ds = test_ds.shift(time=1)
+    ### add dataset attrs and convert to mm
     test_ds = process_era5(test_ds, var="total_precipitation")
+    
+    ### resample to daily
     logger.info("Starting resampling from hourly to daily...")
-    test_ds = test_ds["total_precipitation"].resample(time="1D").sum().to_dataset()
+    test_ds = test_ds["total_precipitation"].resample(time="1D")\
+        .sum().to_dataset()
 
     logger.info("Saving dataset locally...")
-    compress_kwargs = {"total_precipitation": {'zlib': True, 'complevel': 4}} # You can adjust 'complevel' based on your needs
-    test_ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"], "era5_total_precipitation_gc.nc"),
+    compress_kwargs = {"total_precipitation": 
+                       {'zlib': True, 'complevel': 4}} # You can adjust 'complevel' based on your needs
+    test_ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"], 
+                                   "era5_total_precipitation_gc.nc"),
                       encoding=compress_kwargs)
 
 """

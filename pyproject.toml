@@ -18,6 +18,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "^3.9"
+zarr = "^2.16.1"
 
 
 [build-system]
