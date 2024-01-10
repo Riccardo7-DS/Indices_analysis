@@ -16,9 +16,11 @@ from definitions import CONFIG_PATH
 config = load_config(CONFIG_PATH)
 
 def prepare(ds):
-        ds.rio.write_crs("epsg:4326", inplace=True)
-        ds.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
-        return ds
+    if "longitude" in ds.dims:
+        ds.rename({"latitude":"lat", "longitude":"lon"})
+    ds.rio.write_crs("epsg:4326", inplace=True)
+    ds.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
+    return ds
 
 def cut_file(xr_df, gdf):
     xr_df.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)

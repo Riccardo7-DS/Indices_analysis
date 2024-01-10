@@ -21,6 +21,7 @@ python = "^3.9"
 zarr = "^2.16.1"
 apache-beam = "^2.53.0"
 pangeo-forge-recipes = "^0.10.4"
+xesmf = "^0.8.2"
 
 
 [build-system]

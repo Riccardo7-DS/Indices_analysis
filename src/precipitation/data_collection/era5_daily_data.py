@@ -74,67 +74,11 @@ def process_era5_precp(ds: xr.Dataset, var:str = "tp"):
     return ds
 
 """
-Functions to collect ERA5 data with google cloud
+Functions to collect ERA5 ARCO data with google cloud storage
 """
 
-class InputVariables:
-    def __init__(self, variables:list, start_date:str, end_date:str) -> None:
-        from datetime import datetime, timedelta
-        from loguru import logger
-        assert variables is not None, "Variables cannot be null, provide a list of variables"
-        self.start_date = start_date
-        self.end_date = end_date
-        logger.info("Querying ARCO data from Google Cloud Storage...")
-        input_data = query_arco_era5(variables)
-        input_data = input_data.shift(time=1).sel(time=slice(start_date, end_date))
-        logger.info("Processing input data...")
-        precp_data = self._process_precp_arco(input_data)
-        ds_temp_min, ds_temp_max = self._process_temperature_arco(input_data)
-        evap, pot_evap = self._process_evapo_arco(input_data)
-
-        precp_dataset = precp_data.to_dataset()
-        precp_dataset = precp_dataset.assign(evap = evap, potential_evap= pot_evap, 
-                                       temp_max= ds_temp_max, temp_min = ds_temp_min)
-        self.data = precp_dataset
-
-
-    def _process_precp_arco(self, test_ds:xr.DataArray, save:bool=False):
-        from utils.function_clns import config
-        ### change one timeframe in order to accomodate for how ERA5 computes the accumulations
-        #1st January 2017 time = 01 - 23  will give you total precipitation data to cover 00 - 23 UTC for 1st January 2017
-        #2nd January 2017 time = 00 will give you total precipitation data to cover 23 - 24 UTC for 1st January 2017
-        ### add dataset attrs and convert to mm
-        test_ds = process_era5_precp(test_ds, var="total_precipitation")
-
-        ### resample to daily
-        logger.info("Starting resampling from hourly to daily...")
-        precp_ds = test_ds["total_precipitation"].resample(time="1D")\
-            .sum()
-
-        if save is True:
-            logger.info("Saving dataset locally...")
-            compress_kwargs = {"total_precipitation": 
-                               {'zlib': True, 'complevel': 4}} # You can adjust 'complevel' based on your needs
-            precp_ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"], 
-                                           "era5_total_precipitation_gc.nc"),
-                              encoding=compress_kwargs)
-    
-        return precp_ds
-    
-    def _process_temperature_arco(self, ds):
-        temp = ds["2m_temperature"].resample(time='D')
-        ds_temp_max = temp.max(dim='time')
-        ds_temp_min = temp.min(dim='time')
-        return ds_temp_min, ds_temp_max
-    
-    def _process_evapo_arco(self, ds):
-        evap = ds["evaporation"].resample(time="1D")\
-            .sum()
-        pot_evap = ds["potential_evaporation"].resample(time="1D")\
-            .sum()
-        return evap, pot_evap
-
-def query_arco_era5(vars=None, subset=True):
+def query_arco_era5(vars:list=None, subset:bool=True, 
+                    chunks:dict={'time': -1, "latitude": "100MB", "longitude":"100MB"}):
     import fsspec
     fs = fsspec.filesystem('gs')
     import xarray as xr
@@ -144,7 +88,7 @@ def query_arco_era5(vars=None, subset=True):
 
     ar_full_37_1h = xr.open_zarr(
         'gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3/',
-         chunks={'time': -1, "latitude": "100MB", "longitude":"100MB"},
+         chunks=chunks,
          consolidated=True
     ).rename({"latitude":"lat", "longitude":"lon"})
     if subset is True:
@@ -202,15 +146,14 @@ def ee_collection(start_date:str, end_date:str):
         export_image(ee.Image(processed_era5_list.get(i)))
     
 
-def collect_missing_days(CONFIG_PATH:str):
+def collect_missing_days():
     import xarray as xr
     import os
     import numpy as np
-    from p_drought_indices.functions.function_clns import load_config, subsetting_pipeline
+    from utils.function_clns import config as config_file, subsetting_pipeline
 
-    config_file = load_config(CONFIG_PATH)
     path = os.path.join(config_file["SPI"]["ERA5"]["path"], "era5_land_merged.nc")
-    ds = subsetting_pipeline(CONFIG_PATH, xr.open_dataset(path))
+    ds = subsetting_pipeline(xr.open_dataset(path))
 
     mask = ds['tp'] < 0
     arr = mask.sum(dim=["lat","lon"])
@@ -222,10 +165,10 @@ def collect_missing_days(CONFIG_PATH:str):
     import pandas as pd
     from datetime import timedelta
     from tqdm.auto import tqdm
-    from p_drought_indices.precipitation.data_collection.era5_daily_data import ee_collection
+    from precipitation.data_collection.era5_daily_data import ee_collection
     import xarray as xr
     import os
-    from p_drought_indices.functions.function_clns import load_config, subsetting_pipeline
+    from utils.function_clns import load_config, subsetting_pipeline
 
     for day in tqdm(days):
         print(f"Collecting day {day}...")
@@ -234,10 +177,10 @@ def collect_missing_days(CONFIG_PATH:str):
         ee_collection(day, end_day)
 
 def check_wrong_precp_days(base_path:str):
-    from p_drought_indices.functions.function_clns import subsetting_pipeline
+    from utils.function_clns import subsetting_pipeline
     import pandas as pd
     path = os.path.join(base_path, "era5_land_merged.nc")
-    precp_ds = subsetting_pipeline(CONFIG_PATH, xr.open_dataset(path))
+    precp_ds = subsetting_pipeline(xr.open_dataset(path))
     ### generate mask and count days  smaller than 0
     mask = precp_ds['tp'] < 0
     arr = mask.sum(dim=["lat","lon"])
@@ -317,11 +260,4 @@ def convert_tif_netcdf(CONFIG_PATH:str, base_path:str, path:str, dest_path, dest
     else:
         print("Starting exporting file...")
         ds.to_netcdf(os.path.join(base_path, dest_filename), format='NETCDF4', engine='netcdf4')
-
-if __name__=="__main__":
-    from loguru import logger
-    import sys
-    logger.add(sys.stdout, format="{time} - {level} - {message}", level="INFO")
-    CONFIG_PATH= "config.yaml"
-    query_era5_gs(CONFIG_PATH)
     
