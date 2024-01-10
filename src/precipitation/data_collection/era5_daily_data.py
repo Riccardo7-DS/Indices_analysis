@@ -1,5 +1,5 @@
 import os
-from p_drought_indices.functions.function_clns import load_config
+from utils.function_clns import load_config
 import xarray as xr
 import numpy as np
 from loguru import logger
@@ -61,10 +61,10 @@ def pipeline_era5_collection_cds(config_path):
     list_files = [os.path.join(dest_path, f) for f in os.listdir(dest_path) 
                   if f.endswith(".nc")]
     ds = xr.open_mfdataset(list_files)
-    ds = process_era5(ds)
+    ds = process_era5_precp(ds)
     ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"],"era5_land_merged.nc"))
 
-def process_era5(ds: xr.Dataset, var:str = "tp"):
+def process_era5_precp(ds: xr.Dataset, var:str = "tp"):
     if "latitude" in ds.dims:
         ds = ds.rename({"longitude":'lon', "latitude": "lat"})
     attrs = ds[var].attrs
@@ -77,40 +77,83 @@ def process_era5(ds: xr.Dataset, var:str = "tp"):
 Functions to collect ERA5 data with google cloud
 """
 
-def query_era5_gs():
+class InputVariables:
+    def __init__(self, variables:list, start_date:str, end_date:str) -> None:
+        from datetime import datetime, timedelta
+        from loguru import logger
+        assert variables is not None, "Variables cannot be null, provide a list of variables"
+        self.start_date = start_date
+        self.end_date = end_date
+        logger.info("Querying ARCO data from Google Cloud Storage...")
+        input_data = query_arco_era5(variables)
+        input_data = input_data.shift(time=1).sel(time=slice(start_date, end_date))
+        logger.info("Processing input data...")
+        precp_data = self._process_precp_arco(input_data)
+        ds_temp_min, ds_temp_max = self._process_temperature_arco(input_data)
+        evap, pot_evap = self._process_evapo_arco(input_data)
+
+        precp_dataset = precp_data.to_dataset()
+        precp_dataset = precp_dataset.assign(evap = evap, potential_evap= pot_evap, 
+                                       temp_max= ds_temp_max, temp_min = ds_temp_min)
+        self.data = precp_dataset
+
+
+    def _process_precp_arco(self, test_ds:xr.DataArray, save:bool=False):
+        from utils.function_clns import config
+        ### change one timeframe in order to accomodate for how ERA5 computes the accumulations
+        #1st January 2017 time = 01 - 23  will give you total precipitation data to cover 00 - 23 UTC for 1st January 2017
+        #2nd January 2017 time = 00 will give you total precipitation data to cover 23 - 24 UTC for 1st January 2017
+        ### add dataset attrs and convert to mm
+        test_ds = process_era5_precp(test_ds, var="total_precipitation")
+
+        ### resample to daily
+        logger.info("Starting resampling from hourly to daily...")
+        precp_ds = test_ds["total_precipitation"].resample(time="1D")\
+            .sum()
+
+        if save is True:
+            logger.info("Saving dataset locally...")
+            compress_kwargs = {"total_precipitation": 
+                               {'zlib': True, 'complevel': 4}} # You can adjust 'complevel' based on your needs
+            precp_ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"], 
+                                           "era5_total_precipitation_gc.nc"),
+                              encoding=compress_kwargs)
+    
+        return precp_ds
+    
+    def _process_temperature_arco(self, ds):
+        temp = ds["2m_temperature"].resample(time='D')
+        ds_temp_max = temp.max(dim='time')
+        ds_temp_min = temp.min(dim='time')
+        return ds_temp_min, ds_temp_max
+    
+    def _process_evapo_arco(self, ds):
+        evap = ds["evaporation"].resample(time="1D")\
+            .sum()
+        pot_evap = ds["potential_evaporation"].resample(time="1D")\
+            .sum()
+        return evap, pot_evap
+
+def query_arco_era5(vars=None, subset=True):
     import fsspec
     fs = fsspec.filesystem('gs')
     import xarray as xr
     import os
     from loguru import logger
-    from utils.function_clns import config, subsetting_pipeline
+    from utils.function_clns import subsetting_pipeline
 
     ar_full_37_1h = xr.open_zarr(
-        'gs://gcp-public-data-arco-era5/ar/1959-2022-full_37-1h-0p25deg-chunk-1.zarr-v2/',
-         chunks={'time': 48},
+        'gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3/',
+         chunks={'time': -1, "latitude": "100MB", "longitude":"100MB"},
          consolidated=True
     ).rename({"latitude":"lat", "longitude":"lon"})
-        
-    test_ds = subsetting_pipeline(ar_full_37_1h)
-
-    ### change one timeframe in order to accomodate for how ERA5 computes the accumulations
-    #1st January 2017 time = 01 - 23  will give you total precipitation data to cover 00 - 23 UTC for 1st January 2017
-    #2nd January 2017 time = 00 will give you total precipitation data to cover 23 - 24 UTC for 1st January 2017
-    test_ds = test_ds.shift(time=1)
-    ### add dataset attrs and convert to mm
-    test_ds = process_era5(test_ds, var="total_precipitation")
+    if subset is True:
+        test_ds = subsetting_pipeline(ar_full_37_1h)
     
-    ### resample to daily
-    logger.info("Starting resampling from hourly to daily...")
-    test_ds = test_ds["total_precipitation"].resample(time="1D")\
-        .sum().to_dataset()
-
-    logger.info("Saving dataset locally...")
-    compress_kwargs = {"total_precipitation": 
-                       {'zlib': True, 'complevel': 4}} # You can adjust 'complevel' based on your needs
-    test_ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"], 
-                                   "era5_total_precipitation_gc.nc"),
-                      encoding=compress_kwargs)
+    if vars is not None:
+        return test_ds[vars]
+    else:
+        test_ds
 
 """
 Functions to collect ERA5 data with Earth Engine
