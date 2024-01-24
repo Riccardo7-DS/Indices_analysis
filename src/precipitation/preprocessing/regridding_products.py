@@ -7,13 +7,6 @@ import os
 import datetime as datetime
 from p_drought_indices.precipitation.SPI_wet_dry import spiObject
 
-def subsetting_pipeline(CONFIG_PATH, xr_df, countries = ['Ethiopia','Somalia','Kenya']):
-    config = load_config(CONFIG_PATH)
-    shapefile_path = config['SHAPE']['africa']
-    gdf = gpd.read_file(shapefile_path)
-    subset = gdf[gdf.ADM0_NAME.isin(countries)]
-    return cut_file(xr_df, subset)
-
 def print_raster(raster):
     print(f"Product: {raster}\n"
         f"shape: {raster.rio.shape}\n"
@@ -164,16 +157,6 @@ def precp_indices_pipeline(target_path, base_path, target_new, extreme='drought'
         plot_indices(spi_base, spi_target, far, pod, accuracy, save=save)
     return far, pod, accuracy
 
-if __name__=="__main__":
-    
-    CONFIG_PATH = r"./config.yaml"
-    config = load_config(CONFIG_PATH)
-    
-    var = 'spi_gamma_60'
-    product_dir_target = config['SPI']['GPCC']['path']
-    product_directories = [config['SPI']['IMERG']['path'], config['SPI']['CHIRPS']['path'],  config['SPI']['ERA5']['path']]
-    #regridding_pipeline(var, product_directories, product_dir_target)
-    matching_pipeline(var, product_directories, product_dir_target)
 
 
     
