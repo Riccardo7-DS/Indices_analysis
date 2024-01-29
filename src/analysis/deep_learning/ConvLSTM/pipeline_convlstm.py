@@ -192,78 +192,69 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
         plt.savefig(os.path.join(img_path, f'learning_curve_feat_{config.num_frames_input}.png'))
         plt.close()
 
-    def convlstm_pipeline(args:dict, 
-                          train_split:float = 0.7,
-                          use_water_mask:bool =True,
-                          precipitation_only: bool = True):
-        
-        from ancillary.esa_landuse import drop_water_bodies_esa_downsample
-        from precipitation.preprocessing.preprocess_data import PrecipDataPreparation
-        from utils.function_clns import config, interpolate_prepare
-        import numpy as np
-        from loguru import logger
-        import analysis.configs.config_3x3_16_3x3_32_3x3_64 as model_config
-        from utils.function_clns import config
-
-        data_dir = model_config.output_dir+"data_convlstm"
-
-        if len(os.listdir(data_dir)) == 0:
-            logger.info("No data found, proceeding with the creation of the training dataset.")
-
-            if precipitation_only is False:
-                import warnings
-                warnings.filterwarnings('ignore')
-
-                Era5variables = ["potential_evaporation", "evaporation",
-                             "2m_temperature","total_precipitation"]
-                
-                HydroData = PrecipDataPreparation(
-                    args,
-                    variables=Era5variables,
-                    model="CONVLSTM",
-                    load_local_precp = False
-                )
+def convlstm_pipeline(args:dict, 
+                      train_split:float = 0.7,
+                      use_water_mask:bool =True,
+                      precipitation_only: bool = True):
+    
+    from ancillary.esa_landuse import drop_water_bodies_esa_downsample
+    from precipitation.preprocessing.preprocess_data import PrecipDataPreparation
+    from utils.function_clns import config, interpolate_prepare
+    import numpy as np
+    from loguru import logger
+    import analysis.configs.config_3x3_16_3x3_32_3x3_64 as model_config
+    from utils.function_clns import config
+    data_dir = model_config.output_dir+"data_convlstm"
+    if len(os.listdir(data_dir)) == 0:
+        logger.info("No data found, proceeding with the creation of the training dataset.")
+        if precipitation_only is False:
+            import warnings
+            warnings.filterwarnings('ignore')
+            Era5variables = ["potential_evaporation", "evaporation",
+                         "2m_temperature","total_precipitation"]
             
-            else:
-                Era5variables = ["total_precipitation"]
-                
-                HydroData = PrecipDataPreparation(
-                    args, 
-                    precp_dataset=config["CONVLSTM"]['precp_product'],
-                    model = "CONVLSTM",
-                    variables=Era5variables,
-                    load_local_precp=True
-                )
-
-            if use_water_mask is True:
-                logger.info("Loading water bodies mask...")
-                mask_ds = drop_water_bodies_esa_downsample(
-                    HydroData.ndvi_ds.isel(time=0))
-
-                mask = torch.tensor(np.array(
-                    xr.where(mask_ds.notnull(), 1, 0)))
-            else:
-                mask = None
-
-            logger.info("Checking dataset before imputation...")
-
-            data, target = interpolate_prepare(
-                args, 
-                HydroData.hydro_data, 
-                HydroData.ndvi_ds, 
-                interpolate=True
+            HydroData = PrecipDataPreparation(
+                args,
+                variables=Era5variables,
+                model="CONVLSTM",
+                load_local_precp = False
             )
         
         else:
-            logger.info("Training data found. Proceeding with loading...")
-
-        
-        training_convlstm(data, 
-            target, 
-            mask=mask, 
-            train_split = train_split, 
-            ndvi_scaler = HydroData.ndvi_scaler
+            Era5variables = ["total_precipitation"]
+            
+            HydroData = PrecipDataPreparation(
+                args, 
+                precp_dataset=config["CONVLSTM"]['precp_product'],
+                model = "CONVLSTM",
+                variables=Era5variables,
+                load_local_precp=True
+            )
+        if use_water_mask is True:
+            logger.info("Loading water bodies mask...")
+            mask_ds = drop_water_bodies_esa_downsample(
+                HydroData.ndvi_ds.isel(time=0))
+            mask = torch.tensor(np.array(
+                xr.where(mask_ds.notnull(), 1, 0)))
+        else:
+            mask = None
+        logger.info("Checking dataset before imputation...")
+        data, target = interpolate_prepare(
+            args, 
+            HydroData.hydro_data, 
+            HydroData.ndvi_ds, 
+            interpolate=True
         )
+    
+    else:
+        logger.info("Training data found. Proceeding with loading...")
+    
+    training_convlstm(data, 
+        target, 
+        mask=mask, 
+        train_split = train_split, 
+        ndvi_scaler = HydroData.ndvi_scaler
+    )
     
 
 if __name__=="__main__":
@@ -293,4 +284,4 @@ if __name__=="__main__":
 
     args = parser.parse_args()
 
-    convlstm_pipeline(args)
+    convlstm_pipeline(args, precipitation_only=False)
