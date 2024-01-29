@@ -202,9 +202,12 @@ def convlstm_pipeline(args:dict,
     from utils.function_clns import config, interpolate_prepare
     import numpy as np
     from loguru import logger
-    import analysis.configs.config_3x3_16_3x3_32_3x3_64 as model_config
+    from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
     from utils.function_clns import config
-    data_dir = model_config.output_dir+"data_convlstm"
+    
+    data_dir = model_config.output_dir+"/data_convlstm"
+    if os.path.exists(data_dir) is False:
+        os.makedirs(data_dir)
     if len(os.listdir(data_dir)) == 0:
         logger.info("No data found, proceeding with the creation of the training dataset.")
         if precipitation_only is False:
