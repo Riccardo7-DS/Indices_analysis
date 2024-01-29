@@ -24,9 +24,10 @@ class PrecipDataPreparation():
             precp_ds, era5_data = self._load_arco_precipitation(variables)
 
             if len(variables) > 1:
-                hydro_ds = self._transform_ancillary(precp_ds, era5_data)
+                logger.info(f"Processing ancillary variables {variables}")
+                precp_ds = self._transform_ancillary(precp_ds, era5_data)
 
-            hydro_ds = self._preprocess_array(args, precp_ds)
+            precp_ds = self._preprocess_array(args, precp_ds)
             
         self.ndvi_filename = ndvi_data
         self.ndvi_path = config['NDVI']['ndvi_path']
@@ -34,17 +35,16 @@ class PrecipDataPreparation():
                                               filename=self.ndvi_filename, 
                                               variable="ndvi")
         
-        
         if args.normalize is True:
-            ndvi_ds, self.ndvi_scaler, precp_ds, self.precp_scaler = \
+            ndvi_ds, self.ndvi_scaler, precp_ds, _ = \
                 self._normalize_datasets(precp_ds, ndvi_ds)
             
         precp_ds = self._crop_area_for_dl(precp_ds)
-        self.ndvi_ds = self._reproject_raster(precp_ds, ndvi_ds)
+        self.ndvi_ds = self._reproject_raster(precp_ds, ndvi_ds["ndvi"])
 
         if self.model == "GWNET":
             precp_ds.where(self.ndvi_ds.notnull())
-            self.precp_ds = precp_ds[self.precp_var]
+            self.precp_ds = precp_ds[[var for var in precp_ds.data_vars][0]]
 
     
     def _load_local_precipitation(self, precp_dataset:str):
@@ -153,38 +153,54 @@ class PrecipDataPreparation():
     
     def _normalize_datasets(self, *args):
         from analysis.deep_learning.GWNET.pipeline_gwnet import StandardScaler
-        scaler = StandardScaler(mean=np.nanmean(args), 
-                                           std=np.nanstd(args))
-        dataset = scaler.transform(args)
+
+        if type(args) == xr.Dataset:
+            for var in dataset.data_vars:
+                scaler = StandardScaler(mean=np.nanmean(args[var]), 
+                                           std=np.nanstd(args[var]))
+                args[var] = scaler.transform(args)
+
+        elif type(dataset)== xr.DataArray:
+            scaler = StandardScaler(mean=np.nanmean(args), 
+                                               std=np.nanstd(args))
+            dataset = scaler.transform(args)
+        
         return dataset, scaler
     
-    def _crop_area_for_dl(self, precp_ds:xr.DataArray):
+    def _crop_area_for_dl(self, dataset:Union[xr.DataArray, xr.Dataset]):
         
         if self.model == "GWNET":
             print("Selecting data for GCNN WaveNet")
             try:
                 self.dim = config['GWNET']['dim']
-                idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, self.dim)
-                sub_precp = precp_ds.sel(lat=slice(lat_max, idx_lat), 
+                idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(dataset, self.dim)
+                sub_dataset = dataset.sel(lat=slice(lat_max, idx_lat), 
                                          lon=slice(lon_min, idx_lon))
             except IndexError:
                 logger.error("The dataset {} is out of bounds when using a subset, using original product"\
                              .format(self.precp_product))
-                self.dim = max(len(sub_precp["lat"]),
-                               len(sub_precp["lon"]))
+                self.dim = max(len(sub_dataset["lat"]),
+                               len(sub_dataset["lon"]))
 
         elif self.model =="CONVLSTM":
             print("Selecting data for ConvLSTM")
             self.dim = config["CONVLSTM"]["dim"]
-            idx_lat, lat_max, idx_lon, lon_min = crop_image_left(precp_ds, self.dim)
-            sub_precp = precp_ds.sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
+            idx_lat, lat_max, idx_lon, lon_min = crop_image_left(dataset, self.dim)
+            sub_dataset = dataset.sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
 
-        return sub_precp
+        return sub_dataset
     
-    def _reproject_raster(self, precp_ds:xr.Dataset, ndvi_ds:xr.Dataset):
-        ds = ndvi_ds[self.ndvi_var].rio.reproject_match(
-            precp_ds[self.precp_var]).rename({'x':'lon','y':'lat'})
-        return ds
+    def _reproject_raster(self, target_ds:Union[xr.Dataset, xr.DataArray], 
+                          resample_ds:xr.DataArray):
+        if type(target_ds) == xr.Dataset:
+            var_target = [var for var in target_ds.data_vars][0]
+            target_ds = target_ds[var_target]
+
+        # elif type(target_ds)== xr.DataArray:
+            
+        ds = resample_ds.rio.reproject_match(
+            target_ds).rename({'x':'lon','y':'lat'})
+        return prepare(ds)
     
     def _process_precp_arco(self, 
                             test_ds:xr.DataArray, 
