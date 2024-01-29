@@ -339,7 +339,7 @@ def prepare_datarray(datarray:xr.DataArray,
     return datarray.transpose("time","lat","lon")
 
 def interpolate_prepare(
-                        input_data:xr.Dataset | xr.DataArray, 
+                        input_data:Union[xr.Dataset, xr.DataArray], 
                         target_data:xr.DataArray, 
                         interpolate:bool=True):
     """
