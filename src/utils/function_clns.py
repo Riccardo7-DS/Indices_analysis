@@ -320,36 +320,67 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.Dat
 
     return train_data, test_data, train_label, test_label
 
-def interpolate_prepare(args, sub_precp:xr.Dataset, 
-                        ds:xr.DataArray, 
-                        interpolate:bool=True):
+
+def prepare_datarray(datarray:xr.DataArray, 
+               interpolate:bool = False, check_data:bool = False):
     
-    var_target = [var for var in sub_precp.data_vars][0]
-    ds = ds.transpose("time","lat","lon")
-    sub_precp = sub_precp.transpose("time","lat","lon")
-    sub_precp[var_target] = sub_precp[var_target].rio.write_nodata("nan")
-    ds.rio.write_nodata(np.nan, inplace=True)
+    if isinstance(datarray.values.flat[0], np.str_):
+        datarray= datarray.rio.write_nodata("nan")
+    else:
+        datarray = datarray.rio.write_nodata(np.nan)
+
+    datarray = datarray.astype(np.float32)
 
     if interpolate is True:
-        precip_null = sub_precp[var_target].rio.interpolate_na()
+        datarray = datarray.rio.interpolate_na()
+    if check_data is True:
+        check_xarray_dataset(None, datarray, save=False, plot = False)
     
-        null_vegetation = ds.rio.interpolate_na()
-        sub_precp = sub_precp.assign(null_precp =  precip_null)  
-        var = "null_precp"
-        target = null_vegetation.transpose("lat","lon","time").values #
-        check_xarray_dataset(args, [null_vegetation,  sub_precp[var]],save=False, plot=False)
+    return datarray.transpose("time","lat","lon")
+
+def interpolate_prepare(args, 
+                        input_data:xr.Dataset | xr.DataArray, 
+                        target_data:xr.DataArray, 
+                        interpolate:bool=True):
+    """
+    Function to prepare rand interpolate provided datasets w.r.t a given target dataset
+    """
+
+    if type(input_data) == xr.Dataset:
+
+        for var in input_data.data_vars:
+            input_data[var] = prepare_datarray(input_data[var])
+
+        shape = (len(input_data['time']), len(input_data.data_vars), 
+                 len(input_data['lat']), len(input_data['lon']))
+        
+        result_array = np.empty(shape)
+
+        # Populate the numpy array
+        for i, variable in enumerate(input_data.data_vars):
+            result_array[:, i, :, :] = input_data[variable]
+
     else:
-        target = ds.transpose("lat","lon","time")
-        var = var_target
+        input_data = prepare_datarray(input_data)
+        result_array = np.array(result_array)
+
+    target_data = prepare_datarray(target_data)
+    target = np.array(target_data)
+
+    # if interpolate is True:
+    #     null_target = target_data.rio.interpolate_na()
+
+    #     input_data = input_data.assign(null_precp =  data_null)  
+    #     var = "null_input" 
+    #     target = null_target.transpose("lat","lon","time").values #
+    #     check_xarray_dataset(args, [null_target,  input_data[var]], save=False, plot=False)
+    # else:
+    #     target = target_data.transpose("lat","lon","time")
+    #     var = var_target
 
     # Read the data as a numpy array
-    
-    data = sub_precp[var].transpose("lat","lon","time").values #.rio.interpolate_na()
-    target = np.array(target)
-    data = np.array(data)
-    
-    return data, target
 
+    return result_array, target
 
 def get_lat_lon_window(temp_ds, target_pixels):
     dict_lat = temp_ds["lat"].values

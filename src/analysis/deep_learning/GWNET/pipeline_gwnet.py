@@ -68,11 +68,12 @@ def create_paths(args:dict, spi:bool=False):
     return output_dir, log_path, img_path, checkp_path
 
 
-def data_preparation(args, precp_dataset:str="ERA5", 
+def data_preparation(args:dict, 
+                     precp_dataset:str="ERA5", 
                      ndvi_dataset:str='ndvi_smoothed_w2s.nc'):
     
     from utils.function_clns import config, crop_image_left
-    from configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
+    from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
 
     config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
                           config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
@@ -96,7 +97,7 @@ def data_preparation(args, precp_dataset:str="ERA5",
         file = f"{precp_dataset}_merged.nc"
 
     if args.pipeline == "CONVLSTM":
-        from configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
+        from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
         logger.info(f"Starting NDVI prediction with product {config['CONVLSTM']['precp_product']} with {model_config.num_frames_input} days of features and {args.step_length} in the future...")
     else:
         logger.info(f"Starting NDVI prediction with product {config['GWNET']['precp_product']} with {args.forecast} days of features...")

@@ -7,7 +7,7 @@ readme = "README.md"
 
 packages = [
     {include = "analysis", from = "src"},
-    {include = "eumetsat_data_collection", from = "src"},
+    {include = "ancillary", from = "src"},
     {include = "utils", from = "src"},
     {include = "precipitation", from = "src"},
     {include = "soil_moisture", from = "src"},

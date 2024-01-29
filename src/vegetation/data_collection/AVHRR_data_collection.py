@@ -15,44 +15,7 @@ import requests
 from bs4 import BeautifulSoup, SoupStrainer
 import re
 
-def cut_file(xr_df, gdf):
-    xr_df = xr_df.drop_vars(['lon_bnds','lat_bnds'])
-    xr_df['TIMEOFDAY'] = xr_df['TIMEOFDAY'].astype(int)
-    xr_df.rio.set_spatial_dims(x_dim='latitude', y_dim='longitude', inplace=True)
-    xr_df.rio.write_crs("epsg:4326", inplace=True)
-    vars_list = list(xr_df.data_vars)
-    for var in vars_list:
-        del xr_df[var].attrs['grid_mapping']
-    clipped = xr_df.rio.clip(gdf.geometry.apply(mapping), gdf.crs, drop=True)
-    clipped = clipped.drop('crs')
-    return clipped
-
-def cut_only(download_dir,target_dir, gdf):
-    files = [f for f in os.listdir(download_dir) if f.endswith('.nc')]
-    for name in files:
-        print('The file name is' , str(name))
-        xr_df = xr.open_dataset(os.path.join(download_dir, name), engine='netcdf4',decode_coords=False)
-        df = cut_file(xr_df, gdf)
-        df.to_netcdf(os.path.join(target_dir, name))
-        xr_df.close()
-            
-    [os.remove(os.path.join(download_dir, name)) for name in files]
-
-
-def cropping_loop():
-    download_dir = r'D:\MSG\AVHRR\batch_1'
-    target_dir = r'D:\MSG\AVHRR\processed'
-    regex = re.compile("AVHRR-Land_v005_AVH13C1_NOAA-18_2007(.*)")
-    files = [f for f in os.listdir(download_dir) if f.endswith('.nc')]
-    selected = filter(regex.match, files)
-    for file in selected:
-        print('Cropping file ', str(file))
-        xr_df = xr.open_dataset(os.path.join(download_dir, file), engine='netcdf4',decode_coords=False)
-        df = cut_file(xr_df, gdf)
-        df.to_netcdf(os.path.join(target_dir, file))
-        xr_df.close()
-
-def data_collection():
+def avhrr_data_collection():
 
     years = [2005, 2008, 2009, 2010]
 

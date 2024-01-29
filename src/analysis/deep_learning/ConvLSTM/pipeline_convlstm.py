@@ -68,7 +68,7 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
                   
     import numpy as np
     #from configs.config_3x3_32_3x3_64_3x3_128 import config
-    from configs.config_3x3_16_3x3_32_3x3_64 import config
+    from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config
     from analysis.deep_learning.GWNET.pipeline_gwnet import MetricsRecorder, create_paths
     from torch.nn import MSELoss
     import matplotlib.pyplot as plt
@@ -187,17 +187,81 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
         plt.savefig(os.path.join(img_path, f'learning_curve_feat_{config.num_frames_input}.png'))
         plt.close()
 
-if __name__=="__main__":
-    from analysis.deep_learning.GWNET.pipeline_gwnet import data_preparation 
-    import pickle
-    import os
-    import matplotlib.pyplot as plt
-    from utils.function_clns import config, prepare, CNN_split, interpolate_prepare
-    import numpy as np
-    from torch.utils.data import DataLoader
-    from loguru import logger
+    def convlstm_pipeline(args:dict, 
+                          train_split:float = 0.7,
+                          use_water_mask:bool =True,
+                          precipitation_only: bool = True):
+        
+        from ancillary.esa_landuse import drop_water_bodies_esa_downsample
+        from precipitation.preprocessing.preprocess_data import PrecipDataPreparation
+        from utils.function_clns import config, interpolate_prepare
+        import numpy as np
+        from loguru import logger
+        import analysis.configs.config_3x3_16_3x3_32_3x3_64 as model_config
+        from utils.function_clns import config
 
-    product = "ERA5"
+        data_dir = model_config.output_dir+"data_convlstm"
+
+        if len(os.listdir(data_dir)) == 0:
+            logger.info("No data found, proceeding with the creation of the training dataset.")
+
+            if precipitation_only is False:
+                from ancillary.hydro_data import InputHydroVariables
+                import warnings
+                warnings.filterwarnings('ignore')
+
+                Era5variables = ["potential_evaporation", "evaporation",
+                             "2m_temperature","total_precipitation"]
+
+                X_data = InputHydroVariables(Era5variables,
+                            config["DEFAULT"]["start_date"],
+                            config["DEFAULT"]["end_date"]
+                )
+                
+                ancillary_vars = X_data.data
+            
+            else:
+                Era5variables = ["total_precipitation"]
+                
+                precp_data = PrecipDataPreparation(
+                    args, 
+                    precp_dataset=config["CONVLSTM"]['precp_product'], 
+                    ndvi_dataset="ndvi_smoothed_w2s.nc",
+                    model = "CONVLSTM"
+                )
+
+            if use_water_mask is True:
+                logger.info("Loading water bodies mask...")
+                mask_ds = drop_water_bodies_esa_downsample(
+                    ndvi_ds.isel(time=0))
+
+                mask = torch.tensor(np.array(
+                    xr.where(mask_ds.notnull(), 1, 0)))
+            else:
+                mask = None
+
+            logger.info("Checking dataset before imputation...")
+
+            data, target = interpolate_prepare(
+                args, 
+                sub_precp, 
+                ndvi_ds, 
+                interpolate=True
+            )
+        
+        else:
+            logger.info("Training data found. Proceeding with loading...")
+
+        
+        training_convlstm(data, 
+            target, 
+            mask=mask, 
+            train_split = train_split, 
+            ndvi_scaler = ndvi_scaler
+        )
+    
+
+if __name__=="__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
@@ -217,7 +281,6 @@ if __name__=="__main__":
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
     parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
     
-    parser.add_argument("--pipeline", type=str, default= "CONVLSTM", help="")
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
     parser.add_argument("--normalize", type=bool, default=False, help="Input data normalization")
@@ -225,17 +288,4 @@ if __name__=="__main__":
 
     args = parser.parse_args()
 
-    sub_precp, ds, ndvi_scaler = data_preparation(args, 
-                                                  precp_dataset=config[args.pipeline]['precp_product'], 
-                                                  ndvi_dataset="ndvi_smoothed_w2s.nc")
-    
-    from ancillary_vars.esa_landuse import drop_water_bodies_esa_downsample
-    mask_ds = drop_water_bodies_esa_downsample(ds.isel(time=0))
-    mask = torch.tensor(np.array(xr.where(mask_ds.notnull(), 1, 0)))
-
-    print("Visualizing dataset before imputation...")
-    #sub_precp = sub_precp.to_dataset()
-    data, target = interpolate_prepare(args, sub_precp, ds, interpolate=True)
-    train_split = 0.7
-    training_convlstm(data, target, mask=mask, train_split = train_split, 
-                  ndvi_scaler=ndvi_scaler)
+    convlstm_pipeline(args)

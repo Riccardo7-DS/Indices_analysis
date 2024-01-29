@@ -224,3 +224,9 @@ def get_missing_datarray(datarray, prediction="P1D"):
                             name="ndvi"
                             )
     return new_ds
+
+
+def convert_ndvi_tofloat(datarray:xr.DataArray):
+    datarray = xr.where(datarray==255, np.NaN, datarray)
+    ndvi = datarray/100
+    return ndvi

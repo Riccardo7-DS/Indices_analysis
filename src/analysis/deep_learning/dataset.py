@@ -8,6 +8,9 @@ import re
 from typing import Union
 import torch.nn.functional as F
 
+"""
+Custom Datasets classes for Deep Learning models
+"""
 
 class CustomDataset(Dataset):
     def __init__(self, data, targets):
@@ -25,7 +28,12 @@ class CustomDataset(Dataset):
 
 
 class CustomConvLSTMDataset(Dataset):
-    def __init__(self, config, args, data, labels):
+    """
+    Class for the ConvLSTM model, converting features and instances to pytorch tensors
+    """
+    def __init__(self, config:dict, args:dict, 
+            data:xr.DataArray, labels: xr.DataArray, save_files:bool=False):
+
         self.data = data
         self.labels = labels
         self.image_size = config.image_size
@@ -37,34 +45,55 @@ class CustomConvLSTMDataset(Dataset):
         self.num_samples = config.num_samples
         self.output_window = config.num_frames_output
         self.num_frames = config.num_frames_input + config.num_frames_output
+        self.save_path = config.output_dir
         self._generate_traing_data()
+
+        if save_files is True:
+            self._save_files(self.data, self.labels)
+
         #print('Loaded {} samples ({})'.format(self.__len__(), split))
 
     def _generate_traing_data(self):
 
-        train_data_processed = np.zeros((self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
-                                         self.num_samples,
-                                         self.learning_window, *self.input_size), dtype=np.float32)
+        train_data_processed = np.zeros(
+            (self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
+                self.num_samples,
+                self.learning_window, *self.input_size), 
+                dtype=np.float32
+            )
         
-        label_data_processed = np.zeros((self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
-                                         self.output_channels, 
-                                         self.output_window, *self.input_size), dtype=np.float32)
+        label_data_processed = np.zeros(
+            (self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
+                self.output_channels, 
+                self.output_window, *self.input_size), 
+                dtype=np.float32
+            )
 
         current_idx = 0
         
         if self.num_samples == 1:
             while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
-                train_data_processed[current_idx, 0, :, :, :] = self.data[0, current_idx : current_idx + self.learning_window, :, :]
-                label_data_processed[current_idx, 0, :, :, :] = self.labels[0, current_idx + self.steps_head + self.learning_window: 
-                                                                            current_idx + self.steps_head + self.learning_window + self.output_window, :, :]
+                train_data_processed[current_idx, 0, :, :, :] = \
+                    self.data[0, current_idx : current_idx + self.learning_window, :, :]
+                
+                label_data_processed[current_idx, 0, :, :, :] = \
+                    self.labels[0, current_idx + self.steps_head + 
+                    self.learning_window : current_idx + self.steps_head + self.learning_window + self.output_window, :, :]
+                
                 current_idx +=1
         
-        elif self.num_samples ==2:
+        elif self.num_samples > 1:
             while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
-                train_data_processed[current_idx, 0, :, :, :] = self.data[0, current_idx : current_idx + self.learning_window, :, :]
-                train_data_processed[current_idx, 1, :, :, :] = self.labels[0, current_idx : current_idx + self.learning_window, :, :]
-                label_data_processed[current_idx, 0, :, :, :] = self.labels[0, current_idx + self.learning_window + self.steps_head : 
-                                                                            current_idx + self.learning_window  + self.steps_head + self.output_window, :, :]
+                train_data_processed[current_idx, 0, :, :, :] = \
+                    self.data[0, current_idx : current_idx + self.learning_window, :, :]
+                
+                for chnl in range(1, self.num_samples):
+                    train_data_processed[current_idx, chnl, :, :, :] = \
+                        self.labels[0, current_idx : current_idx + self.learning_window, :, :]
+                
+                label_data_processed[current_idx, 0, :, :, :] = \
+                    self.labels[0, current_idx + self.learning_window + 
+                    self.steps_head : current_idx + self.learning_window  + self.steps_head + self.output_window, :, :]
                 current_idx +=1
             
         else:
@@ -83,9 +112,23 @@ class CustomConvLSTMDataset(Dataset):
         y = self.labels[index,:,  :, :, :]
         return X, y
 
+    def _save_files(self, data, labels):
+        import pickle
+        for idx in len(data.shape[0]):
+            img_x = data[idx, :, :, :, :] 
+            img_y = labels[idx, :, :, :, :]
+            data_dict = {"data": img_x, "label": img_y}
+
+            dest_path = self.save_path+"data_convlstm"
+            if not os.path.exists(dest_path):
+                os.makedirs(dest_path)
+            pfilename= os.path.join(dest_path, "ds" + f"{idx:06d}"+".pkl")
+            with open(pfilename, 'wb') as file:
+                pickle.dump(data_dict, file)
 
 class MyDataset(Dataset):
-    """Subclass of PyTorch's Dataset
+    """
+    Subclass of PyTorch's Dataset
     """
     def __init__(self, data, transform=None):
         self.data_size = data.shape[0]
@@ -103,6 +146,10 @@ class MyDataset(Dataset):
         sample = F.normalize(sample, p=1, dim=-1)
         return sample
     
+
+"""
+Dataset classes for training
+"""
 
 class EarlyStopping:
     """
