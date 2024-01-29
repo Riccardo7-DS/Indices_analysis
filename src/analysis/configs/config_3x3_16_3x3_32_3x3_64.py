@@ -36,7 +36,7 @@ class Config:
     image_size = (64, 64)
     input_size = (64, 64)
     step_length = 1 #### the jump in the future
-    num_samples = 2 #### the number of channels to use
+    num_samples = 9 #### the number of channels to use
     num_objects = [3]
     display = 100
     draw = 10

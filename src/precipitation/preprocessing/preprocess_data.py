@@ -44,7 +44,9 @@ class PrecipDataPreparation():
 
         if self.model == "GWNET":
             precp_ds.where(self.ndvi_ds.notnull())
-            self.precp_ds = precp_ds[[var for var in precp_ds.data_vars][0]]
+            self.hydro_data = precp_ds[[var for var in precp_ds.data_vars][0]]
+        else:
+            self.hydro_data = self.precp_ds
 
     
     def _load_local_precipitation(self, precp_dataset:str):

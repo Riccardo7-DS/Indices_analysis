@@ -338,7 +338,7 @@ def prepare_datarray(datarray:xr.DataArray,
     
     return datarray.transpose("time","lat","lon")
 
-def interpolate_prepare(args, 
+def interpolate_prepare(
                         input_data:xr.Dataset | xr.DataArray, 
                         target_data:xr.DataArray, 
                         interpolate:bool=True):
@@ -349,7 +349,8 @@ def interpolate_prepare(args,
     if type(input_data) == xr.Dataset:
 
         for var in input_data.data_vars:
-            input_data[var] = prepare_datarray(input_data[var])
+            input_data[var] = prepare_datarray(input_data[var], 
+                                               interpolate=interpolate)
 
         shape = (len(input_data['time']), len(input_data.data_vars), 
                  len(input_data['lat']), len(input_data['lon']))
@@ -361,7 +362,7 @@ def interpolate_prepare(args,
             result_array[:, i, :, :] = input_data[variable]
 
     else:
-        input_data = prepare_datarray(input_data)
+        input_data = prepare_datarray(input_data, interpolate=interpolate)
         result_array = np.array(result_array)
 
     target_data = prepare_datarray(target_data)

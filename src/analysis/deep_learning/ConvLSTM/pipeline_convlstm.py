@@ -77,7 +77,7 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
     from utils.function_clns import load_config
     from analysis.deep_learning.dataset import EarlyStopping
 
-    output_dir, log_path, img_path, checkpoint_dir= create_paths(args)
+    output_dir, log_path, img_path, checkpoint_dir = create_paths(args)
 
     #### training parameters
     train_data, val_data, train_label, val_label, test_valid, test_label = CNN_split(data, target, 
@@ -87,8 +87,13 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
     early_stopping = EarlyStopping(config, verbose=True)
 
     # create a CustomDataset object using the reshaped input data
-    train_dataset = CustomConvLSTMDataset(config, args, train_data, train_label)
-    val_dataset = CustomConvLSTMDataset(config, args, val_data, val_label)
+    train_dataset = CustomConvLSTMDataset(config, args, 
+                                          train_data, train_label, 
+                                          save_files=True, filename="train_ds")
+    
+    val_dataset = CustomConvLSTMDataset(config, args, 
+                                        val_data, val_label, 
+                                        save_files=True, filename="val_ds")
     
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -206,34 +211,34 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
             logger.info("No data found, proceeding with the creation of the training dataset.")
 
             if precipitation_only is False:
-                from ancillary.hydro_data import InputHydroVariables
                 import warnings
                 warnings.filterwarnings('ignore')
 
                 Era5variables = ["potential_evaporation", "evaporation",
                              "2m_temperature","total_precipitation"]
-
-                X_data = InputHydroVariables(Era5variables,
-                            config["DEFAULT"]["start_date"],
-                            config["DEFAULT"]["end_date"]
-                )
                 
-                ancillary_vars = X_data.data
+                HydroData = PrecipDataPreparation(
+                    args,
+                    variables=Era5variables,
+                    model="CONVLSTM",
+                    load_local_precp = False
+                )
             
             else:
                 Era5variables = ["total_precipitation"]
                 
-                precp_data = PrecipDataPreparation(
+                HydroData = PrecipDataPreparation(
                     args, 
-                    precp_dataset=config["CONVLSTM"]['precp_product'], 
-                    ndvi_dataset="ndvi_smoothed_w2s.nc",
-                    model = "CONVLSTM"
+                    precp_dataset=config["CONVLSTM"]['precp_product'],
+                    model = "CONVLSTM",
+                    variables=Era5variables,
+                    load_local_precp=True
                 )
 
             if use_water_mask is True:
                 logger.info("Loading water bodies mask...")
                 mask_ds = drop_water_bodies_esa_downsample(
-                    ndvi_ds.isel(time=0))
+                    HydroData.ndvi_ds.isel(time=0))
 
                 mask = torch.tensor(np.array(
                     xr.where(mask_ds.notnull(), 1, 0)))
@@ -244,8 +249,8 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
 
             data, target = interpolate_prepare(
                 args, 
-                sub_precp, 
-                ndvi_ds, 
+                HydroData.hydro_data, 
+                HydroData.ndvi_ds, 
                 interpolate=True
             )
         
@@ -257,7 +262,7 @@ def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:
             target, 
             mask=mask, 
             train_split = train_split, 
-            ndvi_scaler = ndvi_scaler
+            ndvi_scaler = HydroData.ndvi_scaler
         )
     
 

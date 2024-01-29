@@ -32,7 +32,10 @@ class CustomConvLSTMDataset(Dataset):
     Class for the ConvLSTM model, converting features and instances to pytorch tensors
     """
     def __init__(self, config:dict, args:dict, 
-            data:xr.DataArray, labels: xr.DataArray, save_files:bool=False):
+            data:xr.DataArray, 
+            labels: xr.DataArray, 
+            save_files:bool=False,
+            filename = "dataset"):
 
         self.data = data
         self.labels = labels
@@ -47,8 +50,9 @@ class CustomConvLSTMDataset(Dataset):
         self.num_frames = config.num_frames_input + config.num_frames_output
         self.save_path = config.output_dir
         self._generate_traing_data()
-
+        
         if save_files is True:
+            self.filename = filename
             self._save_files(self.data, self.labels)
 
         #print('Loaded {} samples ({})'.format(self.__len__(), split))
@@ -84,20 +88,14 @@ class CustomConvLSTMDataset(Dataset):
         
         elif self.num_samples > 1:
             while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
-                train_data_processed[current_idx, 0, :, :, :] = \
-                    self.data[0, current_idx : current_idx + self.learning_window, :, :]
-                
-                for chnl in range(1, self.num_samples):
+                for chnl in range(0, self.num_samples):
                     train_data_processed[current_idx, chnl, :, :, :] = \
-                        self.labels[0, current_idx : current_idx + self.learning_window, :, :]
+                        self.data[0, chnl, current_idx : current_idx + self.learning_window, :, :]
                 
                 label_data_processed[current_idx, 0, :, :, :] = \
                     self.labels[0, current_idx + self.learning_window + 
                     self.steps_head : current_idx + self.learning_window  + self.steps_head + self.output_window, :, :]
                 current_idx +=1
-            
-        else:
-            raise NotImplementedError(f"Not implemented a model with {self.num_samples} channels")
 
         self.data = train_data_processed.swapaxes(1,2)
         self.labels = label_data_processed.swapaxes(1,2)
@@ -119,10 +117,10 @@ class CustomConvLSTMDataset(Dataset):
             img_y = labels[idx, :, :, :, :]
             data_dict = {"data": img_x, "label": img_y}
 
-            dest_path = self.save_path+"data_convlstm"
+            dest_path = self.save_path+ "/data_convlstm" + f"/{self.filename}"
             if not os.path.exists(dest_path):
                 os.makedirs(dest_path)
-            pfilename= os.path.join(dest_path, "ds" + f"{idx:06d}"+".pkl")
+            pfilename= os.path.join(dest_path,  f"{idx:06d}"+".pkl")
             with open(pfilename, 'wb') as file:
                 pickle.dump(data_dict, file)
 
