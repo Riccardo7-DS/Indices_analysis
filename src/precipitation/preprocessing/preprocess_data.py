@@ -197,7 +197,7 @@ class PrecipDataPreparation():
                           resample_ds:xr.DataArray):
         if type(target_ds) == xr.Dataset:
             var_target = [var for var in target_ds.data_vars][0]
-            target_ds = target_ds[var_target]
+            target_ds = prepare(target_ds[var_target])
 
         # elif type(target_ds)== xr.DataArray:
             
