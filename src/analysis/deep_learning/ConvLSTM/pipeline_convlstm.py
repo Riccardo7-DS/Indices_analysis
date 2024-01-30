@@ -204,7 +204,7 @@ def convlstm_pipeline(args:dict,
     from loguru import logger
     from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
     from utils.function_clns import config
-    
+
     data_dir = model_config.output_dir+"/data_convlstm"
     if os.path.exists(data_dir) is False:
         os.makedirs(data_dir)
@@ -246,7 +246,8 @@ def convlstm_pipeline(args:dict,
             args, 
             HydroData.hydro_data, 
             HydroData.ndvi_ds, 
-            interpolate=True
+            interpolate=True,
+            convert_to_float=False
         )
     
     else:

@@ -19,15 +19,14 @@ class PrecipDataPreparation():
         if load_local_precp is True:
             self._load_local_precipitation(precipitation_data)
             precp_ds = self._preprocess_array(args, path = self.precp_path,
-                                              filename=self.precp_filename)
+                                               filename=self.precp_filename)
         else:
             precp_ds, era5_data = self._load_arco_precipitation(variables)
+            precp_ds = self._preprocess_array(args, dataset = precp_ds)
 
             if len(variables) > 1:
                 logger.info(f"Processing ancillary variables {variables}")
                 precp_ds = self._transform_ancillary(precp_ds, era5_data)
-
-            precp_ds = self._preprocess_array(args, precp_ds)
             
         self.ndvi_filename = ndvi_data
         self.ndvi_path = config['NDVI']['ndvi_path']
@@ -91,7 +90,7 @@ class PrecipDataPreparation():
         self.time_start = config['DEFAULT']['date_start']
         
         logger.info("Querying ARCO data from Google Cloud Storage...")
-        input_data = query_arco_era5(variables)
+        input_data = query_arco_era5(variables, subset=False)
         input_data = input_data.shift(time=1)\
             .sel(time=slice(self.time_start, self.time_end))
         logger.info("Processing input data...")
@@ -138,11 +137,13 @@ class PrecipDataPreparation():
 
         if type(dataset) == xr.Dataset:
             for var in dataset.data_vars:
-                dataset[var] = prepare_datarray(dataset[var], 
-                                             interpolate=False)
+                # dataset[var] = prepare_datarray(dataset[var], 
+                #                              interpolate=False)
+                dataset[var] = dataset[var].rio.write_nodata(np.NaN)
 
         elif type(dataset)== xr.DataArray:
-            dataset = prepare_datarray(dataset, interpolate=False)
+            # dataset = prepare_datarray(dataset, interpolate=False)
+            dataset = dataset.rio.write_nodata(np.NaN)
             
         else:
             raise ValueError("The provided dataset must be in xarray format")
@@ -237,10 +238,8 @@ class PrecipDataPreparation():
         return ds_temp_min, ds_temp_max
     
     def _process_evapo_arco(self, ds):
-        evap = ds["evaporation"].resample(time="1D")\
-            .sum()
-        pot_evap = ds["potential_evaporation"].resample(time="1D")\
-            .sum()
+        evap = ds["evaporation"].resample(time="D").sum()
+        pot_evap = ds["potential_evaporation"].resample(time="D").sum()
         return evap, pot_evap
     
     def _load_soil_moisture(self):
@@ -249,7 +248,7 @@ class PrecipDataPreparation():
         import xarray as xr
 
         path = os.path.join(config["SOIL_MO"]["path"], "*/*.nc")
-        chunks={'time': -1, "latitude": "100MB", "longitude":"100MB"}
+        chunks={'time': 50, "latitude": 100, "longitude":100}
         ds = xr.open_mfdataset(path, chunks=chunks)
         ds_ = subsetting_pipeline(prepare(ds).
                                   drop_dims(["depth", "bnds"]))

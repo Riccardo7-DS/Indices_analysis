@@ -93,6 +93,9 @@ def query_arco_era5(vars:list=None, subset:bool=True,
     ).rename({"latitude":"lat", "longitude":"lon"})
     if subset is True:
         test_ds = subsetting_pipeline(ar_full_37_1h)
+
+    else:
+        test_ds = ar_full_37_1h
     
     if vars is not None:
         return test_ds[vars]

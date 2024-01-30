@@ -322,14 +322,26 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.Dat
 
 
 def prepare_datarray(datarray:xr.DataArray, 
-               interpolate:bool = False, check_data:bool = False):
+               interpolate:bool = False, 
+               check_data:bool = False,
+               convert_to_float:bool = False):
     
-    if isinstance(datarray.values.flat[0], np.str_):
+    import numpy as np
+
+    def convert_strings_to_float(arr):
+        # Vectorized conversion using np.where
+        return np.where(np.char.isnumeric(arr), 
+                        arr.astype(np.float32), arr)
+
+    if convert_to_float is True:
+        datarray.values = convert_strings_to_float(datarray.values)
+    
+    if datarray.values.dtype == np.str_:
         datarray= datarray.rio.write_nodata("nan")
     else:
         datarray = datarray.rio.write_nodata(np.nan)
 
-    datarray = datarray.astype(np.float32)
+    # datarray = datarray.astype(np.float32)
 
     if interpolate is True:
         datarray = datarray.rio.interpolate_na()
@@ -341,7 +353,8 @@ def prepare_datarray(datarray:xr.DataArray,
 def interpolate_prepare(
                         input_data:Union[xr.Dataset, xr.DataArray], 
                         target_data:xr.DataArray, 
-                        interpolate:bool=True):
+                        interpolate:bool=True,
+                        convert_to_float:bool=False):
     """
     Function to prepare rand interpolate provided datasets w.r.t a given target dataset
     """
@@ -350,7 +363,8 @@ def interpolate_prepare(
 
         for var in input_data.data_vars:
             input_data[var] = prepare_datarray(input_data[var], 
-                                               interpolate=interpolate)
+                                               interpolate=interpolate,
+                                               convert_to_float=convert_to_float)
 
         shape = (len(input_data['time']), len(input_data.data_vars), 
                  len(input_data['lat']), len(input_data['lon']))
@@ -362,7 +376,8 @@ def interpolate_prepare(
             result_array[:, i, :, :] = input_data[variable]
 
     else:
-        input_data = prepare_datarray(input_data, interpolate=interpolate)
+        input_data = prepare_datarray(input_data, interpolate=interpolate,
+                                      convert_to_float=convert_to_float)
         result_array = np.array(result_array)
 
     target_data = prepare_datarray(target_data)
