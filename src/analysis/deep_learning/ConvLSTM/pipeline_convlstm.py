@@ -63,8 +63,12 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
     return sub_precp, ds
 
 
-def training_convlstm(args, logger, data:np.array, target:np.array, ndvi_scaler:StandardScaler,
-                  mask:Union[None, np.array]=None, train_split:float = 0.7):
+def training_convlstm(args, logger, 
+                    data:np.array, 
+                    target:np.array, 
+                    ndvi_scaler:StandardScaler,
+                    mask:Union[None, np.array]=None, 
+                    train_split:float = 0.7):
                   
     import numpy as np
     #from configs.config_3x3_32_3x3_64_3x3_128 import config
@@ -206,8 +210,10 @@ def convlstm_pipeline(args:dict,
     from utils.function_clns import config
 
     data_dir = model_config.output_dir+"/data_convlstm"
+
     if os.path.exists(data_dir) is False:
         os.makedirs(data_dir)
+
     if len(os.listdir(data_dir)) == 0:
         logger.info("No data found, proceeding with the creation of the training dataset.")
         if precipitation_only is False:
