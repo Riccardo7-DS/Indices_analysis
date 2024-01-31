@@ -49,6 +49,7 @@ def load_landsaf_ndvi(path:str, crop_area:bool = True)->xr.Dataset:
         ds = subsetting_pipeline(ds)
 
     ds["ndvi_10"] = convert_ndvi_tofloat(ds.ndvi_10)
+    # ds["ndvi_10"] = ds.ndvi_10/255
     return ds 
 
 
