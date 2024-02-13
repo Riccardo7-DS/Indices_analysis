@@ -193,7 +193,8 @@ def training_convlstm(args, logger,
         plt.plot(range(epoch + 1), train_records, label='train')
         plt.plot(range(epoch + 1), valid_records, label='valid')
         plt.legend()
-        plt.savefig(os.path.join(img_path, f'learning_curve_feat_{config.num_frames_input}.png'))
+        plt.savefig(os.path.join(img_path, f'learning_curve_feat_
+                                 {config.num_frames_input}.png'))
         plt.close()
 
 def convlstm_pipeline(args:dict, 

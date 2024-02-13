@@ -5,15 +5,15 @@ translate_command="gdal_translate -a_srs \"+proj=geos +h=35785831 +a=6378169 +b=
 warp_command0="gdalwarp -t_srs EPSG:4326 -wo SOURCE_EXTRA=100 temp.tif output_filename -overwrite"
 
 # Define the variables
-variables=( "NDVImean") #"NDVImax" "NDVImin" "NDVIaccum"
+variables=( "NDVImax") #"NDVImean" "NDVImin" "NDVIaccum"
 
 # Set the path to the main directory
 main_path="/media/BIFROST/N2/Riccardo/MSG/msg_data/NDVI/archive.eumetsat.int/umarf-gwt/onlinedownload/riccardo7/4859700"
 
 # Create a temporary directory for storing intermediate files
-temp_dir="/media/BIFROST/N2/Riccardo/MSG/msg_data/NDVI/archive.eumetsat.int/umarf-gwt/onlinedownload/riccardo7/4859700/temp/"
+temp_dir="/media/BIFROST/N2/Riccardo/MSG/msg_data/NDVI/archive.eumetsat.int/umarf-gwt/onlinedownload/riccardo7/4859700/temp/max"
 
-mkdir $temp_dir
+mkdir -p $temp_dir
 
 # Iterate over the subfolders
 for i in {1..8}; do

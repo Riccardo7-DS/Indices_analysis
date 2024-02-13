@@ -1,6 +1,6 @@
-from p_drought_indices.functions.function_clns import load_config, cut_file, subsetting_pipeline
-from p_drought_indices.functions.ndvi_functions import downsample, clean_ndvi, compute_ndvi, clean_outliers
-from p_drought_indices.vegetation.cloudmask_cleaning import extract_apply_cloudmask, plot_cloud_correction, compute_difference, compute_correlation
+from utils.function_clns import load_config, cut_file, subsetting_pipeline
+from utils.ndvi_functions import downsample, clean_ndvi, compute_ndvi, clean_outliers
+from vegetation.preprocessing.seviri_cleaning import extract_apply_cloudmask, plot_cloud_correction, compute_difference, compute_correlation
 import xarray as xr 
 import pandas as pd
 import yaml
@@ -17,10 +17,6 @@ import numpy as np
 from matplotlib import gridspec
 import matplotlib.patches as mpatches
 from matplotlib import gridspec
-import re
-from p_drought_indices.vegetation.NDVI_indices import compute_svi, compute_vci
-from p_drought_indices.analysis.spi_analysis.metrics_table import MetricTable
-from p_drought_indices.functions.function_clns import open_xarray_dataset, crop_get_spi,load_config
 import xarray as xr
 import os
 import pandas as pd
@@ -28,12 +24,9 @@ import calendar
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Union
-<<<<<<< HEAD:src/analysis/visualizations/viz_vci_spi.py
 from tqdm.auto import tqdm
 import time
 from timeit import default_timer as timer
-=======
->>>>>>> origin/main:p_drought_indices/analysis/visualizations/viz_vci_spi.py
 
 def get_dates(gap_year=False):
     if gap_year==False:
@@ -42,7 +35,13 @@ def get_dates(gap_year=False):
         return pd.date_range("01-Jan-2020", "31-Dec-2020", freq="D").to_series().dt.strftime('%d-%b').values
 
 
-def box_plot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, title:str=None, figsize =(15, 7), show_means:bool=False):
+def box_plot_year(ds, 
+                  var:str="ndvi", 
+                  year:Union[None, int,list]=None, 
+                  title:str=None, 
+                  figsize =(15, 7), 
+                  show_means:bool=False):
+    
     if year==None:
         days = 366
     elif type(year)==list:
@@ -66,9 +65,15 @@ def box_plot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, title:str
     
     # Creating plot
     if show_means==True:
-        boxplot = ax.boxplot(df_list, showfliers=False, patch_artist=True,labels=list_dates, showmeans=True,medianprops=dict(color="green",ls="--",lw=1), meanline=True, meanprops=dict(color="red", ls="-", lw=2))
+        boxplot = ax.boxplot(df_list, showfliers=False, 
+                             patch_artist=True, labels=list_dates, 
+                             showmeans=True,
+                             medianprops=dict(color="green",ls="--",lw=1), 
+                             meanline=True, 
+                             meanprops=dict(color="red", ls="-", lw=2))
     else:
-        boxplot = ax.boxplot(df_list, showfliers=False, patch_artist=True, labels=list_dates)
+        boxplot = ax.boxplot(df_list, showfliers=False, 
+                             patch_artist=True, labels=list_dates)
     n=7
     ax.set_axisbelow(True)
     ax.yaxis.grid(color='grey', linestyle='dashed')
@@ -134,8 +139,11 @@ def get_xarray_time_subset(ds:xr.DataArray,  year:Union[list, int],month:Union[N
         df_list, list_dates= get_subplot_year(ds_subset, year =year, var=variable, months=month)
     return df_list, list_dates
     
-def get_subplot_year(ds, var:str="ndvi", year:Union[None, int,list]=None, 
-                     months:Union[None, list,int]=None, dask_compute:bool=True):
+def get_subplot_year(ds, 
+                     var:str="ndvi", 
+                     year:Union[None, int,list]=None, 
+                     months:Union[None, list,int]=None, 
+                     dask_compute:bool=True):
 
     import dask
     from dask.diagnostics import ProgressBar
@@ -1062,11 +1070,7 @@ def plot_spi_event(ds:xr.Dataset, variable:str, year:int, months:list, path=None
     plt.show()
 
 
-<<<<<<< HEAD:src/analysis/visualizations/viz_vci_spi.py
 def plot_veg_event(ds:xr.Dataset, year:int, months:list, df_list_all:list=None, path:str=None):
-=======
-def plot_veg_event(ds:xr.Dataset, year:int, months:list,  path:str=None, df_list_all:list=None):
->>>>>>> origin/main:p_drought_indices/analysis/visualizations/viz_vci_spi.py
     if df_list_all is None:
         df_list_all, list_dates_all = get_subplot_year(ds)
 

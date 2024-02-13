@@ -2,11 +2,9 @@ from scipy.sparse import dok_matrix
 from tqdm.auto import tqdm
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
-import seaborn as sns
 
-from p_drought_indices.functions.function_clns import subsetting_pipeline, load_config
+from utils.function_clns import subsetting_pipeline
 import xarray as xr 
 import pandas as pd
 import yaml
@@ -61,7 +59,7 @@ def get_soil_vars(CONFIG_PATH, countries:list, xr_df:Union[DataArray, Dataset]=N
     """
     df: pandas dataframe to get initial raster and to sample vars
     """
-    config = load_config(CONFIG_PATH)
+    from utils.function_clns import config
     path = config['DEFAULT']['ancillary']
     chunks={'time':'500MB'}
 
@@ -152,7 +150,7 @@ def get_water_cover(CONFIG_PATH, countries:list, xr_df:Union[DataArray, Dataset]
     """
     df: pandas dataframe to get initial raster and to sample vars
     """
-    config = load_config(CONFIG_PATH)
+    from utils.function_clns import config
     path = config['DEFAULT']['ancillary']
     chunks={'time':'500MB'}
 

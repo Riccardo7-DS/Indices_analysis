@@ -134,7 +134,7 @@ def process_ndvi(base_dir, file):
 
 
 def drop_water_bodies_esa(CONFIG_PATH:str, config:dict, dataset:xr.Dataset, var:str="ndvi") ->xr.Dataset:
-    from ancillary_vars.esa_landuse import get_level_colors, get_cover_dataset
+    from ancillary.esa_landuse import get_level_colors, get_cover_dataset
 
     img_path = os.path.join(config["DEFAULT"]["images"], "chirps_esa")
     ds_cover = get_cover_dataset(CONFIG_PATH, dataset[var], img_path)
@@ -191,10 +191,18 @@ def extract_apply_cloudmask(ds, ds_cl, resample=False, include_water =True,downs
         return mask_clouds, res_xr  ###1) dataset without zeros (clouds) 2) dataset with cloud mask applied
 
 
-def apply_whittaker(datarray:DataArray, lambda_par:int=1, prediction="P1D", time_dim="time"):
+def apply_whittaker(datarray:DataArray, 
+                    lambda_par:int=1, 
+                    prediction:str="P1D", 
+                    time_dim:str="time"):
+    
     from fusets import WhittakerTransformer
     from fusets._xarray_utils import _extract_dates, _output_dates, _topydate
-    result = WhittakerTransformer().fit_transform(datarray.load(),smoothing_lambda=lambda_par, time_dimension=time_dim, prediction_period=prediction)
+    
+    result = WhittakerTransformer().fit_transform(datarray.load(),
+                                                  smoothing_lambda=lambda_par, 
+                                                  time_dimension=time_dim, 
+                                                  prediction_period=prediction)
     dates = _extract_dates(datarray)
     expected_dates = _output_dates(prediction,dates[0],dates[-1])
     datarray['time'] = datarray.indexes['time'].normalize()
@@ -228,5 +236,5 @@ def get_missing_datarray(datarray, prediction="P1D"):
 
 def convert_ndvi_tofloat(datarray:xr.DataArray):
     datarray = xr.where(datarray==255, np.NaN, datarray)
-    ndvi = datarray/254
+    ndvi = -0.08+(datarray*0.004)
     return ndvi

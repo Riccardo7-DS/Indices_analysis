@@ -321,23 +321,6 @@ files = [
 ]
 
 [[package]]
-name = "cf-xarray"
-version = "0.8.8"
-description = "A convenience wrapper for using CF attributes on xarray objects"
-optional = false
-python-versions = ">=3.9"
-files = [
-    {file = "cf_xarray-0.8.8-py3-none-any.whl", hash = "sha256:38f348cfa88658c43a8b02d850d20355b8b7f1cdd8b00bd07757621059f26adb"},
-    {file = "cf_xarray-0.8.8.tar.gz", hash = "sha256:74c13f3f1cee7243101e3b47f5e91d69950851ccd170cc9f8e716b1c70773c2f"},
-]
-
-[package.dependencies]
-xarray = "*"
-
-[package.extras]
-all = ["matplotlib", "pint", "pooch", "regex", "rich", "shapely"]
-
-[[package]]
 name = "cffi"
 version = "1.16.0"
 description = "Foreign Function Interface for Python calling C code."
@@ -568,17 +551,14 @@ files = [
 
 [[package]]
 name = "click"
-version = "8.1.7"
+version = "7.1.2"
 description = "Composable command line interface toolkit"
 optional = false
-python-versions = ">=3.7"
+python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
 files = [
-    {file = "click-8.1.7-py3-none-any.whl", hash = "sha256:ae74fb96c20a0277a1d615f1e4d73c8414f5a98db8b799a7931d1582f3390c28"},
-    {file = "click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de"},
+    {file = "click-7.1.2-py2.py3-none-any.whl", hash = "sha256:dacca89f4bfadd5de3d7489b7c8a566eee0d3676333fbb50030263894c38c0dc"},
+    {file = "click-7.1.2.tar.gz", hash = "sha256:d2b5255c7c6349bc1bd1e59e08cd12acbbd63ce649f2588755783aa94dfb6b1a"},
 ]
-
-[package.dependencies]
-colorama = {version = "*", markers = "platform_system == \"Windows\""}
 
 [[package]]
 name = "click-plugins"
@@ -807,33 +787,32 @@ tests = ["pytest", "pytest-cov", "pytest-xdist"]
 
 [[package]]
 name = "dask"
-version = "2024.1.1"
+version = "2022.12.0"
 description = "Parallel PyData with Task Scheduling"
 optional = false
-python-versions = ">=3.9"
+python-versions = ">=3.8"
 files = [
-    {file = "dask-2024.1.1-py3-none-any.whl", hash = "sha256:860ce2797905095beff0187c214840b80c77d752dcb9098a8283e3655a762bf5"},
-    {file = "dask-2024.1.1.tar.gz", hash = "sha256:d0dc92e81ce68594a0a0ce23ba33f4d648f2c2f4217ab9b79068b7ecfb0416c7"},
+    {file = "dask-2022.12.0-py3-none-any.whl", hash = "sha256:3995d2b856920f90bc9bba7329cbe839fe0d45b4e674da22320f37a2d0e3e4f8"},
+    {file = "dask-2022.12.0.tar.gz", hash = "sha256:159acc4a65f2ea042b453f12dee66fd515a159f4b3b9ca0d08c18cae485a2be0"},
 ]
 
 [package.dependencies]
-click = ">=8.1"
-cloudpickle = ">=1.5.0"
-fsspec = ">=2021.09.0"
-importlib-metadata = ">=4.13.0"
-numpy = {version = ">=1.21", optional = true, markers = "extra == \"array\""}
+click = ">=7.0"
+cloudpickle = ">=1.1.1"
+fsspec = ">=0.6.0"
+numpy = {version = ">=1.18", optional = true, markers = "extra == \"array\""}
 packaging = ">=20.0"
-partd = ">=1.2.0"
+partd = ">=0.3.10"
 pyyaml = ">=5.3.1"
-toolz = ">=0.10.0"
+toolz = ">=0.8.2"
 
 [package.extras]
-array = ["numpy (>=1.21)"]
-complete = ["dask[array,dataframe,diagnostics,distributed]", "lz4 (>=4.3.2)", "pyarrow (>=7.0)", "pyarrow-hotfix"]
-dataframe = ["dask[array]", "pandas (>=1.3)"]
-diagnostics = ["bokeh (>=2.4.2)", "jinja2 (>=2.10.3)"]
-distributed = ["distributed (==2024.1.1)"]
-test = ["pandas[test]", "pre-commit", "pytest", "pytest-cov", "pytest-rerunfailures", "pytest-timeout", "pytest-xdist"]
+array = ["numpy (>=1.18)"]
+complete = ["bokeh (>=2.4.2,<3)", "distributed (==2022.12.0)", "jinja2", "numpy (>=1.18)", "pandas (>=1.0)"]
+dataframe = ["numpy (>=1.18)", "pandas (>=1.0)"]
+diagnostics = ["bokeh (>=2.4.2,<3)", "jinja2"]
+distributed = ["distributed (==2022.12.0)"]
+test = ["pandas[test]", "pre-commit", "pytest", "pytest-rerunfailures", "pytest-xdist"]
 
 [[package]]
 name = "decorator"
@@ -1032,52 +1011,47 @@ typing = ["typing-extensions (>=4.8)"]
 
 [[package]]
 name = "fiona"
-version = "1.9.5"
+version = "1.8.22"
 description = "Fiona reads and writes spatial data files"
 optional = false
-python-versions = ">=3.7"
+python-versions = "*"
 files = [
-    {file = "fiona-1.9.5-cp310-cp310-macosx_10_15_x86_64.whl", hash = "sha256:5f40a40529ecfca5294260316cf987a0420c77a2f0cf0849f529d1afbccd093e"},
-    {file = "fiona-1.9.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:374efe749143ecb5cfdd79b585d83917d2bf8ecfbfc6953c819586b336ce9c63"},
-    {file = "fiona-1.9.5-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:35dae4b0308eb44617cdc4461ceb91f891d944fdebbcba5479efe524ec5db8de"},
-    {file = "fiona-1.9.5-cp310-cp310-win_amd64.whl", hash = "sha256:5b4c6a3df53bee8f85bb46685562b21b43346be1fe96419f18f70fa1ab8c561c"},
-    {file = "fiona-1.9.5-cp311-cp311-macosx_10_15_x86_64.whl", hash = "sha256:6ad04c1877b9fd742871b11965606c6a52f40706f56a48d66a87cc3073943828"},
-    {file = "fiona-1.9.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:9fb9a24a8046c724787719e20557141b33049466145fc3e665764ac7caf5748c"},
-    {file = "fiona-1.9.5-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:d722d7f01a66f4ab6cd08d156df3fdb92f0669cf5f8708ddcb209352f416f241"},
-    {file = "fiona-1.9.5-cp311-cp311-win_amd64.whl", hash = "sha256:7ede8ddc798f3d447536080c6db9a5fb73733ad8bdb190cb65eed4e289dd4c50"},
-    {file = "fiona-1.9.5-cp312-cp312-macosx_10_15_x86_64.whl", hash = "sha256:8b098054a27c12afac4f819f98cb4d4bf2db9853f70b0c588d7d97d26e128c39"},
-    {file = "fiona-1.9.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:6d9f29e9bcbb33232ff7fa98b4a3c2234db910c1dc6c4147fc36c0b8b930f2e0"},
-    {file = "fiona-1.9.5-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:f1af08da4ecea5036cb81c9131946be4404245d1b434b5b24fd3871a1d4030d9"},
-    {file = "fiona-1.9.5-cp312-cp312-win_amd64.whl", hash = "sha256:c521e1135c78dec0d7774303e5a1b4c62e0efb0e602bb8f167550ef95e0a2691"},
-    {file = "fiona-1.9.5-cp37-cp37m-macosx_10_15_x86_64.whl", hash = "sha256:fce4b1dd98810cabccdaa1828430c7402d283295c2ae31bea4f34188ea9e88d7"},
-    {file = "fiona-1.9.5-cp37-cp37m-manylinux2014_x86_64.whl", hash = "sha256:3ea04ec2d8c57b5f81a31200fb352cb3242aa106fc3e328963f30ffbdf0ff7c8"},
-    {file = "fiona-1.9.5-cp37-cp37m-win_amd64.whl", hash = "sha256:4877cc745d9e82b12b3eafce3719db75759c27bd8a695521202135b36b58c2e7"},
-    {file = "fiona-1.9.5-cp38-cp38-macosx_10_15_x86_64.whl", hash = "sha256:ac2c250f509ec19fad7959d75b531984776517ef3c1222d1cc5b4f962825880b"},
-    {file = "fiona-1.9.5-cp38-cp38-macosx_11_0_arm64.whl", hash = "sha256:4df21906235928faad856c288cfea0298e9647f09c9a69a230535cbc8eadfa21"},
-    {file = "fiona-1.9.5-cp38-cp38-manylinux2014_x86_64.whl", hash = "sha256:81d502369493687746cb8d3cd77e5ada4447fb71d513721c9a1826e4fb32b23a"},
-    {file = "fiona-1.9.5-cp38-cp38-win_amd64.whl", hash = "sha256:ce3b29230ef70947ead4e701f3f82be81082b7f37fd4899009b1445cc8fc276a"},
-    {file = "fiona-1.9.5-cp39-cp39-macosx_10_15_x86_64.whl", hash = "sha256:8b53ce8de773fcd5e2e102e833c8c58479edd8796a522f3d83ef9e08b62bfeea"},
-    {file = "fiona-1.9.5-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:bd2355e859a1cd24a3e485c6dc5003129f27a2051629def70036535ffa7e16a4"},
-    {file = "fiona-1.9.5-cp39-cp39-manylinux2014_x86_64.whl", hash = "sha256:9a2da52f865db1aff0eaf41cdd4c87a7c079b3996514e8e7a1ca38457309e825"},
-    {file = "fiona-1.9.5-cp39-cp39-win_amd64.whl", hash = "sha256:cfef6db5b779d463298b1113b50daa6c5b55f26f834dc9e37752116fa17277c1"},
-    {file = "fiona-1.9.5.tar.gz", hash = "sha256:99e2604332caa7692855c2ae6ed91e1fffdf9b59449aa8032dd18e070e59a2f7"},
+    {file = "Fiona-1.8.22-cp310-cp310-macosx_10_10_x86_64.whl", hash = "sha256:59a3800bc09ebee3516d64d02a8a6818d07ab1573c6096f3ef3468bf9f8f95f8"},
+    {file = "Fiona-1.8.22-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:904793b17aee70ca9c3d582dbf01623eccfdeacd00c5e1a8e421be41f2e43d67"},
+    {file = "Fiona-1.8.22-cp310-cp310-win_amd64.whl", hash = "sha256:df34c980cd7396adfbc89bbb363bdd6e358c76f91969fc98c9dfc076dd11638d"},
+    {file = "Fiona-1.8.22-cp311-cp311-macosx_10_15_x86_64.whl", hash = "sha256:75924f69c51db6e258c91308780546278028c509db12aa33a47692a0266c9667"},
+    {file = "Fiona-1.8.22-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e33860aaf70bbd2726cff12fd3857bd832b6dc2ad3ce4b27e7563bd68abdc26f"},
+    {file = "Fiona-1.8.22-cp311-cp311-win_amd64.whl", hash = "sha256:18649326a7724611b16b648e14fd094089d517413b95ac91d0cdb0adc5fcb8de"},
+    {file = "Fiona-1.8.22-cp36-cp36m-macosx_10_10_x86_64.whl", hash = "sha256:c4aafdd565b3a30bdd78cafae35d4945f6741eef31401c1bb1e166b6262d7539"},
+    {file = "Fiona-1.8.22-cp36-cp36m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3f26c8b6ea9bc92cbd52a4dd83ffd44472450bf92f4e3d4ef2341adc2f35a54d"},
+    {file = "Fiona-1.8.22-cp36-cp36m-win_amd64.whl", hash = "sha256:c28d9ffa5d230a1d9eaf571529fa9eb7573d39613354c090ad077ad153a37ee1"},
+    {file = "Fiona-1.8.22-cp37-cp37m-macosx_10_10_x86_64.whl", hash = "sha256:d47777890aa1d715025abc7a6d6b2a6bb8d2a37cc94c44ce95940b80eda21444"},
+    {file = "Fiona-1.8.22-cp37-cp37m-manylinux2014_x86_64.whl", hash = "sha256:e3ed1c0c1c60f710a612aaeb294de54214d228c4ef40e0c1dc159e46f86a9446"},
+    {file = "Fiona-1.8.22-cp37-cp37m-win_amd64.whl", hash = "sha256:ce9a22c9883cc5d11c05ba3fb9db5082044a07c6b299753ea5bb8e178b8ba53b"},
+    {file = "Fiona-1.8.22-cp38-cp38-macosx_10_10_x86_64.whl", hash = "sha256:6ba2294bc6adcbc36229862667aac6b98e6c306e1958caf53b8bfcf9a3b8c77a"},
+    {file = "Fiona-1.8.22-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b5cad3424b7473eb0e19f17ee45abec92133a694a4b452a278f02e3b8d0f810f"},
+    {file = "Fiona-1.8.22-cp38-cp38-win_amd64.whl", hash = "sha256:b88e2e6548a41c1dfa3f96c8275ff472a3edca729e14a641c0fa5b2e146a8ab5"},
+    {file = "Fiona-1.8.22-cp39-cp39-macosx_10_10_x86_64.whl", hash = "sha256:ed75dd29c89e0e455e3a322f28cd92f192bcb8fced16e2bfb6422a7f95ffe5e9"},
+    {file = "Fiona-1.8.22-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:89cfcc3bdb4aba7bba1eb552b3866b851334693ab694529803122b21f5927960"},
+    {file = "Fiona-1.8.22-cp39-cp39-win_amd64.whl", hash = "sha256:d0df3e105ad7f0cca5f16b441c232fd693ef6c4adf2c1b6271aaaa1cdc06164d"},
+    {file = "Fiona-1.8.22.tar.gz", hash = "sha256:a82a99ce9b3e7825740157c45c9fb2259d4e92f0a886aaac25f0db40ffe1eea3"},
 ]
 
 [package.dependencies]
-attrs = ">=19.2.0"
+attrs = ">=17"
 certifi = "*"
-click = ">=8.0,<9.0"
+click = ">=4.0"
 click-plugins = ">=1.0"
 cligj = ">=0.5"
-importlib-metadata = {version = "*", markers = "python_version < \"3.10\""}
+munch = "*"
 setuptools = "*"
-six = "*"
+six = ">=1.7"
 
 [package.extras]
-all = ["Fiona[calc,s3,test]"]
+all = ["boto3 (>=1.2.4)", "mock", "pytest (>=3)", "pytest-cov", "shapely"]
 calc = ["shapely"]
-s3 = ["boto3 (>=1.3.1)"]
-test = ["Fiona[s3]", "pytest (>=7)", "pytest-cov", "pytz"]
+s3 = ["boto3 (>=1.2.4)"]
+test = ["boto3 (>=1.2.4)", "mock", "pytest (>=3)", "pytest-cov"]
 
 [[package]]
 name = "fonttools"
@@ -1292,6 +1266,19 @@ requests = "*"
 [package.extras]
 crc = ["crcmod"]
 gcsfuse = ["fusepy"]
+
+[[package]]
+name = "gdal"
+version = "3.3.2"
+description = "GDAL: Geospatial Data Abstraction Library"
+optional = false
+python-versions = ">=3.6.0"
+files = [
+    {file = "GDAL-3.3.2.tar.gz", hash = "sha256:b74d310cc837cfc45b7dfa82eb7cd7ca7d2c2c2114bc31db66e01cc1ea6d0124"},
+]
+
+[package.extras]
+numpy = ["numpy (>1.0.0)"]
 
 [[package]]
 name = "geographiclib"
@@ -1730,25 +1717,6 @@ files = [
 ]
 
 [[package]]
-name = "importlib-metadata"
-version = "7.0.1"
-description = "Read metadata from Python packages"
-optional = false
-python-versions = ">=3.8"
-files = [
-    {file = "importlib_metadata-7.0.1-py3-none-any.whl", hash = "sha256:4805911c3a4ec7c3966410053e9ec6a1fecd629117df5adee56dfc9432a1081e"},
-    {file = "importlib_metadata-7.0.1.tar.gz", hash = "sha256:f238736bb06590ae52ac1fab06a3a9ef1d8dce2b7a35b5ab329371d6c8f5d2cc"},
-]
-
-[package.dependencies]
-zipp = ">=0.5"
-
-[package.extras]
-docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.linker (>=1.9)", "sphinx (<7.2.5)", "sphinx (>=3.5)", "sphinx-lint"]
-perf = ["ipython"]
-testing = ["flufl.flake8", "importlib-resources (>=1.3)", "packaging", "pyfakefs", "pytest (>=6)", "pytest-black (>=0.3.7)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-mypy (>=0.9.1)", "pytest-perf (>=0.9.2)", "pytest-ruff"]
-
-[[package]]
 name = "importlib-resources"
 version = "6.1.1"
 description = "Read resources from Python packages"
@@ -2181,6 +2149,36 @@ pyparsing = ">=2.3.1"
 python-dateutil = ">=2.7"
 
 [[package]]
+name = "modape"
+version = "1.0.3"
+description = "MODIS Assimilation and Processing Engine"
+optional = false
+python-versions = ">=3, <4"
+files = [
+    {file = "modape-1.0.3-cp36-cp36m-manylinux1_x86_64.whl", hash = "sha256:3b0aad4989c1c28c8d320c7fd743cf24c09bba1699a0d0eca5a209b8bf949b46"},
+    {file = "modape-1.0.3-cp36-cp36m-manylinux2010_x86_64.whl", hash = "sha256:1b31a619dee2ab033e606b799afdc6551cc9561d9cd414f496be00be4a572e6a"},
+    {file = "modape-1.0.3-cp37-cp37m-manylinux1_x86_64.whl", hash = "sha256:c478e24a7351f8a3746afe0bccd563b777f79a656425dafadc141c92b1162b54"},
+    {file = "modape-1.0.3-cp37-cp37m-manylinux2010_x86_64.whl", hash = "sha256:617580fbd985847e40b0619fec89f6b0de166de58940c02d4768a7bc54a3899d"},
+    {file = "modape-1.0.3-cp38-cp38-manylinux1_x86_64.whl", hash = "sha256:bf5fd725b97729e3fce9b060cfc38fa55067638612b46547c7de025185adfdc5"},
+    {file = "modape-1.0.3-cp38-cp38-manylinux2010_x86_64.whl", hash = "sha256:c0afffe0d5471e71189b4bee091cfb428714dbe1cbab612cec7812e40aca450c"},
+    {file = "modape-1.0.3-cp39-cp39-manylinux1_x86_64.whl", hash = "sha256:d09d525dac9adc37770506ae1deb9e759d4c43e2e6ccc0dc58cf24e399036abf"},
+    {file = "modape-1.0.3-cp39-cp39-manylinux2010_x86_64.whl", hash = "sha256:e33bc7d5902c2193889112b0b2cfc7718426f4477d5b852b7108497bdb4fc6e3"},
+    {file = "modape-1.0.3-pp36-pypy36_pp73-manylinux1_x86_64.whl", hash = "sha256:871820864694eb1e2f6112f5bf4e47a75d155e6ccfbc266aa826bbba81a3b6e4"},
+    {file = "modape-1.0.3-pp36-pypy36_pp73-manylinux2010_x86_64.whl", hash = "sha256:d93ab5cdcc6d44786b993dc4eccf737946253c8481ffe54c26c4c31f12c84f6a"},
+    {file = "modape-1.0.3.tar.gz", hash = "sha256:6662351ba9598a0050660969ff90958f15727aa72bb5ccf0068e4b0dbe49de87"},
+]
+
+[package.dependencies]
+click = "<8"
+gdal = ">=2"
+h5py = ">=2.9"
+numpy = ">=1.16.1"
+pandas = ">=0.24"
+pycksum = ">=0.4.3"
+python-cmr = ">=0.4"
+requests = ">=2"
+
+[[package]]
 name = "mpmath"
 version = "1.3.0"
 description = "Python library for arbitrary-precision floating-point arithmetic"
@@ -2279,6 +2277,21 @@ files = [
     {file = "multidict-6.0.4-cp39-cp39-win_amd64.whl", hash = "sha256:33029f5734336aa0d4c0384525da0387ef89148dc7191aae00ca5fb23d7aafc2"},
     {file = "multidict-6.0.4.tar.gz", hash = "sha256:3666906492efb76453c0e7b97f2cf459b0682e7402c0489a95484965dbc1da49"},
 ]
+
+[[package]]
+name = "munch"
+version = "4.0.0"
+description = "A dot-accessible dictionary (a la JavaScript objects)"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "munch-4.0.0-py2.py3-none-any.whl", hash = "sha256:71033c45db9fb677a0b7eb517a4ce70ae09258490e419b0e7f00d1e386ecb1b4"},
+    {file = "munch-4.0.0.tar.gz", hash = "sha256:542cb151461263216a4e37c3fd9afc425feeaf38aaa3025cd2a981fadb422235"},
+]
+
+[package.extras]
+testing = ["astroid (>=2.0)", "coverage", "pylint (>=2.3.1,<2.4.0)", "pytest"]
+yaml = ["PyYAML (>=5.1.0)"]
 
 [[package]]
 name = "netcdf4"
@@ -3084,6 +3097,16 @@ files = [
 pyasn1 = ">=0.4.6,<0.6.0"
 
 [[package]]
+name = "pycksum"
+version = "0.4.7"
+description = "Python implementation of cksum algorithm"
+optional = false
+python-versions = "*"
+files = [
+    {file = "pycksum-0.4.7.tar.gz", hash = "sha256:92a5c155723a8f0bcf353e8e6ffdc284df93edadf573aa53f3b945476ad0ad92"},
+]
+
+[[package]]
 name = "pycparser"
 version = "2.21"
 description = "C parser in Python"
@@ -3274,6 +3297,20 @@ files = [
 
 [package.dependencies]
 certifi = "*"
+
+[[package]]
+name = "python-cmr"
+version = "0.9.0"
+description = "Python wrapper to the NASA Common Metadata Repository (CMR) API."
+optional = false
+python-versions = ">=3.8,<4.0"
+files = [
+    {file = "python_cmr-0.9.0-py3-none-any.whl", hash = "sha256:ef20e41ef59cd323a4847cf52fc63e91e5fc632dc1743e42935748b5a474c5ef"},
+    {file = "python_cmr-0.9.0.tar.gz", hash = "sha256:5c9a0eb9877de67d80df2d2e572f8614845c75a8457faddfbff9edc1ab90e992"},
+]
+
+[package.dependencies]
+requests = ">=2.26.0,<3.0.0"
 
 [[package]]
 name = "python-dateutil"
@@ -3563,6 +3600,31 @@ requests = ">=2.0.0"
 
 [package.extras]
 rsa = ["oauthlib[signedtoken] (>=3.0.0)"]
+
+[[package]]
+name = "rioxarray"
+version = "0.15.0"
+description = "geospatial xarray extension powered by rasterio"
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "rioxarray-0.15.0-py3-none-any.whl", hash = "sha256:d7c0b2efc21075f77fe04302b916a995320004695f3c31e4f06d9ab40acd4498"},
+    {file = "rioxarray-0.15.0.tar.gz", hash = "sha256:d2a8429a5b6405913c7b6f515ef2992b05139c96eb39a2dc1c9f475ce0848c9c"},
+]
+
+[package.dependencies]
+numpy = ">=1.21"
+packaging = "*"
+pyproj = ">=2.2"
+rasterio = ">=1.2"
+xarray = ">=0.17"
+
+[package.extras]
+all = ["dask", "mypy", "nbsphinx", "netcdf4", "pre-commit", "pylint", "pytest (>=3.6)", "pytest-cov", "pytest-timeout", "scipy", "sphinx-click", "sphinx-rtd-theme"]
+dev = ["dask", "mypy", "nbsphinx", "netcdf4", "pre-commit", "pylint", "pytest (>=3.6)", "pytest-cov", "pytest-timeout", "scipy", "sphinx-click", "sphinx-rtd-theme"]
+doc = ["nbsphinx", "sphinx-click", "sphinx-rtd-theme"]
+interp = ["scipy"]
+test = ["dask", "netcdf4", "pytest (>=3.6)", "pytest-cov", "pytest-timeout"]
 
 [[package]]
 name = "rpds-py"
@@ -3893,28 +3955,6 @@ pyparsing = ">=2.1.6"
 test = ["hypothesis", "pytest"]
 
 [[package]]
-name = "sparse"
-version = "0.15.1"
-description = "Sparse n-dimensional arrays for the PyData ecosystem"
-optional = false
-python-versions = ">=3.8"
-files = [
-    {file = "sparse-0.15.1-py2.py3-none-any.whl", hash = "sha256:6d5a19350b0714a1425b653a67df44be330d24e86f21c09f5ad6bb4518c2a18c"},
-    {file = "sparse-0.15.1.tar.gz", hash = "sha256:973adcb88a8db8e3d8047953331e26d3f64a5657f9b46a6b859c47663c3eef99"},
-]
-
-[package.dependencies]
-numba = ">=0.49"
-numpy = ">=1.17"
-scipy = ">=0.19"
-
-[package.extras]
-all = ["matrepr", "sparse[docs,tox]"]
-docs = ["sphinx", "sphinx-rtd-theme"]
-tests = ["dask[array]", "pre-commit", "pytest (>=3.5)", "pytest-cov"]
-tox = ["sparse[tests]", "tox"]
-
-[[package]]
 name = "sympy"
 version = "1.12"
 description = "Computer algebra system (CAS) in Python"
@@ -4215,25 +4255,6 @@ parallel = ["dask[complete]"]
 viz = ["matplotlib", "nc-time-axis", "seaborn"]
 
 [[package]]
-name = "xesmf"
-version = "0.8.2"
-description = "Universal Regridder for Geospatial Data"
-optional = false
-python-versions = ">=3.8"
-files = [
-    {file = "xesmf-0.8.2-py3-none-any.whl", hash = "sha256:9ee2ac9687b9c3e3c21e0b5ed38a1451174023964834fb1301470c8da94344a5"},
-    {file = "xesmf-0.8.2.tar.gz", hash = "sha256:c167de6deccbb3e88c89784f56118806b79cf7dfc3f9e209a3de5764690e583d"},
-]
-
-[package.dependencies]
-cf-xarray = ">=0.5.1"
-numba = ">=0.55.2"
-numpy = ">=1.16"
-shapely = "*"
-sparse = ">=0.8.0"
-xarray = ">=0.16.2"
-
-[[package]]
 name = "xhistogram"
 version = "0.3.2"
 description = "Fast, flexible, label-aware histograms for numpy and xarray"
@@ -4476,4 +4497,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "48a2f428643abe28a9b2967322d21a053cd22dc0e678f8eebe4322a0841aa677"
+content-hash = "4edd1161c9a522b109068b81392735f9e7cf563dd96a7b7de050573cf5bd52a5"
