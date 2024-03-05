@@ -20,14 +20,48 @@ import time
 import eumdac
 from tqdm import tqdm
 
-def pipeline_ndvi(xr_df, gdf):
-    xr_df = cut_file(xr_df, gdf)
-    xr_df = add_time(xr_df)
-    xr_df = compute_radiance(xr_df)
-    xr_df = xr_df.drop('channel_3')
-    xr_df = xr_df.assign(ndvi=(
-        xr_df['channel_2'] - xr_df['channel_1']) / (xr_df['channel_2'] + xr_df['channel_1']))
-    return xr_df
+def seviri_product_polygon(collectionID, start_dt, download_dir):
+
+    from utils.function_clns import config
+
+    time_window = timedelta(minutes=30)
+    limit_dt = start_dt + time_window
+
+    # Insert your personal key and secret into the single quotes
+    consumer_key = config['DEFAULT']['key']
+    consumer_secret = config['DEFAULT']['secret']
+
+    credentials = (consumer_key, consumer_secret)
+    token = eumdac.AccessToken(credentials)
+
+    print(f"This token '{token}' expires {token.expiration}")
+
+    datastore = eumdac.DataStore(token)
+    datastore.collections
+
+    selected_collection = datastore.get_collection(collectionID)
+    # Add vertices for polygon, wrapping back to the start point.
+    geometry = [[15,32.8],[2.9,32.8],[2.9,48],[48,15], [15,32.8]]  ###ethiopia coordinates
+
+    download_dir = config['NDVI']['cloud_path']  
+    
+    # Retrieve datasets that match our filter
+    product = selected_collection.search(
+        geo='POLYGON(({}))'.format(','.join(["{} {}".format(*coord) for coord in geometry])),
+        #bbox=bbox,
+        dtstart=start_dt,
+        dtend=limit_dt).first()
+    selected_product = datastore.get_product(product_id=str(product), collection_id=collectionID)
+    try:
+        with selected_product.open() as fsrc, open(os.path.join(download_dir, fsrc.name), mode='wb') as fdst:
+            #print(f'Downloading {fsrc.name}')
+            shutil.copyfileobj(fsrc, fdst)
+            print(f'Download of product {fsrc.name} finished.')
+    except Exception as e:
+        print('http error {} on day'.format(e), datetime.strftime(start_dt, format='%Y-%m-%d %H:%M:%S'))
+    
+
+
 
 def check_status(customisation):
     status = "QUEUED"

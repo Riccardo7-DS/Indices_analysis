@@ -189,6 +189,17 @@ def epct_cropping_pipeline(target_dir:str,
             xr_df.to_netcdf(os.path.join(base_dir,'processed', file)) 
             xr_df.close()
 
+def pipeline_ndvi(xr_df:xr.DataArray|xr.Dataset, gdf):
+    from utils.function_clns import cut_file
+    from utils.ndvi_functions import add_time, compute_radiance
+    xr_df = cut_file(xr_df, gdf)
+    xr_df = add_time(xr_df)
+    xr_df = compute_radiance(xr_df)
+    xr_df = xr_df.drop('channel_3')
+    xr_df = xr_df.assign(ndvi=(
+        xr_df['channel_2'] - xr_df['channel_1']) / (xr_df['channel_2'] + xr_df['channel_1']))
+    return xr_df
+
 
 """
 Smoothing Pipelines
