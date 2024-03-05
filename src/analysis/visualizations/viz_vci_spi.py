@@ -1,5 +1,5 @@
 from utils.function_clns import load_config, cut_file, subsetting_pipeline
-from utils.ndvi_functions import downsample, clean_ndvi, compute_ndvi, clean_outliers
+from utils.xarray_functions import downsample, clean_ndvi, compute_ndvi, clean_outliers
 from vegetation.preprocessing.seviri_cleaning import extract_apply_cloudmask, plot_cloud_correction, compute_difference, compute_correlation
 import xarray as xr 
 import pandas as pd

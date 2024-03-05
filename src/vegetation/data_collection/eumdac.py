@@ -15,7 +15,7 @@ import shutil
 import pandas as pd
 import requests
 from utils.function_clns import load_config, subsetting_pipeline, cut_file
-from utils.ndvi_functions import compute_radiance, add_time
+from utils.xarray_functions import compute_radiance, add_time
 import time
 import eumdac
 from tqdm import tqdm

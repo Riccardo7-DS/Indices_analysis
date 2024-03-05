@@ -8,7 +8,7 @@ from shapely.geometry import Polygon, mapping
 import numpy as np
 import os
 import xarray as xr
-from utils.ndvi_functions import convert_ndvi_tofloat
+from utils.xarray_functions import convert_ndvi_tofloat
 from collections.abc import Hashable, Mapping, Sequence
 from typing import Any
 import pandas as pd
@@ -52,7 +52,7 @@ def load_modis_cloudmask(file,
                          plot=Literal["None", "Simple","Basemap"]):
     
     from utils.function_clns import read_hdf
-    from utils.ndvi_functions import swath_to_grid
+    from utils.xarray_functions import swath_to_grid
     import dask.array as da
     from xarray import DataArray
     from pyresample.bilinear import XArrayBilinearResampler
@@ -91,7 +91,7 @@ def load_modis_cloudmask(file,
         plt.title('byte cloud mask')
         plt.show()
     elif plot is "Basemap":
-        from utils.ndvi_functions import plot_swath_basemap
+        from utils.xarray_functions import plot_swath_basemap
         plot_swath_basemap(result, area_dict, area_extent)
 
     resampler = XArrayBilinearResampler(swath_def, area_def, 30e3)
@@ -144,7 +144,7 @@ def epct_cropping_pipeline(target_dir:str,
 
     from utils.function_clns import config
     from epct import api
-    from utils.ndvi_functions import add_time, compute_radiance
+    from utils.xarray_functions import add_time, compute_radiance
 
     #fine the configuration of the functional chain to apply:
     chain_config = {"filter": "hrseviri_natural_color",
@@ -191,7 +191,7 @@ def epct_cropping_pipeline(target_dir:str,
 
 def pipeline_ndvi(xr_df:xr.DataArray|xr.Dataset, gdf):
     from utils.function_clns import cut_file
-    from utils.ndvi_functions import add_time, compute_radiance
+    from utils.xarray_functions import add_time, compute_radiance
     xr_df = cut_file(xr_df, gdf)
     xr_df = add_time(xr_df)
     xr_df = compute_radiance(xr_df)
@@ -265,7 +265,7 @@ def extract_apply_cloudmask(ds, ds_cl, resample=False,
     """
     Pipeline to process SEVIRI data with clouds, water bodies and WS
     """
-    from utils.ndvi_functions import compute_ndvi, clean_ndvi
+    from utils.xarray_functions import compute_ndvi, clean_ndvi
 
     def checkVars(ds, var):
         assert var  in ds.data_vars, f"Variable {var} not in dataset"

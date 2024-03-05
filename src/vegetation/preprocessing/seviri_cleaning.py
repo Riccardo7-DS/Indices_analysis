@@ -17,7 +17,7 @@ import numpy as np
 import re
 import yaml
 from utils.function_clns import prepare, load_config, cut_file, open_xarray_dataset, crop_get_thresh
-from utils.ndvi_functions import apply_whittaker, drop_water_bodies_esa, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
+from utils.xarray_functions import apply_whittaker, drop_water_bodies_esa, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
 from vegetation.analysis.NDVI_indices import compute_vci
 from xarray import DataArray
 from ancillary.FAO_HWSD import get_water_cover
@@ -33,7 +33,7 @@ def extract_clean_cloudmask_dataset(config_file, path, other_path):
     dest_path = os.path.join(new_path, "processed")
     subsetting_loop(CONFIG_PATH, new_path, delete_grid_mapping=True)
 
-    from utils.ndvi_functions import add_time
+    from utils.xarray_functions import add_time
 
     list_files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith(".nc")]
     new_path = os.path.join(path, "time")

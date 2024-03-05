@@ -161,7 +161,7 @@ if __name__=="__main__":
     
 
     if plot is True:
-        from utils.ndvi_functions import ndvi_colormap
+        from utils.xarray_functions import ndvi_colormap
         cmap_ndvi, norm =ndvi_colormap()
 
         fig, axes = plt.subplots(1, pics, figsize=(5*5, 5))
