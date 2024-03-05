@@ -33,6 +33,12 @@ xskillscore = "^0.0.24"
 gdal = "3.3.2"
 rioxarray = "0.15.0"
 modape = "^1.0.3"
+earthengine-api = "^0.1.391"
+geemap = "^0.32.0"
+eumdac = "^2.2.1"
+modis-tools = "^1.1.3"
+pyhdf = "^0.11.3"
+satpy = "^0.47.0"
 
 
 [build-system]

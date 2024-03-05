@@ -1,13 +1,14 @@
 import yaml
-from shapely.geometry import Polygon, mapping
-import geopandas as gpd
-import shapely
 import xarray as xr
 import glob
 import numpy as np
-from typing import Union, Literal
+from typing import Union, Literal, Sequence, Optional
 
-def load_config(CONFIG_PATH):
+"""
+General utility functions
+"""
+
+def load_config(CONFIG_PATH:str):
     with open(CONFIG_PATH) as file:
         config = yaml.safe_load(file)
         return config
@@ -15,14 +16,17 @@ def load_config(CONFIG_PATH):
 from definitions import CONFIG_PATH
 config = load_config(CONFIG_PATH)
 
-def prepare(ds):
+def prepare(ds:Union[xr.DataArray, xr.Dataset]):
     if "longitude" in ds.dims:
-        ds.rename({"latitude":"lat", "longitude":"lon"})
+        ds = ds.rename({"latitude":"lat", "longitude":"lon"})
+    if "x" in ds.dims:
+        ds = ds.rename({"y":"lat", "x":"lon"})
     ds.rio.write_crs("epsg:4326", inplace=True)
     ds.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
     return ds
 
 def cut_file(xr_df, gdf):
+    from shapely.geometry import Polygon, mapping
     xr_df.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
     xr_df.rio.write_crs("epsg:4326", inplace=True)
     clipped = xr_df.rio.clip(gdf.geometry.apply(mapping), gdf.crs, drop=True)
@@ -32,7 +36,9 @@ def subsetting_pipeline(xr_df:Union[xr.DataArray, xr.Dataset],
                         countries:Union[list, None] = ['Ethiopia','Kenya', 'Somalia'], 
                         regions: Union[list, None] = None,
                         invert=False):
+    import geopandas as gpd
     from utils.function_clns import config
+    import shapely
     if regions is None and countries is None:
         raise ValueError("You must specify either a list of countries or regions")
     if regions is not None and countries is not None:
@@ -49,11 +55,10 @@ def subsetting_pipeline(xr_df:Union[xr.DataArray, xr.Dataset],
     gdf = gpd.read_file(shapefile_path)
     subset = gdf[gdf[column].isin(location)]
     if invert==True:
-        subset = subset['geometry'].map(lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
+        subset = subset['geometry'].map(
+            lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
     return cut_file(xr_df, subset)
 
-from typing import Union, Optional, Sequence
-from math import ceil, sqrt
 
 def get_lon_dim_name(ds: Union[xr.Dataset, xr.DataArray]) -> Optional[str]:
     """
@@ -72,95 +77,11 @@ def get_lat_dim_name(ds: Union[xr.Dataset, xr.DataArray]) -> Optional[str]:
     """
     return _get_dim_name(ds, ['lat', 'latitude'])
 
-
 def _get_dim_name(ds: Union[xr.Dataset, xr.DataArray], possible_names: Sequence[str]) -> Optional[str]:
     for name in possible_names:
         if name in ds.dims:
             return name
     return None
-# noinspection PyUnresolvedReferences,PyProtectedMember
-def open_xarray_dataset(paths, **kwargs) -> xr.Dataset:
-    """
-    Open multiple files as a single dataset. This uses dask. If each individual file
-    of the dataset is small, one dask chunk will coincide with one temporal slice,
-    e.g. the whole array in the file. Otherwise smaller dask chunks will be used
-    to split the dataset.
-    :param paths: Either a string glob in the form "path/to/my/files/\*.nc" or an explicit
-        list of files to open.
-    :param concat_dim: Dimension to concatenate files along. You only
-        need to provide this argument if the dimension along which you want to
-        concatenate is not a dimension in the original datasets, e.g., if you
-        want to stack a collection of 2D arrays along a third dimension.
-    :param kwargs: Keyword arguments directly passed to ``xarray.open_mfdataset()``
-    """
-    # By default the dask chunk size of xr.open_mfdataset is (lat,lon,1). E.g.,
-    # the whole array is one dask slice irrespective of chunking on disk.
-    #
-    # netCDF files can also feature a significant level of compression rendering
-    # the known file size on disk useless to determine if the default dask chunk
-    # will be small enough that a few of them ccould comfortably fit in memory for
-    # parallel processing.
-    #
-    # Hence we open the first file of the dataset, find out its uncompressed size
-    # and use that, together with an empirically determined threshold, to find out
-    # the smallest amount of chunks such that each chunk is smaller than the
-    # threshold and the number of chunks is a squared number so that both axes,
-    # lat and lon could be divided evenly. We use a squared number to avoid
-    # in addition to all of this finding the best way how to split the number of
-    # chunks into two coefficients that would produce sane chunk shapes.
-    #
-    # When the number of chunks has been found, we use its root as the divisor
-    # to construct the dask chunks dictionary to use when actually opening
-    # the dataset.
-    #
-    # If the number of chunks is one, we use the default chunking.
-    #
-    # Check if the uncompressed file (the default dask Chunk) is too large to
-    # comfortably fit in memory
-    threshold = 250 * (2 ** 20)  # 250 MB
-
-    # Find number of chunks as the closest larger squared number (1,4,9,..)
-    try:
-        print(paths[0])
-        temp_ds = xr.open_dataset(paths[0])
-        print('paramapampam')
-    except (OSError, RuntimeError):
-        # netcdf4 >=1.2.2 raises RuntimeError
-        # We have a glob not a list
-        temp_ds = xr.open_dataset(glob.glob(paths)[0])
-
-    n_chunks = ceil(sqrt(temp_ds.nbytes / threshold)) ** 2
-
-    if n_chunks == 1:
-        # The file size is fine
-        return xr.open_mfdataset(paths,combine='by_coords', **kwargs)
-
-    # lat/lon names are not yet known
-    lat = get_lat_dim_name(temp_ds)
-    lon = get_lon_dim_name(temp_ds)
-    n_lat = len(temp_ds[lat])
-    n_lon = len(temp_ds[lon])
-
-    # temp_ds is no longer used
-    temp_ds.close()
-
-    if n_chunks == 1:
-        # The file size is fine
-        return xr.open_mfdataset(paths,combine='by_coords', **kwargs)
-
-    divisor = sqrt(n_chunks)
-
-    # Chunking will pretty much 'always' be 2x2, very rarely 3x3 or 4x4. 5x5
-    # would imply an uncompressed single file of ~6GB! All expected grids
-    # should be divisible by 2,3 and 4.
-    if not (n_lat % divisor == 0) or not (n_lon % divisor == 0):
-        raise ValueError("Can't find a good chunking strategy for the given"
-                         "data source. Are lat/lon coordinates divisible by "
-                         "{}?".format(divisor))
-
-    chunks = {lat: n_lat // divisor, lon: n_lon // divisor}
-
-    return xr.open_mfdataset(paths, chunks=chunks,combine='by_coords', **kwargs)
 
 
 def read_netcdfs(files, dim, transform_func=None):
@@ -181,6 +102,61 @@ def read_netcdfs(files, dim, transform_func=None):
     combined = xr.concat(datasets, dim)
     return combined
 
+def read_hdf(file, DATAFIELD_NAME:str, 
+             filter_nan:bool=True):
+    from pyhdf.SD import SD, SDC
+    import pandas as pd
+    import numpy as np
+    '''
+    -read a specified datafield ('SDS') from a MODIS L2 hdf file
+    -screen missing values and correct real values according to in-file offset and scale-factor attributes
+    -read corresponding latlons
+    -return the analysis-ready datafield (as a masked array) and latlons to parent process
+    
+    '''
+    hdf=SD(file,SDC.READ)
+    data2d=hdf.select(DATAFIELD_NAME)
+    data=data2d[:,:].astype(np.double)
+
+    
+    #get latlons and variable attributes
+    lat=hdf.select('Latitude')
+    latitude=lat[:,:]
+    lon=hdf.select('Longitude')
+    longitude=lon[:,:]
+
+    attrs=data2d.attributes(full=1)
+    add_offset=attrs['add_offset'][0]
+    _FillValue=attrs['_FillValue'][0]
+    scale_factor=attrs['scale_factor'][0]
+    units=attrs['units'][0]
+
+    if filter_nan is True:
+        #prepare datafield for processing
+        data[data==_FillValue]=np.nan
+        data=(data-add_offset)*scale_factor 
+        datam=np.ma.masked_array(data,np.isnan(data))
+
+    else:
+        datam = data
+    
+    #return datafield prepared for analysis, and latlons
+    return datam,latitude,longitude
+
+
+def unpack_all_in_dir(_dir, extension = ".zip"):
+    import os
+    import zipfile
+    for item in os.listdir(_dir):  # loop through items in dir
+        abs_path = os.path.join(_dir, item)  # absolute path of dir or file
+        if item.endswith(extension):  # check for ".zip" extension
+            file_name = os.path.abspath(abs_path)  # get full path of file
+            zip_ref = zipfile.ZipFile(file_name)  # create zipfile object
+            zip_ref.extractall(_dir)  # extract file to dir
+            zip_ref.close()  # close file
+            os.remove(file_name)  # delete zipped file
+        elif os.path.isdir(abs_path):
+            unpack_all_in_dir(abs_path)  # recurse this function with inner folder
 
 def reproject_odc(ds_1, ds_2):
     from odc.algo import xr_reproject
@@ -225,7 +201,12 @@ def add_channel(data, n_samples):
     return input_data
 
 
-def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str, preprocess_type:Literal["constant", "nearest","median", "None"]="constant", impute_value:Union[None, float, int]=None):
+def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset], 
+                   ds_target:Union[xr.DataArray, xr.Dataset], 
+                   var_origin:str, 
+                   var_target:str, 
+                   preprocess_type:Literal["constant", "nearest","median", "None"]="constant", 
+                   impute_value:Union[None, float, int]=None):
     """
     Function to preprocess data for Convolutional Neural Networks, can be processed with either a constant, using the rioxarray function "interpolate_na()", nearest neighbors or with the median
     """
@@ -279,7 +260,10 @@ def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataAr
     return target, data
 
 
-def CNN_split(data:np.array, target:np.array, split_percentage:float=0.7, test_split:float=0.1):
+def CNN_split(data:np.array, 
+              target:np.array, 
+              split_percentage:float=0.7, 
+              test_split:float=0.1):
 
     print(f"{test_split:.0%} of the training data will be used as independent test")
     ###splitting test and train
@@ -307,7 +291,12 @@ def CNN_split(data:np.array, target:np.array, split_percentage:float=0.7, test_s
     return train_data, val_data, train_label, val_label, test_data, test_label
 
 
-def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], ds_target:Union[xr.DataArray, xr.Dataset], var_origin:str, var_target:str,  preprocess_type:Literal["constant", "nearest","median", "None"]="constant", impute_value:Union[None, float, int]=None, split:float=0.8):
+def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset], 
+                      ds_target:Union[xr.DataArray, xr.Dataset], 
+                      var_origin:str, var_target:str,  
+                      preprocess_type:Literal["constant", "nearest","median", "None"]="constant", 
+                      impute_value:Union[None, float, int]=None, 
+                      split:float=0.8):
 
     if (ds.isnull().any()==True) or (ds_target.isnull().any()==True):
         target, data = CNN_imputation(ds, ds_target, var_origin, var_target, preprocess_type=preprocess_type, impute_value=impute_value)
