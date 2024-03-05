@@ -246,7 +246,7 @@ def datatailor_loop(product_code, start_date, end_date, delete_chain=False):
 if __name__ == "__main__":
     from utils.function_clns import config
     product_code = config['SEVIRI']['cloud']
-    start_date = '2020-11-21 08:55:00'
-    end_date= '2023-12-31 08:55:00'
+    start_date = '2005-01-01 10:35:00'
+    end_date= '2023-12-31 10:35:00'
 
     datatailor_loop(product_code, start_date, end_date)
