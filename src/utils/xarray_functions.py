@@ -124,6 +124,18 @@ def add_time(xr_df):
     xr_df = xr_df.expand_dims(dim="time")
     return xr_df
 
+def add_time_tiff(ds):
+    import pandas as pd
+    from utils.xarray_functions import add_time
+    from datetime import datetime
+    time_str = ds.encoding["source"].split("/")[-1][:-4]
+    time_ = time_str.replace("_","-")
+    date_xr = datetime.strptime(time_,'%Y-%m-%d') #datetime.strptime(my_date_string, '%Y%m%d/%H:%M')
+    date_xr = pd.to_datetime(date_xr)
+    xr_ds = ds.assign_coords(time=date_xr)
+    xr_ds = xr_ds.expand_dims(dim="time")
+    return xr_ds
+
 def swath_to_grid(lat, lon):
     from pyresample import geometry
     import pyproj
