@@ -189,7 +189,7 @@ def epct_cropping_pipeline(target_dir:str,
             xr_df.to_netcdf(os.path.join(base_dir,'processed', file)) 
             xr_df.close()
 
-def pipeline_ndvi(xr_df:xr.DataArray|xr.Dataset, gdf):
+def pipeline_ndvi(xr_df:Union[xr.DataArray, xr.Dataset], gdf):
     from utils.function_clns import cut_file
     from utils.xarray_functions import add_time, compute_radiance
     xr_df = cut_file(xr_df, gdf)
@@ -212,7 +212,7 @@ class XarrayWS(xarray.Dataset):
 
     def apply_ws2doptvp(self, variable, p, lambda_min=-2, lambda_max = 3):
         series, weights = self._generate_weights(self[variable])
-        data = self._apply_smooth_method(
+        data = self._apply_vectorized_funct(
                             self._apply_ws2doptvp, 
                             series,
                             weights,
@@ -241,7 +241,7 @@ class XarrayWS(xarray.Dataset):
         dim = datarray.get_axis_num('time')
         return dask.array.apply_along_axis(self, f, dim, datarray, w, lambda_min, lambda_max)
 
-    def _apply_smooth_method(self, f, datarray, w, p, lambda_min, lambda_max):
+    def _apply_vectorized_funct(self, f, w, datarray, p, lambda_min, lambda_max):
         print("Calculating...")
         with ProgressBar():
             results= xarray.apply_ufunc(f,
@@ -257,6 +257,13 @@ class XarrayWS(xarray.Dataset):
                             output_dtypes=[np.float32]).compute()
         
         return results
+    
+def apply_seviri_cloudmask(dataset:xr.Dataset, cloud_mask:xr.Dataset):
+    dataset = dataset.drop_duplicates(dim=["time"])
+    dataset['time'] = dataset.indexes['time'].normalize()
+    cloud_mask['time'] = cloud_mask.indexes['time'].normalize()
+    ds1, ds2 = xr.align(dataset, cloud_mask)
+    return ds1.where(ds2.cloud_mask!=2)
     
 
 def extract_apply_cloudmask(ds, ds_cl, resample=False, 
@@ -284,7 +291,7 @@ def extract_apply_cloudmask(ds, ds_cl, resample=False,
     else:
         ds_cl_rp = ds_cl
 
-    ### apply time mask where values are equal to 1, hence no clouds over land, 0= no cloud over water
+    ### apply time mask where values are equal to 1, hence no clouds over land, 0 = no cloud over water
     if include_water==True:
         ds_subset = ds.where((ds_cl_rp==1)|(ds_cl_rp==0)) #ds = ds.where(ds.time == ds_cl.time)
     else:
