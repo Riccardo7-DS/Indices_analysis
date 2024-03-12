@@ -98,6 +98,8 @@ def load_modis_cloudmask(file,
     result = resampler.resample(data_xr)
     return result, lons_xr, lats_xr
 
+def remove_ndvi_outliers(ds:xr.DataArray):
+    return ds.where((ds<=1)&(ds>=-1))
 
 """
 Functions to smooth NDVI
@@ -241,10 +243,9 @@ class XarrayWS(xarray.Dataset):
         dim = datarray.get_axis_num('time')
         return dask.array.apply_along_axis(self, f, dim, datarray, w, lambda_min, lambda_max)
 
-    def _apply_vectorized_funct(self, f, w, datarray, p, lambda_min, lambda_max):
+    def _apply_vectorized_funct(self, f, datarray, w, p, lambda_min, lambda_max):
         print("Calculating...")
-        with ProgressBar():
-            results= xarray.apply_ufunc(f,
+        results= xarray.apply_ufunc(f,
                             datarray,
                             w,
                             p,

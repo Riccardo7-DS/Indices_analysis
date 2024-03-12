@@ -15,7 +15,7 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.9.2"
 zarr = "^2.16.1"
 apache-beam = "^2.54.0"
 pangeo-forge-recipes = "^0.10.4"
@@ -39,7 +39,7 @@ pyhdf = "^0.11.3"
 satpy = "^0.47.0"
 dask = "2024.2.1"
 distributed = "2024.2.1"
-modape = { git = "https://github.com/Riccardo7-DS/modape", branch="origin/dask_requirements"}
+modape = { git = "https://github.com/Riccardo7-DS/modape"}
 
 
 [build-system]
