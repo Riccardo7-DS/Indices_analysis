@@ -18,7 +18,7 @@ import re
 import yaml
 from utils.function_clns import prepare, load_config, cut_file, open_xarray_dataset, crop_get_thresh
 from utils.xarray_functions import apply_whittaker, drop_water_bodies_esa, extract_apply_cloudmask, clean_outliers, compute_ndvi, clean_ndvi, downsample, clean_water
-from vegetation.analysis.NDVI_indices import compute_vci
+from vegetation.analysis.indices import compute_vci
 from xarray import DataArray
 from ancillary.FAO_HWSD import get_water_cover
 from tqdm.auto import tqdm
@@ -28,10 +28,10 @@ import logging
 
 
 def extract_clean_cloudmask_dataset(config_file, path, other_path):
-    from utils.process_xarray import subsetting_loop
+    from utils.function_clns import subsetting_loop
     new_path = config_file["NDVI"]["cloud_path"]
     dest_path = os.path.join(new_path, "processed")
-    subsetting_loop(CONFIG_PATH, new_path, delete_grid_mapping=True)
+    subsetting_loop(new_path, delete_grid_mapping=True)
 
     from utils.xarray_functions import add_time
 
@@ -57,31 +57,6 @@ def extract_clean_cloudmask_dataset(config_file, path, other_path):
     base_dir = 'nc_files/new/ndvi_mask.nc'
     ds_cl.to_netcdf(os.path.join(config_file['NDVI']['cloud_path'], base_dir))
 
-def plot_cloud_correction(mask_clouds_p, res_xr_p, time):
-    mask_clouds_p['ndvi'].sel(time=time,  method = 'nearest').plot()
-    plt.title('NDVI image with cloud mask')
-    plt.show()
-    res_xr_p['ndvi'].sel(time=time,  method = 'nearest').plot()
-    plt.title('NDVI image with max pixel value cloud correction')
-    plt.show()
-
-
-def compute_difference(mask_clouds, mask_clouds_p, res_xr_p, res_xr, time):
-    #### Difference in absolute value
-    res = mask_clouds_p['ndvi'].sel(time=time,  method = 'nearest') - res_xr_p['ndvi'].sel(time=time,  method = 'nearest')
-    diff = mask_clouds['ndvi'] - res_xr['ndvi']
-    diff_p = mask_clouds_p['ndvi'] - res_xr_p['ndvi']
-    abs(diff).mean('time', skipna=True).plot()
-    plt.show()
-    abs(diff_p).mean('time').plot()
-    plt.show()
-
-def compute_correlation(dataarray1, dataarray2):
-    ndvi_= dataarray1.chunk(dict(time=-1))
-    mask_= dataarray2.chunk(dict(time=-1))
-    xs.pearson_r(ndvi_, mask_, dim='time', skipna=True).plot(cmap='YlGn')
-    plt.show()
-
 
 def convert_to_raster(list_files:list, target_darray:xr.DataArray):
     for path in tqdm(list_files, desc="Files"):
@@ -95,13 +70,14 @@ def convert_to_raster(list_files:list, target_darray:xr.DataArray):
         name = path.split("/")[-1]
         ds_ndvi.to_netcdf(os.path.join(ndvi_dir, "reprojected", name))
 
-def concat_datasets(list_files_1, list_files_2):
-    ds_1 = open_xarray_dataset(list_files_1)
-    ds_2 = open_xarray_dataset(list_files_2)
-    return xr.concat([ds_2, ds_1], dim="time")
 
-def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia'],drop_water: Union[Literal["FAO"],Literal["ESA"],None]=None, concatenate=False, subset=False):
-    config = load_config(CONFIG_PATH)
+def computation_pipeline(CONFIG_PATH, countries = ['Ethiopia','Kenya','Somalia'],
+                         drop_water: Union[Literal["FAO"],Literal["ESA"],None]=None, 
+                         concatenate=False, 
+                         subset=False):
+    
+    from utils.function_clns import config
+
     logging.basicConfig(filename="./log.txt", level=logging.DEBUG)
     logging.info(f"Starting computing SEVIRI NDVI...")
     ndvi_dir = config['NDVI']['ndvi_prep']
@@ -200,12 +176,6 @@ def apply_smoother_only(config_file:dict, lambda_par:int):
                      encoding=encoding)
     print("Success")
 
-if __name__=="__main__":
-    CONFIG_PATH = "config.yaml"
-    lambda_par = 10000
-    #computation_pipeline(CONFIG_PATH, subset=False, drop_water="ESA")
-    config_file = load_config(CONFIG_PATH)
-    apply_smoother_only(config_file, lambda_par)
     
 
 

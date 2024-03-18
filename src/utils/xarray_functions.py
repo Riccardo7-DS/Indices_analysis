@@ -197,6 +197,43 @@ def swath_to_grid(lat, lon):
     print('\nx and y pixel dimensions in meters:\n{}\n{}\n'.format(area_def.pixel_size_x,area_def.pixel_size_y))
     return area_def, swath_def, area_dict, area_extent
 
+from odc.geo.geobox import GeoBox
+from typing import Union
+from odc.geo import resyx_, wh_
+from odc.geo.crs import CRS
+
+def geobox_from_rio(xds: Union[xr.Dataset, xr.DataArray]) -> GeoBox:
+    """This function retrieves the geobox using rioxarray extension.
+
+    Parameters
+    ----------
+    xds: :obj:`xarray.DataArray` or :obj:`xarray.Dataset`
+        The xarray dataset to get the geobox from.
+
+    Returns
+    -------
+    :obj:`odc.geo.geobox.GeoBox`
+
+    """
+    height, width = xds.rio.shape
+    try:
+        transform = xds.rio.transform()
+    except AttributeError:
+        transform = xds[xds.rio.vars[0]].rio.transform()
+    return GeoBox(
+        shape=wh_(width, height),
+        affine=transform,
+        crs=CRS(xds.rio.crs.to_wkt()),
+    )
+
+def odc_reproject(ds, target_ds, resampling:str):
+    from odc.geo.xr import xr_reproject
+    if target_ds.odc.geobox.crs.geographic:
+        ds = ds.rename({"lon": "longitude", "lat": "latitude"})
+    return xr_reproject(ds, target_ds.odc.geobox, 
+                        resampling=resampling, 
+                        resolution="same")
+
 def plot_swath_basemap(result, area_dict, 
                        area_extent):
     

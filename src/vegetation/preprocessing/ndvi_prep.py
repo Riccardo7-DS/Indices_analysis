@@ -21,6 +21,180 @@ from array import array
 from dask.diagnostics import ProgressBar
 from typing import Literal
 
+def seviri_pipeline():
+    from utils.function_clns import config
+    rawfolder = "batch_1"
+    output_ndvi = "ndvi_full_image.zarr"
+    cloudpath = "09_15"
+    lambda_max = 4
+    SeviriProcess(rawfolder=rawfolder,
+                  ndvifile=output_ndvi, 
+                  cloudfolder=cloudpath,
+                  lambda_max=lambda_max)
+
+class SeviriProcess():
+    def __init__(self, rawfolder:str,
+                 cloudfolder:str,
+                 ndvifile:str,
+                 parallel:bool = False,
+                 p:float=0.99,
+                 lambda_max:float=3):
+        
+        """
+        rawfolder: name of the source MSG seviri images folder
+        cloudfolder: name of the cloud mask folder
+        ndvifile: name of the already created ndvi file, otherwise name of the output ndvi file to be created
+        parallel: whether to load files in parallel using dask
+        p: parameter for Whittaker filter (WS)
+        lambda_max: paramter for optimal curve to choose lambda for WS
+        """
+
+        self.p = p
+        self.lambda_max = lambda_max
+        
+        ### SEVIRI loading and cloud masking
+        from utils.function_clns import config 
+        from vegetation.preprocessing.ndvi_prep import remove_ndvi_outliers
+
+        chunks = {"time":-1, "lat":"auto", "lon":"auto"}
+        ndvi_path = os.path.join(config["NDVI"]["ndvi_path"], ndvifile)
+    
+        if os.path.isfile(ndvi_path) is False:
+            raw_path = (config["SEVIRI"]["download"], rawfolder)
+            self._generate_ndvi(raw_path)
+        
+        ds_ndvi = xr.open_zarr(ndvi_path, chunks=chunks)
+        ds_cloud = self._load_cloud_ds(cloudfolder, parallel=parallel)
+
+        ds = apply_seviri_cloudmask(ds_ndvi, ds_cloud)
+        qf_ds = self._generate_qflag(ds["ndvi"])
+        ds_chunked = ds.chunk(chunks={"time":-1, "lat":90, "lon":90})
+        ds_whit = self._apply_whittaker(ds_chunked)
+        # ds_whit["ndvi"] = remove_ndvi_outliers(ds_whit["ndvi"])
+
+    def _preprocess(self, ds):
+        from utils.xarray_functions import add_time
+        ds = add_time(ds)
+        return ds
+    
+    def _load_cloud_ds(self, cloudfolder, parallel):
+        from utils.function_clns import config
+        cloud_path = os.path.join(config["NDVI"]["cloud_path"], cloudfolder)
+        files = [os.path.join(cloud_path, file) for file in os.listdir(cloud_path) if file.endswith(".nc")]
+        return xr.open_mfdataset(files, 
+                                preprocess=self._preprocess, 
+                                engine='netcdf4', 
+                                parallel=parallel)
+    
+    def _generate_ndvi(self, path:str, outputname:str):
+        from utils.xarray_functions import add_time, compute_radiance, compute_ndvi
+        from loguru import logger 
+        import zarr
+        from utils.function_clns import config
+        from dask.diagnostics import ProgressBar
+        
+        logger.info("Loading single MSG SEVIRI files...")
+        chunks = {"time":200, "lat":50, "lon":50}
+
+        def preprocess(ds):
+            ds = add_time(ds)
+            ds = compute_radiance(ds)
+            return ds 
+    
+        files = [os.path.join(path, file) for file in os.listdir(path) if file.endswith(".nc")]
+        ds = xr.open_mfdataset(files, chunks=chunks, 
+                               preprocess=preprocess, 
+                               parallel=True)
+        
+        ndvi = compute_ndvi(ds)
+        
+        compressor = zarr.Blosc(cname="zstd", clevel=3, shuffle=2)
+        # encodings
+        enc = {x: {"compressor": compressor} for x in ndvi}
+
+        with ProgressBar():
+            ndvi.to_zarr(os.path.join(config["NDVI"]["ndvi_path"], 
+                                      outputname),
+                     encoding=enc)
+    
+    def _apply_whittaker(self, ds):
+        from utils.function_clns import config
+        import zarr
+        from dask.diagnostics import ProgressBar
+        from loguru import logger
+        logger.info("Starting applying Whittaker smoother...")
+
+        ws_ds = XarrayWS(ds)
+
+        with ProgressBar():
+           ds_clean = ws_ds.apply_ws2doptvp(variable="ndvi", 
+                                            p=self.p, 
+                                            lambda_max=self.lambda_max)
+
+        filename = "seviri_full_image_smoothed.zarr"
+        smoothed_ndvi_path = os.path.join(config["NDVI"]["ndvi_path"], filename)
+        
+        if not os.path.isfile(smoothed_ndvi_path):
+            compressor = zarr.Blosc(cname="zstd", clevel=4, shuffle=2)
+            # encodings
+            enc = {x: {"compressor": compressor} for x in ds_clean}
+            with ProgressBar():
+                ds_clean.to_zarr(smoothed_ndvi_path,
+                             encoding=enc, mode="w")
+
+        return ds_clean
+
+    def _find_streaks(self, arr):
+        streaks = np.zeros_like(arr)  # Create an array of zeros with the same shape as input
+        quality_flag =  np.zeros_like(arr) 
+        current_streak = 0
+        for i, value in enumerate(arr):
+            if np.isnan(value):
+                current_streak += 1
+                streaks[i] = np.NaN
+                quality_flag[i] = np.NaN
+            else:
+                if current_streak > 0:
+                    streaks[i] = current_streak
+                    quality_flag[i - current_streak:i] = current_streak
+                    current_streak = 0
+        if current_streak > 0:
+            streaks[i] = current_streak
+            quality_flag[-current_streak:] = current_streak
+        return streaks, quality_flag
+
+    def _generate_qflag(self, datarray):
+        from utils.function_clns import config
+        from loguru import logger
+        logger.info("Starting calculating quality flag...")
+        # Apply find_streaks along the time dimension with dask.delayed
+        streaks_data, quality_flag = xr.apply_ufunc(
+            self._find_streaks,
+            datarray.chunk({'time': -1, "lat":80, "lon":80}),
+            input_core_dims=[['time']],
+            output_core_dims=[['time'], ["time"]],
+            # exclude_dims={"time"},
+            vectorize=True,
+            dask='parallelized',
+            # dask_gufunc_kwargs={"output_sizes": {"time": len(ds["time"])}},
+            output_dtypes=[np.float32,np.float32], 
+        )
+
+        filename = "mask_num_streaks.zarr"
+        dest_path = os.path.join(config["NDVI"]["ndvi_path"], filename)
+        
+        ds = datarray.to_dataset()
+        # Assign the results back to the dataset
+        ds['streaks'] = streaks_data
+        ds['quality_flag'] = quality_flag
+
+        if not os.path.isfile(dest_path):
+            with ProgressBar():
+                ds.to_zarr(dest_path, mode="w")
+
+        return ds
+
+
 def process_eumetsat_ndvi(path:str, filename:str, complevel:int = 9):
     chunks = {"time":200, "lat":50, "lon":50}
     ds = xr.open_dataset(os.path.join(path, "ndvi_eumetsat.nc"), chunks=chunks)
@@ -30,7 +204,6 @@ def process_eumetsat_ndvi(path:str, filename:str, complevel:int = 9):
     from utils.function_clns import config
     ds.to_netcdf(os.path.join(config["NDVI"]["ndvi_path"],filename),
                  encoding=compression)
-
 
 def load_landsaf_ndvi(path:str, crop_area:bool = True)->xr.Dataset:
     ds = xr.open_zarr(path)
@@ -47,6 +220,34 @@ def load_landsaf_ndvi(path:str, crop_area:bool = True)->xr.Dataset:
     ds["ndvi_10"] = convert_ndvi_tofloat(ds.ndvi_10)
     # ds["ndvi_10"] = ds.ndvi_10/255
     return ds 
+
+def load_eumetsat_ndvi_max(filepath:str, 
+                  chunks:dict={'time': 50, "lat": 250, "lon":250},
+                  save_file:bool=False):
+    from utils.function_clns import subsetting_pipeline
+
+    if os.path.isfile(filepath):
+        max_ndvi = xr.open_dataset(filepath, chunks=chunks)["ndvi"]
+
+    else:
+        path = "/media/BIFROST/N2/Riccardo/MSG/msg_data/NDVI/archive.eumetsat.int/umarf-gwt/onlinedownload/riccardo7/4859700/temp/max//time/*.nc"
+        ds_ndvi = xr.open_mfdataset(path, engine="netcdf4", chunks=chunks)
+        ds_ndvi = subsetting_pipeline(ds_ndvi).rename({"Band1":"ndvi"})
+        ds_ndvi["ndvi"] = xr.where(ds_ndvi["ndvi"]==255, np.NaN, ds_ndvi["ndvi"])
+        max_ndvi = ds_ndvi["ndvi"]/100
+
+        if save_file is True:
+            from dask.diagnostics import ProgressBar
+            filename = "seviri_daily_ndvimax.nc"
+            compression = {"ndvi" :{'zlib': True, "complevel":4}}
+            from utils.function_clns import config
+
+            with ProgressBar():
+                max_ndvi.to_dataset(name="ndvi").to_netcdf(os.path.join(config["NDVI"]["ndvi_path"],
+                                                            filename), encoding=compression)
+            
+    return max_ndvi
+
 
 def load_modis_cloudmask(file, 
                          plot=Literal["None", "Simple","Basemap"]):
@@ -102,11 +303,31 @@ def remove_ndvi_outliers(ds:xr.DataArray):
     return ds.where((ds<=1)&(ds>=-1))
 
 """
-Functions to smooth NDVI
+Functions to clean, smooth NDVI
 """
+class NDVIPreprocess():
+    def __init__(self, data)->None:
+        from utils.function_clns import prepare, subsetting_pipeline
+        import numpy as np
+        data = prepare(data)
+        data = subsetting_pipeline(data)
+        data = data.astype(np.float32)
+        data = self._set_nulls(data)
+        data = data.transpose("time","lat","lon")
+        self.processed_data = prepare(data)
+    
+    def _set_nulls(self, data):
+        import numpy as np
+        data = data.rio.write_nodata(np.nan, inplace=True)
+        data = data.rio.write_nodata("nan", inplace=True)
+        return data
+
+    def get_processed_data(self):
+        return self.processed_data
 
 
-def smooth_coordinate(datarray:xr.DataArray, lat:float, lon:float, p:float=0.99,
+def smooth_coordinate(datarray:xr.DataArray, 
+                      lat:float, lon:float, p:float=0.99,
                       lambda_min:float =-2, lambda_max:float = 3):
     test_year = 2017 ## choose one year for viz purpose
 
@@ -124,7 +345,9 @@ def smooth_coordinate(datarray:xr.DataArray, lat:float, lon:float, p:float=0.99,
     return z
 
 
-def apply_datacube(ds: xr.DataArray, window:int, poly_order:int) -> xr.DataArray:
+def savigol_apply_datacube(ds: xr.DataArray, 
+                   window:int, 
+                   poly_order:int) -> xr.DataArray:
     """ 
     Code to apply Savigol filter along time dimension in datarray
     """

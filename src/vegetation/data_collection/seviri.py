@@ -132,7 +132,9 @@ def delete_old_job():
             print(f'Delete customisation {customisation} from {customisation.creation_time}.')
             customisation.delete()
 
-def datatailor_loop(product_code, start_date, end_date, delete_chain=False):
+def datatailor_loop(product_code:str, 
+                    start_date:str, 
+                    end_date:str, destfoldername:str, delete_chain:bool=False):
 
     # Function to load yaml configuration file
     from utils.function_clns import config
@@ -153,14 +155,17 @@ def datatailor_loop(product_code, start_date, end_date, delete_chain=False):
 
     if  product_code == "EO:EUM:DAT:MSG:CLM":
         default_chain = 'cloud_mask_chain'
-        download_dir = config['NDVI']['cloud_download']
+        download_dir = os.path.join(config['NDVI']['cloud_download'], destfoldername)
         product = 'MSGCLMK'
     elif  product_code == "EO:EUM:DAT:MSG:HRSEVIRI":
         default_chain = 'ndvi_chain'
-        download_dir = config['NDVI']['seviri_download']
+        download_dir = os.path.join(config['NDVI']['seviri_download'], destfoldername)
         product = 'HRSEVIRI'
     else:
         raise ValueError('There exist no predefined chain for the chosen product')
+    
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
     
     if delete_chain == True:
         datatailor.chains.delete(default_chain)
@@ -245,8 +250,9 @@ def datatailor_loop(product_code, start_date, end_date, delete_chain=False):
 
 if __name__ == "__main__":
     from utils.function_clns import config
-    product_code = config['SEVIRI']['cloud']
-    start_date = '2005-01-01 10:35:00'
-    end_date= '2023-12-31 10:35:00'
+    product_code = config['SEVIRI']['HRV']
+    start_date = '2005-01-01 12:00:00'
+    end_date= '2023-12-31 12:00:00'
+    folder = "12_30"
 
-    datatailor_loop(product_code, start_date, end_date)
+    datatailor_loop(product_code, start_date, end_date, folder)

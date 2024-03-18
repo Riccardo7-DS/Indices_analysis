@@ -59,6 +59,58 @@ def subsetting_pipeline(xr_df:Union[xr.DataArray, xr.Dataset],
             lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
     return cut_file(xr_df, subset)
 
+def xesmf_regrid_align(dataset1:Union[xr.DataArray, xr.Dataset],
+                dataset2:Union[xr.DataArray, xr.Dataset],
+                repr_method:str="bilinear",
+                chunks:dict={"time":"auto", "lat":"auto", "lon":"auto"},
+                align:bool = True):
+    
+    """
+    Function to reproject and align two xarray datasets/datarray
+    """
+    import xesmf as xe
+    import pandas as pd
+    
+    dataset1 = prepare(dataset1)
+    dataset2 = prepare(dataset2)
+    
+    if float(dataset1.rio.resolution()[0])< float(dataset2.rio.resolution()[0]):
+        reproj_dataset, target_dataset = dataset1, dataset2
+    else:
+        reproj_dataset, target_dataset = dataset2, dataset1
+
+    regridder = xe.Regridder(reproj_dataset, target_dataset, repr_method)
+
+    # Reproject the entire dataset
+    ds_reprojected = regridder(reproj_dataset)
+    ds_reprojected = prepare(ds_reprojected.transpose("time","lon","lat"))
+
+    print("Destination dataset resolution:", target_dataset.rio.resolution())
+    print("Reprojected dataset resolution:", ds_reprojected.rio.resolution())
+
+    if align is True:
+        ds1, ds2 = align_datasets(ds_reprojected, target_dataset)
+        return ds1, ds2
+    else:
+        return ds_reprojected, target_dataset
+
+def align_datasets(dataset1:Union[xr.DataArray, xr.Dataset],
+                dataset2:Union[xr.DataArray, xr.Dataset],
+                chunks:dict={"time":"auto", "lat":"auto", "lon":"auto"}):
+    import pandas as pd
+
+    dataset1['time'] = dataset1['time'].drop_duplicates(dim=["time"])
+    dataset2['time'] = dataset2['time'].drop_duplicates(dim=["time"])
+
+    dataset1['time'] = pd.to_datetime(dataset1['time'].values, format='%Y-%m-%d')
+    dataset1['time'] =  dataset1.indexes["time"].normalize()
+    dataset2['time'] = pd.to_datetime(dataset2['time'].values, format='%Y-%m-%d')
+    dataset2['time'] =  dataset2.indexes["time"].normalize()
+
+    # Find the common time values between ds1 and ds2
+    ds1, ds2 = xr.align(dataset1, dataset2)
+    return ds1.chunk(chunks), ds2.chunk(chunks)
+
 
 def get_lon_dim_name(ds: Union[xr.Dataset, xr.DataArray]) -> Optional[str]:
     """
