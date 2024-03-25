@@ -154,7 +154,7 @@ def datatailor_loop(product_code:str,
     selected_collection = datastore.get_collection(product_code)
 
     if  product_code == "EO:EUM:DAT:MSG:CLM":
-        default_chain = 'cloud_mask_chain'
+        default_chain = "cloud_mask_uncompress" #'cloud_mask_chain' #
         download_dir = os.path.join(config['NDVI']['cloud_download'], destfoldername)
         product = 'MSGCLMK'
     elif  product_code == "EO:EUM:DAT:MSG:HRSEVIRI":
