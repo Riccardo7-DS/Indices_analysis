@@ -299,8 +299,12 @@ def load_modis_cloudmask(file,
     result = resampler.resample(data_xr)
     return result, lons_xr, lats_xr
 
-def remove_ndvi_outliers(ds:xr.DataArray):
-    return ds.where((ds<=1)&(ds>=-1))
+def remove_ndvi_outliers(ds:xr.DataArray, impute:bool=False):
+    if impute is True:
+        ndvi = xr.where(ds<-1,-1, ds)
+        return xr.where(ds>1, 1, ndvi)
+    else:
+        return ds.where((ds<=1)&(ds>=-1))
 
 """
 Functions to clean, smooth NDVI
@@ -482,12 +486,15 @@ class XarrayWS(xarray.Dataset):
         
         return results
     
-def apply_seviri_cloudmask(dataset:xr.Dataset, cloud_mask:xr.Dataset):
+def apply_seviri_cloudmask(dataset:xr.Dataset, 
+                           cloud_mask:xr.Dataset,
+                           align:bool=True):
     dataset = dataset.drop_duplicates(dim=["time"])
     dataset['time'] = dataset.indexes['time'].normalize()
     cloud_mask['time'] = cloud_mask.indexes['time'].normalize()
-    ds1, ds2 = xr.align(dataset, cloud_mask)
-    return ds1.where(ds2.cloud_mask!=2)
+    if align is True:
+        dataset, cloud_mask = xr.align(dataset, cloud_mask)
+    return dataset.where(cloud_mask.cloud_mask!=2)
     
 
 def extract_apply_cloudmask(ds, ds_cl, resample=False, 

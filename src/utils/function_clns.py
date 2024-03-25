@@ -21,6 +21,8 @@ def prepare(ds:Union[xr.DataArray, xr.Dataset]):
         ds = ds.rename({"latitude":"lat", "longitude":"lon"})
     if "x" in ds.dims:
         ds = ds.rename({"y":"lat", "x":"lon"})
+    if "X" in ds.dims:
+        ds = ds.rename({"Y":"lat", "X":"lon"})
     ds.rio.write_crs("epsg:4326", inplace=True)
     ds.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
     return ds
@@ -137,20 +139,28 @@ def _get_dim_name(ds: Union[xr.Dataset, xr.DataArray], possible_names: Sequence[
 
 
 def read_netcdfs(files, dim, transform_func=None):
+    
     def process_one_path(path):
-        # use a context manager, to ensure the file gets closed after use
-        with xr.open_dataset(path) as ds:
-            # transform_func should do some sort of selection or
-            # aggregation
-            if transform_func is not None:
-                ds = transform_func(ds)
-            # load all data from the transformed dataset, to ensure we can
-            # use it after closing each original file
-            ds.load()
-            return ds
+        try:
+            # use a context manager, to ensure the file gets closed after use
+            with xr.open_dataset(path) as ds:
+                # transform_func should do some sort of selection or
+                # aggregation
+                if transform_func is not None:
+                    ds = transform_func(ds)
+                # load all data from the transformed dataset, to ensure we can
+                # use it after closing each original file
+                ds.load()
+                return ds
+        except Exception as e:
+            print(f"Skipping corrupted file: {path}. Error: {e}")
+            return None
 
     paths = sorted(files)
     datasets = [process_one_path(p) for p in paths]
+    datasets = [ds for ds in datasets if ds is not None]
+    if len(datasets) == 0:
+        raise ValueError("All files are corrupted.")
     combined = xr.concat(datasets, dim)
     return combined
 

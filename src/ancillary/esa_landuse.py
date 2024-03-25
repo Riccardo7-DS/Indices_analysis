@@ -7,8 +7,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from rasterio.enums import Resampling
 
+values_land_descr = {0	:'Unknown', 20:	'Shrubland',30:'Herbaceous vegetation',40:	'Cropland',
+                        50:	'Built-up',60:	'Bare sparse vegetation',70:'Snow and ice', 80:	'Permanent water bodies',
+                        90:'Herbaceous wetland',100: 'Moss and lichen', 11:"Closed forest", 
+                        12: "Open forest,", 200: "Oceans, seas"}
 
-def get_description(df:pd.DataFrame(), column:str):
+
+def get_description(df:pd.DataFrame, column:str):
     values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
                         50:	'Urban',60:	'Bare',70:	'Snow and ice',80:	'Permanent water bodies',90:	'Herbaceous wetland',100: 'Moss and lichen',111: 'Closed forest, evergreen needle leaf',
                         112: 'Closed forest, evergreen broad leaf',115: 'Closed forest, mixed',125: 'Open forest, mixed',113: 'Closed forest, deciduous needle leaf',
@@ -17,6 +22,53 @@ def get_description(df:pd.DataFrame(), column:str):
 
     df['description'] = df[column].replace(values_land_cover.keys(),values_land_cover.values())
     return df
+
+def create_copernicus_covermap(dataset:xr.DataArray):
+    import geemap    
+    import ee
+
+    from utils.function_clns import config, prepare
+    import geopandas as gpd
+    from utils.xarray_functions import geobox_from_rio
+
+    geobox = geobox_from_rio(dataset)
+    shapefile_path = config['SHAPE']['HOA']
+    path_img = config["DEFAULT"]["images"]
+    filename = os.path.join(path_img, "temp_cover.tif")
+
+    if os.path.isfile(filename):
+        ds = prepare(xr.open_dataset(filename, engine="rasterio"))
+
+        if ds.rio.resolution()[0] == dataset.rio.resolution()[0]:
+            print("Loading extisting landcover dataset")
+            return ds
+
+    else:
+        print("Generating new landcover dataset")
+
+        ee.Authenticate()
+        ee.Initialize()
+        geemap.ee_initialize()
+
+        geometry_hoa = ee.Geometry.Rectangle(30.288233396779802,  -5.949173816626356 , 
+                                             51.9972177717798, 15.808293611760663)
+
+        landcover = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019")\
+            .select("discrete_classification")\
+            .reproject(crs='EPSG:4326', crsTransform=list(geobox.transform)[:6])\
+            .clip(geometry_hoa)
+
+        gdf = gpd.read_file(shapefile_path)
+        fc_poly = geemap.geopandas_to_ee(gdf)
+        poly_geometry = fc_poly.geometry()
+
+
+        geemap.ee_export_image(landcover, 
+                filename = filename,
+                region = poly_geometry)
+
+        ds = prepare(xr.open_dataset(filename, engine="rasterio"))
+        return ds
 
 def get_level_colors(ds_cover, level1=True):
     df = ds_cover.to_dataframe()
@@ -59,9 +111,11 @@ def visualize_map(land_proj):
     Map.addLayer(land_proj, {}, 'Land cover')
     Map
 
-def export_land_cover(CONFIG_PATH, target_resolution:str, export_path =r'../data/images'):
+def export_land_cover(target_resolution:str, 
+                      export_path =r'../data/images'):
     import ee 
     import geemap
+    from osgeo import gdal
     assert target_resolution in ['IMERG','CHIRPS']
     ee.Authenticate()
     ee.Initialize()
@@ -80,14 +134,16 @@ def export_land_cover(CONFIG_PATH, target_resolution:str, export_path =r'../data
         #reproj_land = landcover.reproject(crs='EPSG:4326', crsTransform=[1, 0, 0, 0, 1, 0])
         land_proj = landcover.reproject(chirps.projection(), None, chirps.projection().nominalScale())
 
-    config = load_config(CONFIG_PATH)
+    from utils.function_clns import config
     shapefile_path = config['SHAPE']['HOA']
     gdf = gpd.read_file(shapefile_path)
 
     fc_poly = geemap.geopandas_to_ee(gdf)
     poly_geometry = fc_poly.geometry()
     path_img = export_path
-    geemap.ee_export_image(land_proj, filename = os.path.join(path_img, "esa_cover.tif"),region = poly_geometry)
+    geemap.ee_export_image(land_proj, 
+                           filename = os.path.join(path_img, "esa_cover.tif"),
+                           region = poly_geometry)
  
     #Change the following variables to the file you want to convert (inputfile) and
     #what you want to name your output file (outputfile).
@@ -124,7 +180,7 @@ def export_land_cover(CONFIG_PATH, target_resolution:str, export_path =r'../data
 
 
 
-def get_level_1(ds):
+def get_level_1(ds, name:str="Band1"):
     values_land_cover = {0	:0, 20:	20, 30:30, 40:40, 50:50, 60:60, 70:	70 ,80:	80,90:90, 100: 100, 
                         111:11, 112: 11,115: 11,125: 12,113: 11, 114: 11,116: 11,
                         121: 12,122: 12, 123: 12,124: 12,126: 12, 200: 200}
@@ -135,19 +191,20 @@ def get_level_1(ds):
                         12: "Open forest,", 200: "Oceans, seas"}
     
     df = ds.to_dataframe()
-    df["level1"] = df["Band1"].replace(values_land_cover.keys(),values_land_cover.values())
+    df["level1"] = df[name].replace(values_land_cover.keys(),values_land_cover.values())
     ds = df["level1"].to_xarray().to_dataset()
-    return ds.rename({"level1":"Band1"})
+    return ds.rename({"level1":name})
 
-def get_cover_dataset(CONFIG_PATH:str, datarray:xr.DataArray, img_path:str, 
+def get_cover_dataset(datarray:xr.DataArray, img_path:str, 
                       img_name:str="esa_cover.nc",level1=True, 
                       resample=True)->xr.Dataset:
     
     ds_cover = prepare(xr.open_dataset(os.path.join(img_path, img_name)))
     if level1==True:
         ds_cover = get_level_1(ds_cover)
-    ds_cover = subsetting_pipeline(CONFIG_PATH, ds_cover)
+    ds_cover = subsetting_pipeline(ds_cover)
     if resample ==True:
+        print(f"Starting reprojection to destionation resolution of {ds_cover.rio.resolution()}")
         ds = datarray.rio.reproject_match(ds_cover["Band1"],
                     resampling = Resampling.mode).rename({"x":"lon","y":"lat"})
         ds = ds.to_dataset().assign(Band1=ds_cover["Band1"])
@@ -159,7 +216,7 @@ def get_cover_dataset(CONFIG_PATH:str, datarray:xr.DataArray, img_path:str,
 
 
 def drop_water_bodies_esa_downsample(ds):
-    from ancillary_vars.esa_landuse import get_cover_dataset, get_level_1
+    from ancillary.esa_landuse import get_cover_dataset, get_level_1
     from rasterio.enums import Resampling
     from utils.function_clns import config
 
@@ -174,8 +231,8 @@ def drop_water_bodies_esa_downsample(ds):
     return ds.where(water_mask==0)
 
 if __name__ == "__main__":
-    from ancillary_vars.esa_landuse import export_land_cover
-    CONFIG_PATH = "../config.yaml"
-    export_land_cover(CONFIG_PATH, target_resolution="CHIRPS", export_path =r'../data/images/chirps_esa')
+    from ancillary.esa_landuse import export_land_cover
+    export_land_cover(target_resolution="CHIRPS",
+                    export_path =r'../data/images/chirps_esa')
 
    

@@ -4,9 +4,10 @@ from datetime import datetime
 import xarray as xr
 import numpy as np
 from xarray import Dataset
-from  matplotlib.colors import ListedColormap, BoundaryNorm
+from  matplotlib.colors import ListedColormap, BoundaryNorm, LinearSegmentedColormap
 import numpy as np
-
+import matplotlib.pyplot as plt
+from typing import Union
 """
 In this script can be found all the reading, standard cleaning and plotting helper functions
 """
@@ -31,17 +32,20 @@ def ndvi_colormap():
         "#006600",
         "#7F00FF"
     ]
-    cmap= ListedColormap(cols,  name='custom_colormap')
-    bounds = np.array(vals)
+    # #cmap= ListedColormap(cols,  name='custom_colormap')
+    # cmap = LinearSegmentedColormap.from_list('', list(zip(np.array(vals)/vals[-1], cols)))
+    # bounds = np.array(vals)
+    # norm = plt.Normalize(vals[0], vals[-1])
     # Normalize the colormap
-    norm = BoundaryNorm(bounds, cmap.N)
+    # norm = BoundaryNorm(bounds, cmap.N)
 
     #fig, ax = plt.subplots(figsize=(12, 1))
     #fig.subplots_adjust(bottom=0.5)
     #fig.colorbar(ScalarMappable(norm=norm, cmap=cmap_custom),
     #             cax=ax, orientation='horizontal', label='Colorbar')
     #plt.show()
-    return cmap, norm
+    cmap_custom = ListedColormap(cols)
+    return cmap_custom
 
 def downsample(ds, time='5D'):
     monthly = ds.resample(time=time, skipna=True).mean() #### Change here to change the timeframe over which to make the data imputation
@@ -117,9 +121,25 @@ def convert_ndvi_tofloat(datarray:xr.DataArray):
     return ndvi
 
 def add_time(xr_df):
-    my_date_string = xr_df.attrs['EPCT_start_sensing_time']#xr_df.attrs['date_time']
-    date_xr = datetime.strptime(my_date_string,'%Y%m%dT%H%M%SZ') #datetime.strptime(my_date_string, '%Y%m%d/%H:%M')
-    date_xr = pd.to_datetime(date_xr)
+    if 'EPCT_start_sensing_time' in xr_df.attrs:
+        my_date_string = xr_df.attrs['EPCT_start_sensing_time']#xr_df.attrs['date_time']
+        date_xr = datetime.strptime(my_date_string,'%Y%m%dT%H%M%SZ') #datetime.strptime(my_date_string, '%Y%m%d/%H:%M')
+        date_xr = pd.to_datetime(date_xr)
+    else:
+        import re
+        string_time = xr_df.encoding["source"].split("/")[-1]
+        pattern = r'(\d{4}\d{2}\d{2})(\d{2}\d{2}\d{2})'
+
+        # Use re.search() to find the pattern in the string
+        match = re.search(pattern, string_time)
+        if match:
+            start_date = match.group(1)
+            start_time = match.group(2)
+            date_xr = pd.to_datetime(start_date + start_time, format='%Y%m%d%H%M%S')
+        else:
+            print("Could not parse time in xarray dataset {}".format(string_time))
+            return xr_df
+    
     xr_df = xr_df.assign_coords(time=date_xr)
     xr_df = xr_df.expand_dims(dim="time")
     return xr_df
@@ -201,6 +221,12 @@ from odc.geo.geobox import GeoBox
 from typing import Union
 from odc.geo import resyx_, wh_
 from odc.geo.crs import CRS
+
+def get_reproject_info(geobox):
+    return {
+        "crs": f"EPSG:{str(geobox.crs.epsg)}",
+        "crsTransform": list(geobox.transform)[:6]
+    }
 
 def geobox_from_rio(xds: Union[xr.Dataset, xr.DataArray]) -> GeoBox:
     """This function retrieves the geobox using rioxarray extension.

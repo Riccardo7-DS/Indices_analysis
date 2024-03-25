@@ -6,8 +6,39 @@ from datetime import datetime
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-from p_drought_indices.functions.function_clns import load_config
+from utils.function_clns import load_config
 import re
+
+def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
+                                 mask: Union[xr.DataArray, xr.Dataset, None] = None,
+                                 n_points: int = 1):
+
+    # Step 1: Apply boolean mask
+    valid_indices = np.where(mask == 1)
+
+    # Step 2: Generate random indices
+    random_indices = np.random.choice(len(valid_indices[0]), 
+                                      size=n_points, replace=False)
+
+    # Step 3: Retrieve latitudes and longitudes corresponding to selected indices
+    selected_lats = data_array1.lat.values[valid_indices[0][random_indices]]
+    selected_lons = data_array1.lon.values[valid_indices[1][random_indices]]
+
+    # Step 4: Generate time axis
+    time_axis = data_array1.time.values
+
+    # Step 5: Plot latitude-longitude combinations over time
+    plt.figure(figsize=(10, 6))
+    for i in range(n_points):
+        plt.plot(time_axis, data_array1.sel(lat=selected_lats[i], 
+                lon=selected_lons[i]), 
+                label=f'Lat: {selected_lats[i]}, Lon: {selected_lons[i]}')
+
+    plt.xlabel('Time')
+    plt.ylabel('Data Variable')
+    plt.title('Latitude-Longitude Combinations Over Time')
+    plt.grid(True)
+    plt.show()
 
 class VizNC():
     def __init__(self, root: Path, data:str,  period_start:str, period_end:str, plot:str='first', dims_mean=["time"]):
@@ -68,15 +99,27 @@ class VizNC():
 
 
 
-from p_drought_indices.functions.ndvi_functions import ndvi_colormap
+from utils.xarray_functions import ndvi_colormap
 from datetime import timedelta
 import pandas as pd
+import math
+import cartopy.crs as ccrs
 
-def plot_ndvi_days(ds_smoot:xr.Dataset,start_day:Union[str,None],num_timesteps:int,var:str="ndvi")-> None:
+def plot_ndvi_days(dataset:xr.DataArray,
+                   start_day:Union[str,None],
+                   num_timesteps:int,
+                   vmin: float = -0.2,
+                   vmax: float = 1.,
+                   cmap:Union[str, None]=None,
+                   cities:Union[dict, None]=None)-> None:
 
-    """ Function to plot NDVI saries"""
+    """ Function to plot NDVI daily series"""
 
-    cmap_custom = ndvi_colormap()
+    if "time" != dataset.dims[0]:
+        dataset = dataset.transpose("time","lat","lon")
+
+    if cmap is None:
+        cmap = ndvi_colormap()
 
     if start_day ==None:
         start_day = "2007-08-01"
@@ -85,33 +128,57 @@ def plot_ndvi_days(ds_smoot:xr.Dataset,start_day:Union[str,None],num_timesteps:i
     # Select the desired number of timesteps to plot
     date_end = pd.to_datetime(start_day) 
     new_end = date_end + timedelta(days = num_timesteps - 1)
-    end = new_end.strftime('%d-%m-%Y')
-
-    # Assuming 'ndvi' is a DataArray within the 'data' dataset
-    ndvi_data = ds_smoot[var]
+    end = new_end.strftime('%Y-%m-%d')
 
     # Select the first 'num_timesteps' timesteps
-    ndvi_subset =  ndvi_data.sel(time=slice(start_day, end))
+    ndvi_subset =  dataset.sel(time=slice(start_day, end))
 
     # Determine the number of rows and columns for subplots
-    num_rows = (num_timesteps + 4) // 5
-    num_cols = min(num_timesteps, 5)
+    square_root = math.sqrt(num_timesteps)
+    num_rows = math.ceil(square_root)
+    num_cols = math.ceil(num_timesteps/ num_rows)
 
     # Create a figure and subplots
-    fig, axes = plt.subplots(num_rows, num_cols, figsize=(20, 3*num_rows))
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(20, 3*num_rows), subplot_kw={'projection':ccrs.PlateCarree()})
 
     # Flatten the axes array to simplify indexing
     axes = axes.flatten()
 
     # Iterate over the timesteps and plot each one
-    for i, ndvi in enumerate(ndvi_subset):
-        ts = pd.to_datetime(str(ndvi["time"].values)) 
-        d = ts.strftime('%d-%m-%Y')
+    for i, ds in enumerate(ndvi_subset):
+        ts = pd.to_datetime(str(ds["time"].values)) 
+        d = ts.strftime('%Y-%m-%d')
         # Assuming the time coordinate is named 'time'
         ax = axes[i]
-        ndvi.plot(ax=ax, cmap=cmap_custom)
+        # ndvi.plot(ax=ax, cmap=cmap_custom)
+        p = ax.pcolormesh(ds, vmin=vmin, vmax=vmax, cmap=cmap,
+                            transform=ccrs.PlateCarree())
         ax.set_title(f'Day {d}')
+        
+        # Adding latitude and longitude labels
+        ax.set_xlabel('Longitude')
+        ax.set_ylabel('Latitude')
+        if len(ndvi_subset.lon) > 10:
+            lon_step = int(len(ndvi_subset.lon)//10)
+            lat_step = int(len(ndvi_subset.lat)//10)
+        else:
+            lon_step = len(ndvi_subset.lon)
+            lat_step = len(ndvi_subset.lat)
 
+        ax.set_xticks(np.arange(0, len(ndvi_subset.lon), step=lon_step))  # Adjust the step size as needed
+        ax.set_yticks(np.arange(0, len(ndvi_subset.lat), step=lat_step))  # Adjust the step size as needed
+        ax.set_xticklabels(ndvi_subset.lon[::lon_step].values.round(2), rotation=45)
+        ax.set_yticklabels(ndvi_subset.lat[::lat_step].values.round(2))
+
+        if cities is not None:
+            for city, (lat, lon) in cities.items():
+                ax.scatter(lon, lat, color='grey', marker='o', transform=ccrs.PlateCarree())
+                ax.text(lon, lat, city, color='black', fontsize=8, transform=ccrs.PlateCarree())
+
+
+    # Add a single colorbar for all subplots
+    cbar_ax = fig.add_axes([1, 0.1, 0.02, 0.8])  # [left, bottom, width, height]
+    fig.colorbar(p, cax=cbar_ax, orientation='vertical', label='NDVI')
     # Remove any extra empty subplots
     if len(ndvi_subset) < len(axes):
         for j in range(len(ndvi_subset), len(axes)):
@@ -122,29 +189,3 @@ def plot_ndvi_days(ds_smoot:xr.Dataset,start_day:Union[str,None],num_timesteps:i
 
     # Display the plot
     plt.show()
-
-
-if __name__== "__main__":
-    period_start = "2010-01-01"
-    period_end = "2012-01-01"
-
-    CONFIG = "./config.yaml"
-    config = load_config(CONFIG)
-
-        ### Visualize NDVI series
-     #   path_ndvi = Path(config['NDVI']['ndvi_prep'])
-     #   files = "*.nc"
- #   VizNC(path_ndvi, data=files, period_start=period_start, period_end=period_end)
-
-    ### Visualize VCI
-    #path_vci = Path(config['NDVI']['ndvi_path'])
-    #file = "vci_1D.nc"
-    #VizNC(path_vci, data=file, period_start=period_start, period_end=period_end)
-
-    ### Visualize SPIs
-    latency = 60
-    
-    for base_path in [config['SPI']['CHIRPS']['path'], config['SPI']['IMERG']['path'], config['SPI']['ERA5']['path'], config['SPI']['GPCC']['path']]:
-        file_n = f"_spi_gamma_{latency}"
-        file = [f for f in os.listdir(base_path) if re.search('(.*){}(.nc)'.format(file_n), f)][0]
-        VizNC(base_path, data=file, period_start=period_start, period_end=period_end)
