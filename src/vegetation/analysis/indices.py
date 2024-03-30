@@ -96,6 +96,13 @@ def abs_diff(ds:xr.DataArray, dim="time", lead=1)->xr.DataArray:
     diff = ds.diff(dim=dim, n=lead)
     return abs(diff)
 
+def abs_mape(ds:xr.DataArray, dim="time", lead=1)->xr.DataArray:
+    """
+    Metric for the absolute difference between consecutive records
+    """
+    diff = ds.diff(dim=dim, n=lead)
+    return abs(diff/ds)
+
 
 def autocorr(ds, dim='time', nlags=None, skipna:bool=False):
     from tqdm.auto import tqdm

@@ -8,8 +8,10 @@ import pandas as pd
 from rasterio.enums import Resampling
 
 values_land_descr = {0	:'Unknown', 20:	'Shrubland',30:'Herbaceous vegetation',40:	'Cropland',
-                        50:	'Built-up',60:	'Bare sparse vegetation',70:'Snow and ice', 80:	'Permanent water bodies',
-                        90:'Herbaceous wetland',100: 'Moss and lichen', 11:"Closed forest", 
+                        50:	'Built-up',60:	'Bare sparse vegetation',70:'Snow and ice', 
+                        80:	'Permanent water bodies',
+                        90:'Herbaceous wetland',
+                        100: 'Moss and lichen', 11:"Closed forest", 
                         12: "Open forest,", 200: "Oceans, seas"}
 
 
@@ -26,24 +28,11 @@ def get_description(df:pd.DataFrame, column:str):
 def create_copernicus_covermap(dataset:xr.DataArray):
     import geemap    
     import ee
-
     from utils.function_clns import config, prepare
     import geopandas as gpd
     from utils.xarray_functions import geobox_from_rio
 
-    geobox = geobox_from_rio(dataset)
-    shapefile_path = config['SHAPE']['HOA']
-    path_img = config["DEFAULT"]["images"]
-    filename = os.path.join(path_img, "temp_cover.tif")
-
-    if os.path.isfile(filename):
-        ds = prepare(xr.open_dataset(filename, engine="rasterio"))
-
-        if ds.rio.resolution()[0] == dataset.rio.resolution()[0]:
-            print("Loading extisting landcover dataset")
-            return ds
-
-    else:
+    def generate_new_data():
         print("Generating new landcover dataset")
 
         ee.Authenticate()
@@ -67,7 +56,24 @@ def create_copernicus_covermap(dataset:xr.DataArray):
                 filename = filename,
                 region = poly_geometry)
 
+        return prepare(xr.open_dataset(filename, engine="rasterio"))
+
+    geobox = geobox_from_rio(dataset)
+    shapefile_path = config['SHAPE']['HOA']
+    path_img = config["DEFAULT"]["images"]
+    filename = os.path.join(path_img, "temp_cover.tif")
+
+    if os.path.isfile(filename):
         ds = prepare(xr.open_dataset(filename, engine="rasterio"))
+
+        if ds.rio.resolution()[0] == dataset.rio.resolution()[0]:
+            print("Loading extisting landcover dataset")
+            return ds
+        else:
+            ds = generate_new_data()
+            return ds
+    else:
+        ds = generate_new_data()
         return ds
 
 def get_level_colors(ds_cover, level1=True):

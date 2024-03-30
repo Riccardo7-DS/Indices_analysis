@@ -98,20 +98,44 @@ def xesmf_regrid_align(dataset1:Union[xr.DataArray, xr.Dataset],
 
 def align_datasets(dataset1:Union[xr.DataArray, xr.Dataset],
                 dataset2:Union[xr.DataArray, xr.Dataset],
+                dataset3:Union[xr.DataArray, xr.Dataset, None]=None,
+                dataset4:Union[xr.DataArray, xr.Dataset, None]=None,
                 chunks:dict={"time":"auto", "lat":"auto", "lon":"auto"}):
     import pandas as pd
 
-    dataset1['time'] = dataset1['time'].drop_duplicates(dim=["time"])
-    dataset2['time'] = dataset2['time'].drop_duplicates(dim=["time"])
+    def preprocess_dataset(dataset):
+        if dataset is not None:
+            dataset['time'] = dataset['time'].drop_duplicates(dim=["time"])
+            dataset['time'] = pd.to_datetime(dataset['time'].values, format='%Y-%m-%d')
+            dataset['time'] = dataset.indexes["time"].normalize()
+            dataset = dataset
+        return dataset
 
-    dataset1['time'] = pd.to_datetime(dataset1['time'].values, format='%Y-%m-%d')
-    dataset1['time'] =  dataset1.indexes["time"].normalize()
-    dataset2['time'] = pd.to_datetime(dataset2['time'].values, format='%Y-%m-%d')
-    dataset2['time'] =  dataset2.indexes["time"].normalize()
+    dataset1 = preprocess_dataset(dataset1)
+    dataset2 = preprocess_dataset(dataset2)
+    dataset3 = preprocess_dataset(dataset3)
+    dataset4 = preprocess_dataset(dataset4)
 
     # Find the common time values between ds1 and ds2
+
     ds1, ds2 = xr.align(dataset1, dataset2)
-    return ds1.chunk(chunks), ds2.chunk(chunks)
+
+    if dataset3 is not None and dataset4 is not None:
+        ds1, ds2, dataset3, dataset4 = xr.align(ds1,
+                                                ds2, 
+                                                dataset3,
+                                                dataset4, 
+                                                join='inner')
+    
+    if dataset3 is not None:
+        ds1, dataset3 = xr.align(ds1, dataset3, join='inner')
+        ds2, dataset3 = xr.align(ds2, dataset3, join='inner')
+
+    if dataset4 is not None:
+        ds1, dataset4 = xr.align(ds1, dataset4, join='inner')
+        ds2, dataset4 = xr.align(ds2, dataset4, join='inner')
+
+    return ds1, ds2, dataset3, dataset4
 
 
 def get_lon_dim_name(ds: Union[xr.Dataset, xr.DataArray]) -> Optional[str]:

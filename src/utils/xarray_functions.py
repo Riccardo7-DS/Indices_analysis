@@ -156,6 +156,55 @@ def add_time_tiff(ds):
     xr_ds = xr_ds.expand_dims(dim="time")
     return xr_ds
 
+def dataset_to_dekad(dataset:Union[xr.Dataset, xr.DataArray]):
+    
+    def group_into_dekads(date_list:list):
+        result = []
+
+        # Sort the list of dates to ensure correct grouping
+        sorted_dates = [pd.to_datetime(t) for t in sorted(date_list)]
+
+        threshold_days = [1, 11, 21]
+
+        # Group dates into dekads
+        current_dekad = []
+        for idx in range(len(sorted_dates) - 1):  # Iterate up to the second-to-last element
+            date = sorted_dates[idx]
+            current_dekad.append(date)
+            next_day = sorted_dates[idx+1].day
+            if next_day in threshold_days:
+                result.append(current_dekad)
+                current_dekad = []
+
+        # Handle the last element separately
+        last_date = sorted_dates[-1]
+        current_dekad.append(last_date)
+        result.append(current_dekad)
+
+        return result
+
+    time_values = dataset["time"].values
+    list_dates = group_into_dekads(time_values)
+
+    final_dataset = None
+
+    for date in list_dates:
+        # Perform the operation on the subset of the dataset for the current date
+        temp_ds = dataset.sel(time=date).max(["time"])
+        temp_ds["time"] = date[0]
+
+        # Append the resulting dataset to the final dataset
+        if final_dataset is None:
+            final_dataset = temp_ds
+        else:
+            final_dataset = xr.concat([final_dataset, temp_ds], dim="time")
+
+    # Optionally, you can sort the final dataset by time
+    final_dataset = final_dataset.sortby("time")
+
+    return final_dataset
+
+
 def swath_to_grid(lat, lon):
     from pyresample import geometry
     import pyproj

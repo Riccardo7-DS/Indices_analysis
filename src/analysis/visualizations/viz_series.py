@@ -9,16 +9,30 @@ import matplotlib.pyplot as plt
 from utils.function_clns import load_config
 import re
 
-def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
-                                 mask: Union[xr.DataArray, xr.Dataset, None] = None,
-                                 n_points: int = 1):
+from typing import Union
+import numpy as np
 
+def select_random_points(mask: Union[xr.DataArray, xr.Dataset, None] = None,
+                         n_points: int = 1):
     # Step 1: Apply boolean mask
     valid_indices = np.where(mask == 1)
 
     # Step 2: Generate random indices
     random_indices = np.random.choice(len(valid_indices[0]), 
                                       size=n_points, replace=False)
+    
+    return valid_indices, random_indices
+
+def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
+                                 valid_indices:tuple, 
+                                 random_indices:np.ndarray,
+                                 date_min:str = None,
+                                 date_max:str = None):
+    
+    if date_max and date_max is not None:
+        data_array1 = data_array1.sel(time=slice(date_min, date_max))
+
+    n_points = len(random_indices)
 
     # Step 3: Retrieve latitudes and longitudes corresponding to selected indices
     selected_lats = data_array1.lat.values[valid_indices[0][random_indices]]
@@ -30,15 +44,47 @@ def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
     # Step 5: Plot latitude-longitude combinations over time
     plt.figure(figsize=(10, 6))
     for i in range(n_points):
-        plt.plot(time_axis, data_array1.sel(lat=selected_lats[i], 
-                lon=selected_lons[i]), 
-                label=f'Lat: {selected_lats[i]}, Lon: {selected_lons[i]}')
+        plt.plot(time_axis, data_array1.sel(lat=selected_lats[i], lon=selected_lons[i]),
+                 label=f'Lat: {selected_lats[i]}, Lon: {selected_lons[i]}', 
+                 color=plt.cm.viridis(i / n_points), linestyle='-', marker='o', markersize=4, alpha=0.7)
 
     plt.xlabel('Time')
     plt.ylabel('Data Variable')
     plt.title('Latitude-Longitude Combinations Over Time')
     plt.grid(True)
+    plt.tight_layout()
     plt.show()
+
+# def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
+#                                  mask: Union[xr.DataArray, xr.Dataset, None] = None,
+#                                  n_points: int = 1):
+
+#     # Step 1: Apply boolean mask
+#     valid_indices = np.where(mask == 1)
+
+#     # Step 2: Generate random indices
+#     random_indices = np.random.choice(len(valid_indices[0]), 
+#                                       size=n_points, replace=False)
+
+#     # Step 3: Retrieve latitudes and longitudes corresponding to selected indices
+#     selected_lats = data_array1.lat.values[valid_indices[0][random_indices]]
+#     selected_lons = data_array1.lon.values[valid_indices[1][random_indices]]
+
+#     # Step 4: Generate time axis
+#     time_axis = data_array1.time.values
+
+#     # Step 5: Plot latitude-longitude combinations over time
+#     plt.figure(figsize=(10, 6))
+#     for i in range(n_points):
+#         plt.plot(time_axis, data_array1.sel(lat=selected_lats[i], 
+#                 lon=selected_lons[i]), 
+#                 label=f'Lat: {selected_lats[i]}, Lon: {selected_lons[i]}')
+
+#     plt.xlabel('Time')
+#     plt.ylabel('Data Variable')
+#     plt.title('Latitude-Longitude Combinations Over Time')
+#     plt.grid(True)
+#     plt.show()
 
 class VizNC():
     def __init__(self, root: Path, data:str,  period_start:str, period_end:str, plot:str='first', dims_mean=["time"]):

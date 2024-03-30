@@ -136,7 +136,9 @@ class EeModis():
         import xarray as xr
         import os
         files = [os.path.join(self.out_dir,f) for f in os.listdir(self.out_dir) if f.endswith(".tif")]
-        dataset = xr.open_mfdataset(files, preprocess=self._preprocess_file, engine="rasterio")
+        dataset = xr.open_mfdataset(files, 
+                                    preprocess=self._preprocess_file, 
+                                    engine="rasterio")
         return dataset
 
 
@@ -191,3 +193,11 @@ def modistools_download(user:str,
                                           threads=-1,
                                           path=targetdir)
 
+
+if __name__ == "__main__":
+    EeModis(
+        start_date="2013-09-08", 
+        end_date= "2023-02-17",
+        name= "NDVI_06", 
+        output_resolution=1000,
+        download_collection=True)

@@ -97,8 +97,8 @@ def check_reset_token(start_time, minutes = 60):
     
     if res/(minutes*60)>=1:
         # Insert your personal key and secret into the single quotes
-        consumer_key = config['DEFAULT']['key']
-        consumer_secret = config['DEFAULT']['secret']
+        consumer_key = config['DEFAULT']['key2']
+        consumer_secret = config['DEFAULT']['secret2']
 
         credentials = (consumer_key, consumer_secret)
 
@@ -115,8 +115,8 @@ def delete_old_job():
 
     from utils.function_clns import config
     # Insert your personal key and secret into the single quotes
-    consumer_key = config['DEFAULT']['key']
-    consumer_secret = config['DEFAULT']['secret']
+    consumer_key = config['DEFAULT']['key2']
+    consumer_secret = config['DEFAULT']['secret2']
 
     credentials = (consumer_key, consumer_secret)
 
@@ -135,12 +135,13 @@ def delete_old_job():
 def datatailor_loop(product_code:str, 
                     start_date:str, 
                     end_date:str, destfoldername:str, delete_chain:bool=False):
+    print(f"Collecting data between {start_date} and {end_date}")
 
     # Function to load yaml configuration file
     from utils.function_clns import config
     # Insert your personal key and secret into the single quotes
-    consumer_key = config['DEFAULT']['key']
-    consumer_secret = config['DEFAULT']['secret']
+    consumer_key = config['DEFAULT']['key2']
+    consumer_secret = config['DEFAULT']['secret2']
 
     credentials = (consumer_key, consumer_secret)
 
@@ -154,7 +155,7 @@ def datatailor_loop(product_code:str,
     selected_collection = datastore.get_collection(product_code)
 
     if  product_code == "EO:EUM:DAT:MSG:CLM":
-        default_chain = "cloud_mask_uncompress" #'cloud_mask_chain' #
+        default_chain = "cloud_mask_chain" #'cloud_mask_chain' #
         download_dir = os.path.join(config['NDVI']['cloud_download'], destfoldername)
         product = 'MSGCLMK'
     elif  product_code == "EO:EUM:DAT:MSG:HRSEVIRI":
@@ -250,9 +251,9 @@ def datatailor_loop(product_code:str,
 
 if __name__ == "__main__":
     from utils.function_clns import config
-    product_code = config['SEVIRI']['HRV']
-    start_date = '2005-01-01 12:00:00'
-    end_date= '2023-12-31 12:00:00'
-    folder = "12_30"
+    product_code = config['SEVIRI']['cloud']
+    start_date = '2011-10-16 11:55:00'
+    end_date= '2011-12-31 11:55:00'
+    folder = "12_15_n"
 
     datatailor_loop(product_code, start_date, end_date, folder)
