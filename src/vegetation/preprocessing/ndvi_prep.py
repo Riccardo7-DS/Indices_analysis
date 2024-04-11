@@ -21,6 +21,61 @@ from array import array
 from dask.diagnostics import ProgressBar
 from typing import Literal
 
+
+def SeviriMVCpipeline():
+    import re
+    import os
+    import xarray as xr
+    from utils.xarray_functions import add_time, compute_radiance
+    from vegetation.analysis.indices import compute_ndvi
+    from utils.function_clns import config, safe_open_mfdataset, read_netcdfs, subsetting_pipeline
+    import logging
+    import pyproj
+    from vegetation.preprocessing.ndvi_prep import apply_seviri_cloudmask, remove_ndvi_outliers, NDVIPreprocess
+
+    chunks = {"time":-1, "lat":"auto", "lon":"auto"}
+
+    def preprocess_file(ds):
+        ds = add_time(ds)
+        ds = compute_radiance(ds)
+        return ds
+
+    def preprocess_cloud(ds):
+        if "time" not in ds.dims:
+            ds = add_time(ds)
+        return ds
+
+    base_dir = config["SEVIRI"]["download"]
+    cloud_dir = config["NDVI"]["cloud_path"]
+    hour_pattern = re.compile(r'\d{2}_\d{2}')
+    hour_folders = [folder for folder in os.listdir(base_dir) if hour_pattern.match(folder)]
+    hour_folders = [hour_folders[2], hour_folders[0],hour_folders[1]]
+
+    datasets = []
+
+    # Loop through hour folders
+    for hour_folder in ["09_15", "12_15"]:
+        logging.info(f"Processing SEVIRI data for hour {hour_folder}")
+        folder_path = os.path.join(base_dir, hour_folder)
+        cloud_path = os.path.join(cloud_dir, hour_folder)
+
+        # Filter NetCDF files
+        ds_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.nc')]
+        cl_files = [os.path.join(cloud_path, f) for f in os.listdir(cloud_path) if f.endswith('.nc')]
+
+        # Open datasets
+        ds_temp = safe_open_mfdataset(ds_files, preprocess_file, chunks)
+        ndvi = compute_ndvi(band1=ds_temp["channel_1"], 
+                            band2=ds_temp["channel_2"])
+        ds_cl = safe_open_mfdataset(cl_files, preprocess_cloud, chunks)
+
+        # Apply cloud
+        logging.info(f"Applying cloudmask for hour {hour_folder}")
+        temp_ds = apply_seviri_cloudmask(ndvi, ds_cl, align=False)
+        datasets.append(temp_ds)
+    
+    return datasets
+
 def seviri_pipeline():
     from utils.function_clns import config
     rawfolder = "batch_1"
@@ -556,7 +611,7 @@ def apply_whittaker(datarray:xr.DataArray,
                     time_dim:str="time"):
     
     from fusets import WhittakerTransformer
-    from fusets._xarray_utils import _extract_dates, _output_dates, _topydate
+    from utils.xarray_functions import _extract_dates, _output_dates, _topydate
     
     result = WhittakerTransformer().fit_transform(datarray.load(),
                                                   smoothing_lambda=lambda_par, 

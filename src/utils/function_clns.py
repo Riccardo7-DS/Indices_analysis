@@ -3,6 +3,7 @@ import xarray as xr
 import glob
 import numpy as np
 from typing import Union, Literal, Sequence, Optional
+import logging
 
 """
 General utility functions
@@ -137,6 +138,14 @@ def align_datasets(dataset1:Union[xr.DataArray, xr.Dataset],
 
     return ds1, ds2, dataset3, dataset4
 
+def extract_chunksize(ds:xr.Dataset)->dict:
+    new_dict = {}
+    for dim in ds.dims:
+        len_dim = len(ds[dim])
+        chunk_len = len(dict(ds.ndvi.chunksizes)[dim])
+        pair = {dim : round(len_dim/chunk_len)}
+        new_dict.update(pair)
+    return new_dict
 
 def get_lon_dim_name(ds: Union[xr.Dataset, xr.DataArray]) -> Optional[str]:
     """
@@ -187,6 +196,13 @@ def read_netcdfs(files, dim, transform_func=None):
         raise ValueError("All files are corrupted.")
     combined = xr.concat(datasets, dim)
     return combined
+
+def safe_open_mfdataset(files, preprocess_func, chunks):
+    try:
+        return xr.open_mfdataset(files, parallel=False, chunks=chunks, preprocess=preprocess_func)
+    except Exception as e:
+        logging.error(f"Exception {e} on files {files}")
+        return read_netcdfs(files, dim="time", transform_func=preprocess_func)
 
 def read_hdf(file, DATAFIELD_NAME:str, 
              filter_nan:bool=True):

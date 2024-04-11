@@ -97,8 +97,8 @@ def check_reset_token(start_time, minutes = 60):
     
     if res/(minutes*60)>=1:
         # Insert your personal key and secret into the single quotes
-        consumer_key = config['DEFAULT']['key2']
-        consumer_secret = config['DEFAULT']['secret2']
+        consumer_key = config['DEFAULT']['key']
+        consumer_secret = config['DEFAULT']['secret']
 
         credentials = (consumer_key, consumer_secret)
 
@@ -115,8 +115,8 @@ def delete_old_job():
 
     from utils.function_clns import config
     # Insert your personal key and secret into the single quotes
-    consumer_key = config['DEFAULT']['key2']
-    consumer_secret = config['DEFAULT']['secret2']
+    consumer_key = config['DEFAULT']['key']
+    consumer_secret = config['DEFAULT']['secret']
 
     credentials = (consumer_key, consumer_secret)
 
@@ -140,8 +140,8 @@ def datatailor_loop(product_code:str,
     # Function to load yaml configuration file
     from utils.function_clns import config
     # Insert your personal key and secret into the single quotes
-    consumer_key = config['DEFAULT']['key2']
-    consumer_secret = config['DEFAULT']['secret2']
+    consumer_key = config['DEFAULT']['key']
+    consumer_secret = config['DEFAULT']['secret']
 
     credentials = (consumer_key, consumer_secret)
 
