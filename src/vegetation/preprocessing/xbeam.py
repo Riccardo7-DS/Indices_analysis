@@ -23,8 +23,7 @@ def beam_pipeline():
 
     datasets = SeviriMVCpipeline()
     chunks = {"time":-1, "lat": 80, "lon":80}
-    ds_final = xr.concat([datasets[0], 
-                          datasets[1]], dim="time").to_dataset(name="ndvi")
+    ds_final = xr.concat([ds for ds in datasets], dim="time").to_dataset(name="ndvi")
     
     origin_chunks = extract_chunksize(ds_final)
     output_zarr = os.path.join(base_path, "seviri_daily_maximum.zarr")

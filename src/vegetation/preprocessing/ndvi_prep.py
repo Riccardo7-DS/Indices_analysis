@@ -54,7 +54,7 @@ def SeviriMVCpipeline():
     datasets = []
 
     # Loop through hour folders
-    for hour_folder in ["09_15", "12_15"]:
+    for hour_folder in ["09_15", "10_30", "12_15"]:
         logging.info(f"Processing SEVIRI data for hour {hour_folder}")
         folder_path = os.path.join(base_dir, hour_folder)
         cloud_path = os.path.join(cloud_dir, hour_folder)

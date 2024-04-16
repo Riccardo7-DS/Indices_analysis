@@ -68,6 +68,8 @@ def compute_ndvi(xr_df):
     return xr_df.assign(ndvi=(
         xr_df['channel_2'] - xr_df['channel_1']) / (xr_df['channel_2'] + xr_df['channel_1']))
 
+def set_negative_zero(data_array:xr.DataArray):
+    return xr.where(data_array < 0, 0, data_array)
 
 def get_irradiances(satellite):
     if satellite == 'MSG2':
@@ -156,42 +158,55 @@ def add_time_tiff(ds):
     xr_ds = xr_ds.expand_dims(dim="time")
     return xr_ds
 
-def dataset_to_dekad(dataset:Union[xr.Dataset, xr.DataArray]):
-    
+def dataset_to_dekad(dataset):
+    import pandas as pd
+    from datetime import datetime
+
+    def get_next_threshold_day(current_day, threshold_days= [1, 11, 21]):
+        for i, day in enumerate(threshold_days):
+            if current_day < day:
+                return threshold_days[i-1], threshold_days[i]
+        return threshold_days[-1], threshold_days[0]
+
     def group_into_dekads(date_list:list):
+
         result = []
+        correct_dates = []
 
         # Sort the list of dates to ensure correct grouping
         sorted_dates = [pd.to_datetime(t) for t in sorted(date_list)]
-
-        threshold_days = [1, 11, 21]
+        last_date = sorted_dates[-1]
 
         # Group dates into dekads
         current_dekad = []
-        for idx in range(len(sorted_dates) - 1):  # Iterate up to the second-to-last element
-            date = sorted_dates[idx]
+        current_threshold, next_threshold = get_next_threshold_day(sorted_dates[0].day)
+
+        for idx, date in enumerate(sorted_dates):  # Iterate up to the second-to-last element
             current_dekad.append(date)
-            next_day = sorted_dates[idx+1].day
-            if next_day in threshold_days:
-                result.append(current_dekad)
-                current_dekad = []
 
-        # Handle the last element separately
-        last_date = sorted_dates[-1]
-        current_dekad.append(last_date)
-        result.append(current_dekad)
+            if date is not last_date:
+                next_day = sorted_dates[idx+1].day
 
-        return result
+            if next_day <= 21:
+                if next_day >= next_threshold or date==last_date:
+                    # print("Next day:", next_day, "next threshold:", next_threshold, current_dekad)
+                    result.append(current_dekad)
+                    str_time = f"{date.year}-{date.month}-{current_threshold}"
+                    correct_dates.append(datetime.strptime(str_time, "%Y-%m-%d"))
+                    current_threshold, next_threshold = get_next_threshold_day(next_day)
+                    current_dekad = []
+
+        return result, correct_dates
 
     time_values = dataset["time"].values
-    list_dates = group_into_dekads(time_values)
+    list_dates, correct_dates = group_into_dekads(time_values)
 
     final_dataset = None
 
-    for date in list_dates:
+    for idx, dates in enumerate(list_dates):
         # Perform the operation on the subset of the dataset for the current date
-        temp_ds = dataset.sel(time=date).max(["time"])
-        temp_ds["time"] = date[0]
+        temp_ds = dataset.sel(time=dates).max(["time"])
+        temp_ds["time"] = correct_dates[idx]
 
         # Append the resulting dataset to the final dataset
         if final_dataset is None:
