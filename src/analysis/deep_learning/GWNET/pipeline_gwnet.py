@@ -103,9 +103,8 @@ def data_preparation(args:dict,
         logger.info(f"Starting NDVI prediction with product {config['GWNET']['precp_product']} with {args.forecast} days of features...")
 
     # Open the precipitation file with xarray
-    precp_ds = prepare(subsetting_pipeline(
-                        xr.open_dataset(os.path.join(path, file)),countries=args.country, 
-                        regions=args.region ))\
+    precp_ds = prepare(xr.open_dataset(os.path.join(path, file)),countries=args.country, 
+                        regions=args.region )\
                         .rio.write_crs(4326, inplace=True)
 
     var_target = [var for var in precp_ds.data_vars][0]
@@ -118,9 +117,8 @@ def data_preparation(args:dict,
     time_start = config['PRECIP'][precp_dataset]['date_start']
 
     # Open the vegetation file with xarray
-    dataset = prepare(subsetting_pipeline(
-                        xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], \
-                        ndvi_dataset)),countries=args.country,regions=args.region))
+    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], \
+                        ndvi_dataset)),countries=args.country,regions=args.region)
 
     dataset["ndvi"] = dataset["ndvi"].transpose("time","lat","lon")
     dataset["ndvi"] = dataset["ndvi"].astype(np.float32)

@@ -9,6 +9,13 @@ import logging
 General utility functions
 """
 
+def hoa_bbox():
+    minx = -5.48369565
+    miny = 32.01630435
+    maxx = 15.48369565
+    maxy = 51.48369565
+    return [minx, miny, maxx, maxy]
+
 def load_config(CONFIG_PATH:str):
     with open(CONFIG_PATH) as file:
         config = yaml.safe_load(file)
@@ -17,25 +24,47 @@ def load_config(CONFIG_PATH:str):
 from definitions import CONFIG_PATH
 config = load_config(CONFIG_PATH)
 
-def prepare(ds:Union[xr.DataArray, xr.Dataset]):
-    if "longitude" in ds.dims:
-        ds = ds.rename({"latitude":"lat", "longitude":"lon"})
-    if "x" in ds.dims:
-        ds = ds.rename({"y":"lat", "x":"lon"})
-    if "X" in ds.dims:
-        ds = ds.rename({"Y":"lat", "X":"lon"})
-    ds.rio.write_crs("epsg:4326", inplace=True)
-    ds.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
-    return ds
+def prepare(dataset:Union[xr.DataArray, xr.Dataset]):
+    if "longitude" in dataset.dims:
+        dataset = dataset.rename({"latitude":"lat", "longitude":"lon"})
+    if "x" in dataset.dims:
+        dataset = dataset.rename({"y":"lat", "x":"lon"})
+    if "X" in dataset.dims:
+        dataset = dataset.rename({"Y":"lat", "X":"lon"})
+    dataset.rio.write_crs("epsg:4326", inplace=True)
+    dataset.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
+    return dataset
 
-def cut_file(xr_df, gdf):
-    from shapely.geometry import Polygon, mapping
-    xr_df.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
-    xr_df.rio.write_crs("epsg:4326", inplace=True)
-    clipped = xr_df.rio.clip(gdf.geometry.apply(mapping), gdf.crs, drop=True)
+def clip_file(dataset:Union[xr.DataArray, xr.Dataset], 
+             gdf=None):
+    
+    from shapely.geometry import Polygon, mapping, box
+    import geopandas as gpd
+    epsg_coords = "EPSG:4326"
+    if isinstance(dataset, xr.Dataset):
+        for var in dataset.data_vars:
+            dataset[var] = prepare(dataset[var])
+    elif isinstance(dataset, xr.DataArray):
+        dataset = prepare(dataset)
+    if gdf is not None:
+        clipped = dataset.rio.clip(gdf.geometry.apply(mapping), 
+                             gdf.crs, 
+                             drop=True)
+    elif gdf is None:
+        logging.info(f"Using the defeault bbox for the Horn of Africa"
+                     f"to clip the images")
+        bbox = hoa_bbox()
+        geodf = gpd.GeoDataFrame(
+                geometry=[box(bbox[0], bbox[1], bbox[2], bbox[3])],
+                crs=epsg_coords)
+        
+        clipped = dataset.rio.clip(geodf.geometry.values, 
+                                       geodf.crs,
+                                       drop=True,
+                                       invert=True)
     return clipped
 
-def subsetting_pipeline(xr_df:Union[xr.DataArray, xr.Dataset], 
+def subsetting_pipeline(dataset:Union[xr.DataArray, xr.Dataset], 
                         countries:Union[list, None] = ['Ethiopia','Kenya', 'Somalia'], 
                         regions: Union[list, None] = None,
                         invert=False):
@@ -60,7 +89,7 @@ def subsetting_pipeline(xr_df:Union[xr.DataArray, xr.Dataset],
     if invert==True:
         subset = subset['geometry'].map(
             lambda polygon: shapely.ops.transform(lambda x, y: (y, x), polygon))
-    return cut_file(xr_df, subset)
+    return clip_file(dataset, subset)
 
 def xesmf_regrid_align(dataset1:Union[xr.DataArray, xr.Dataset],
                 dataset2:Union[xr.DataArray, xr.Dataset],
@@ -407,7 +436,9 @@ def CNN_preprocessing(ds:Union[xr.DataArray, xr.Dataset],
         target = np.array(ds[var_origin])
         data = np.array(ds_target[var_target])
 
-    train_data, test_data, train_label, test_label = CNN_split(data, target, split_percentage=split)
+    train_data, test_data, train_label, test_label = CNN_split(data, 
+                                                               target, 
+                                                               split_percentage=split)
 
     return train_data, test_data, train_label, test_label
 
@@ -418,6 +449,8 @@ def prepare_datarray(datarray:xr.DataArray,
                convert_to_float:bool = False):
     
     import numpy as np
+    from utils.function_clns import prepare
+    from dask.diagnostics import ProgressBar
 
     def convert_strings_to_float(arr):
         # Vectorized conversion using np.where
@@ -426,23 +459,19 @@ def prepare_datarray(datarray:xr.DataArray,
 
     if convert_to_float is True:
         datarray.values = convert_strings_to_float(datarray.values)
-    
-    if datarray.values.dtype == np.str_:
-        datarray= datarray.rio.write_nodata("nan")
-    else:
-        datarray = datarray.rio.write_nodata(np.nan)
 
-    # datarray = datarray.astype(np.float32)
+    datarray= datarray.rio.write_nodata("nan")
+    datarray = datarray.rio.write_nodata(np.nan)
 
     if interpolate is True:
-        datarray = datarray.rio.interpolate_na()
+        with ProgressBar():
+            datarray = datarray.rio.interpolate_na()
     if check_data is True:
         check_xarray_dataset(None, datarray, save=False, plot = False)
     
     return datarray.transpose("time","lat","lon")
 
-def interpolate_prepare(
-                        input_data:Union[xr.Dataset, xr.DataArray], 
+def interpolate_prepare(input_data:Union[xr.Dataset, xr.DataArray], 
                         target_data:xr.DataArray, 
                         interpolate:bool=True,
                         convert_to_float:bool=False):
@@ -450,13 +479,13 @@ def interpolate_prepare(
     Function to prepare rand interpolate provided datasets w.r.t a given target dataset
     """
 
-    if type(input_data) == xr.Dataset:
+    if interpolate is True:
+        logging.info("Interpolating values over the time dimension using a nearest neighbor")
+        input_data = input_data.interpolate_na(dim="time", method="nearest")
+        target_data = target_data.interpolate_na(dim="time", method="nearest")
 
-        for var in input_data.data_vars:
-            input_data[var] = prepare_datarray(input_data[var], 
-                                               interpolate=interpolate,
-                                               convert_to_float=convert_to_float)
-
+    if isinstance(input_data, xr.Dataset):
+            
         shape = (len(input_data['time']), len(input_data.data_vars), 
                  len(input_data['lat']), len(input_data['lon']))
         
@@ -466,26 +495,12 @@ def interpolate_prepare(
         for i, variable in enumerate(input_data.data_vars):
             result_array[:, i, :, :] = input_data[variable]
 
+    elif isinstance(input_data, xr.DataArray):
+        result_array = input_data.to_numpy()
     else:
-        input_data = prepare_datarray(input_data, interpolate=interpolate,
-                                      convert_to_float=convert_to_float)
-        result_array = np.array(result_array)
-
-    target_data = prepare_datarray(target_data)
-    target = np.array(target_data)
-
-    # if interpolate is True:
-    #     null_target = target_data.rio.interpolate_na()
-
-    #     input_data = input_data.assign(null_precp =  data_null)  
-    #     var = "null_input" 
-    #     target = null_target.transpose("lat","lon","time").values #
-    #     check_xarray_dataset(args, [null_target,  input_data[var]], save=False, plot=False)
-    # else:
-    #     target = target_data.transpose("lat","lon","time")
-    #     var = var_target
-
-    # Read the data as a numpy array
+        raise TypeError("The input data type is not xarray-compatible")
+    
+    target = target_data.to_numpy()
 
     return result_array, target
 

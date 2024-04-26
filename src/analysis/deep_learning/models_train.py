@@ -1,12 +1,12 @@
-from p_drought_indices.analysis.DeepLearning.dataset import MyDataset
-from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset
+from analysis.deep_learning.dataset import MyDataset
+from utils.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset
 import xarray as xr
 import os
 import numpy as np
 from scipy.sparse import linalg
 
 import scipy.sparse as sp
-from p_drought_indices.analysis.DeepLearning.pipeline_gwnet import main
+from analysis.deep_learning.GWNET.pipeline_gwnet import main
 import torch
 import time
 import argparse

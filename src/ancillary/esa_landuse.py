@@ -6,6 +6,7 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import pandas as pd
 from rasterio.enums import Resampling
+from typing import Union, Literal
 
 values_land_descr = {0	:'Unknown', 20:	'Shrubland',30:'Herbaceous vegetation',40:	'Cropland',
                         50:	'Built-up',60:	'Bare sparse vegetation',70:'Snow and ice', 
@@ -25,55 +26,77 @@ def get_description(df:pd.DataFrame, column:str):
     df['description'] = df[column].replace(values_land_cover.keys(),values_land_cover.values())
     return df
 
-def create_copernicus_covermap(dataset:xr.DataArray):
+def create_copernicus_covermap(dataset:xr.DataArray, 
+                               crop_strategy:Literal["shapefile", "geometry","dataset", None]="shapefile",
+                               export:bool=True):
     import geemap    
     import ee
     from utils.function_clns import config, prepare
     import geopandas as gpd
     from utils.xarray_functions import geobox_from_rio
+    import logging
 
-    def generate_new_data():
+    def generate_new_data(dataset, crop_strategy:str):
         print("Generating new landcover dataset")
 
         ee.Authenticate()
         ee.Initialize()
         geemap.ee_initialize()
+        epsg_coords ='EPSG:4326'
 
-        geometry_hoa = ee.Geometry.Rectangle(30.288233396779802,  -5.949173816626356 , 
-                                             51.9972177717798, 15.808293611760663)
+        geobox = geobox_from_rio(prepare(dataset))
+        dataset_geometry = ee.Geometry.Rectangle(dataset.rio.bounds())
+        proj = ee.Projection(crs=str(dataset.rio.crs), 
+                     transform=dataset.rio.transform()[:6])
 
         landcover = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019")\
             .select("discrete_classification")\
-            .reproject(crs='EPSG:4326', crsTransform=list(geobox.transform)[:6])\
-            .clip(geometry_hoa)
+            .reproject(crs = epsg_coords, crsTransform=list(geobox.transform)[:6])\
+            .clip(dataset_geometry)
 
-        gdf = gpd.read_file(shapefile_path)
-        fc_poly = geemap.geopandas_to_ee(gdf)
-        poly_geometry = fc_poly.geometry()
+        if crop_strategy =="shapefile":
+            gdf = gpd.read_file(shapefile_path)
+            fc_poly = geemap.geopandas_to_ee(gdf)
+            poly_geometry = fc_poly.geometry()
 
+        elif crop_strategy == "dataset":
+            poly_geometry = dataset_geometry
 
-        geemap.ee_export_image(landcover, 
-                filename = filename,
-                region = poly_geometry)
+        elif crop_strategy == "geometry":
+            poly_geometry = ee.Geometry.Rectangle(30.288233396779802,  -5.949173816626356 , 
+                                             51.9972177717798, 15.808293611760663)
+        elif crop_strategy is None:
+            logging.info("No cropping strategy selected")
 
-        return prepare(xr.open_dataset(filename, engine="rasterio"))
-
-    geobox = geobox_from_rio(dataset)
+        if export is True:
+            geemap.ee_export_image(landcover, 
+                    filename = filename, 
+                    region = poly_geometry)
+            return prepare(xr.open_dataset(filename, engine="rasterio"))
+        else:
+            ds = xr.open_dataset(ee.ImageCollection(landcover), engine="ee", 
+                                           projection=proj)
+            repr_ds =  prepare(ds.discrete_classification.transpose("time","lat","lon"))\
+                .rio.reproject_match(prepare(dataset)).isel(time=0)
+            return prepare(repr_ds)
+    
     shapefile_path = config['SHAPE']['HOA']
     path_img = config["DEFAULT"]["images"]
     filename = os.path.join(path_img, "temp_cover.tif")
 
     if os.path.isfile(filename):
-        ds = prepare(xr.open_dataset(filename, engine="rasterio"))
+        ds = prepare(xr.open_dataset(filename, 
+                                     engine="rasterio"))
 
-        if ds.rio.resolution()[0] == dataset.rio.resolution()[0]:
+        if ds.rio.resolution()[0] == dataset.rio.resolution()[0] and \
+            len(ds["lat"])==len(dataset["lat"]) and len(ds["lon"])==len(dataset["lon"]):
             print("Loading extisting landcover dataset")
             return ds
         else:
-            ds = generate_new_data()
+            ds = generate_new_data(dataset, crop_strategy)
             return ds
     else:
-        ds = generate_new_data()
+        ds = generate_new_data(dataset, crop_strategy)
         return ds
 
 def get_level_colors(ds_cover, level1=True):
@@ -186,7 +209,7 @@ def export_land_cover(target_resolution:str,
 
 
 
-def get_level_1(ds, name:str="Band1"):
+def get_level_1(ds:xr.DataArray, name:str="Band1")->xr.Dataset:
     values_land_cover = {0	:0, 20:	20, 30:30, 40:40, 50:50, 60:60, 70:	70 ,80:	80,90:90, 100: 100, 
                         111:11, 112: 11,115: 11,125: 12,113: 11, 114: 11,116: 11,
                         121: 12,122: 12, 123: 12,124: 12,126: 12, 200: 200}
@@ -196,7 +219,10 @@ def get_level_1(ds, name:str="Band1"):
                         90:'Herbaceous wetland',100: 'Moss and lichen', 11:"Closed forest", 
                         12: "Open forest,", 200: "Oceans, seas"}
     
-    df = ds.to_dataframe()
+    if isinstance(ds, xr.DataArray):
+        df = ds.to_dataframe(name=name)
+    elif isinstance(ds, xr.Dataset):
+        df = ds[name].to_dataframe(name=name)
     df["level1"] = df[name].replace(values_land_cover.keys(),values_land_cover.values())
     ds = df["level1"].to_xarray().to_dataset()
     return ds.rename({"level1":name})
@@ -220,6 +246,20 @@ def get_cover_dataset(datarray:xr.DataArray, img_path:str,
     ds["Band1"] = ds["Band1"].expand_dims({"time":len(ds["time"])})
     return ds
 
+def drop_water_bodies_copernicus(dataset: Union[xr.Dataset, xr.DataArray], 
+                                 preprocess=None):
+    cover_ds = create_copernicus_covermap(dataset, 
+                                          crop_strategy="dataset", 
+                                          export=False)
+    if preprocess is not None:
+        cover_ds = cover_ds.apply(preprocess)
+    cover_ds = get_level_1(cover_ds, name="band_data")
+    if "band" in cover_ds.dims:
+        cover_ds = cover_ds.isel(band=0)
+    water_bodies = xr.where(
+        cover_ds["band_data"].isin([80, 200]),
+        1, 0 ).transpose("lat","lon")
+    return dataset.where(water_bodies==0)
 
 def drop_water_bodies_esa_downsample(ds):
     from ancillary.esa_landuse import get_cover_dataset, get_level_1

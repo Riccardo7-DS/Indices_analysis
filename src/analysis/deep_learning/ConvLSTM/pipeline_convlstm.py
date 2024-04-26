@@ -14,8 +14,8 @@ from tqdm.auto import tqdm
 from typing import Union
 from analysis.deep_learning.GWNET.pipeline_gwnet import StandardScaler
 
-def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
-    config_file = load_config(CONFIG_PATH=CONFIG_PATH)
+def spi_ndvi_convlstm(time_start, time_end):
+    from utils.function_clns import config as config_file
 
     # Open the NetCDF file with xarray
     dataset = prepare(xr.open_dataset(os.path.join(config_file['NDVI']['ndvi_path'], 
@@ -27,8 +27,7 @@ def spi_ndvi_convlstm(CONFIG_PATH, time_start, time_end):
 
     path = config_file['PRECIP']['ERA5']['path']
     file = "ERA5_merged.nc" #"era5_land_merged.nc" #f"ERA5_spi_gamma_{late}.nc"
-    precp_ds = prepare(subsetting_pipeline(CONFIG_PATH, 
-                                           xr.open_dataset(os.path.join(path, file))))
+    precp_ds = prepare(subsetting_pipeline(xr.open_dataset(os.path.join(path, file))))
     var_target = [var for var in precp_ds.data_vars][0] #"spi_gamma_{}".format(late)
     print(f"The {prod} raster has spatial dimensions:", precp_ds.rio.resolution())
 
@@ -78,7 +77,6 @@ def training_convlstm(args, logger,
     import matplotlib.pyplot as plt
     from analysis.deep_learning.ConvLSTM.clstm_unet import train_loop, valid_loop, build_logging# ConvLSTM
     import numpy as np
-    from utils.function_clns import load_config
     from analysis.deep_learning.dataset import EarlyStopping
 
     output_dir, log_path, img_path, checkpoint_dir = create_paths(args)
@@ -193,18 +191,19 @@ def training_convlstm(args, logger,
         plt.plot(range(epoch + 1), train_records, label='train')
         plt.plot(range(epoch + 1), valid_records, label='valid')
         plt.legend()
-        plt.savefig(os.path.join(img_path, f'learning_curve_feat_
-                                 {config.num_frames_input}.png'))
+        plt.savefig(os.path.join(img_path, f'learning_curve_feat_'
+                                 f'{config.num_frames_input}.png'))
         plt.close()
 
 def convlstm_pipeline(args:dict, 
                       train_split:float = 0.7,
-                      use_water_mask:bool =True,
-                      precipitation_only: bool = True):
+                      use_water_mask:bool = True,
+                      precipitation_only: bool = True,
+                      interpolate:bool =True):
     
-    from ancillary.esa_landuse import drop_water_bodies_esa_downsample
+    from ancillary.esa_landuse import drop_water_bodies_copernicus
     from precipitation.preprocessing.preprocess_data import PrecipDataPreparation
-    from utils.function_clns import config, interpolate_prepare
+    from utils.function_clns import config, interpolate_prepare, clip_file
     import numpy as np
     from loguru import logger
     from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
@@ -216,7 +215,8 @@ def convlstm_pipeline(args:dict,
         os.makedirs(data_dir)
 
     if len(os.listdir(data_dir)) == 0:
-        logger.info("No data found, proceeding with the creation of the training dataset.")
+        logger.info(f"No data found, proceeding with the creation"
+                    f"of the training dataset.")
         if precipitation_only is False:
             import warnings
             warnings.filterwarnings('ignore')
@@ -227,7 +227,8 @@ def convlstm_pipeline(args:dict,
                 args,
                 variables=Era5variables,
                 model="CONVLSTM",
-                load_local_precp = False
+                load_local_precp = False,
+                interpolate = interpolate
             )
         
         else:
@@ -238,27 +239,35 @@ def convlstm_pipeline(args:dict,
                 precp_dataset=config["CONVLSTM"]['precp_product'],
                 model = "CONVLSTM",
                 variables=Era5variables,
-                load_local_precp=True
+                load_local_precp=True,
+                interpolate = interpolate
             )
+
         if use_water_mask is True:
             logger.info("Loading water bodies mask...")
-            mask_ds = drop_water_bodies_esa_downsample(
-                HydroData.ndvi_ds.isel(time=0))
+
+            HydroData.ndvi_ds = drop_water_bodies_copernicus(HydroData.ndvi_ds)
+            HydroData.hydro_data = HydroData.hydro_data.where(HydroData.ndvi_ds.notnull())
             mask = torch.tensor(np.array(
-                xr.where(mask_ds.notnull(), 1, 0)))
+                xr.where(HydroData.ndvi_ds.notnull(), 1, 0)))
         else:
             mask = None
+
         logger.info("Checking dataset before imputation...")
         data, target = interpolate_prepare(
-            args, 
             HydroData.hydro_data, 
             HydroData.ndvi_ds, 
-            interpolate=True,
+            interpolate=False,
             convert_to_float=False
         )
-    
+
+        for d, name in zip([data, target, mask],  ['data', 'target', 'mask']):
+            np.save(os.path.join(data_dir, f"{name}.npy"), d)
     else:
         logger.info("Training data found. Proceeding with loading...")
+        data = np.load(os.path.join(data_dir, "data.npy"))
+        target = np.load(os.path.join(data_dir, "target.npy"))
+        mask = np.load(os.path.join(data_dir, "mask.npy"))
     
     training_convlstm(data, 
         target, 
@@ -269,7 +278,7 @@ def convlstm_pipeline(args:dict,
     
 
 if __name__=="__main__":
-
+    import pyproj
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
     parser.add_argument('--device',type=str,default='cuda',help='')
@@ -294,5 +303,5 @@ if __name__=="__main__":
     parser.add_argument("--scatterplot", type=bool, default=False, help="Whether to visualize scatterplot")
 
     args = parser.parse_args()
-
+    os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
     convlstm_pipeline(args, precipitation_only=False)

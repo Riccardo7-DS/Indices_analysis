@@ -77,7 +77,7 @@ def process_era5_precp(ds: xr.Dataset, var:str = "tp"):
 Functions to collect ERA5 ARCO data with google cloud storage
 """
 
-def query_arco_era5(vars:list=None, subset:bool=True, 
+def query_arco_era5(vars:list=None, subset:bool=False, 
                     chunks:dict={'time': -1, "latitude": "100MB", "longitude":"100MB"}):
     import fsspec
     fs = fsspec.filesystem('gs')
