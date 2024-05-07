@@ -18,6 +18,7 @@ Use the provided .toml file to install the python environment
 
 ## Usage
 
+The script contains pipelines to download MSG SEVIRI images using the eumdac library and the EUMETSAT Data Tailor. Further, there is a pipeline to apply a Whittaker-filter from the modape library.
 It contains an implementation of a ConvLSTM and a Graph Neural Network in the WaveNet architecture. The code is currently under development
 
 ## Contributing
