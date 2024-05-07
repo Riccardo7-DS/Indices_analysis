@@ -1,7 +1,7 @@
 # Predicting droughts at short-term scale
 
 <div align="center">
-<img src=data/drought.jpg alt="Project Logo" width="500" height="300">
+    <img src=data/drought.jpg alt="Project Logo" width="500" height="300">
 </div>
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -20,7 +20,7 @@ Use the provided .toml file to install the python environment
 
 ## Usage
 
-This repository contains a series of scripts to predict drought at short term scale using Machine Learning models. The code is currently under development
+This repository contains a series of scripts to predict drought at short term scale using Machine Learning models. It contains an implementation of a ConvLSTM and a Graph Neural Network in the WaveNet architecture. The code is currently under development
 
 ## Contributing
 
