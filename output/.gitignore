@@ -2,3 +2,4 @@ log/
 model/
 cache/
 checkpoints/
+*.nc
