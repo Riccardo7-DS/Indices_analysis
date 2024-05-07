@@ -1,13 +1,10 @@
-# Project Name
+# Predicting droughts at short-term scale
 
-
-![Project Logo](https://www.freepik.com/premium-vector/warming-disaster-dead-dramatic-global-heat-land-desert-ground-weather-climate-earth-horizon-grunge_130959350.htm#fromView=search&page=1&position=25&uuid=221572ca-f87f-46a8-aa99-fd48980d8a13)
+<div align="center">
+<img src=data/drought.jpg alt="Project Logo" width="500" height="300">
+</div>
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://travis-ci.org/username/repository.svg?branch=master)](https://travis-ci.org/username/repository)
-[![GitHub Issues](https://img.shields.io/github/issues/username/repository.svg)](https://github.com/username/repository/issues)
-[![GitHub Forks](https://img.shields.io/github/forks/username/repository.svg)](https://github.com/username/repository/network)
-[![GitHub Stars](https://img.shields.io/github/stars/username/repository.svg)](https://github.com/username/repository/stargazers)
 
 Short description of the project. Explain what the project does and its main features.
 
@@ -19,15 +16,19 @@ Short description of the project. Explain what the project does and its main fea
 
 ## Installation
 
-Explain how to install and set up the project. Include any dependencies and installation instructions. 
+Use the provided .toml file to install the python environment
 
 ## Usage
 
-Provide examples and instructions on how to use the project. Include code snippets or usage scenarios.
+This repository contains a series of scripts to predict drought at short term scale using Machine Learning models. The code is currently under development
 
 ## Contributing
 
-Explain how others can contribute to the project. Include guidelines for submitting pull requests and reporting issues.
+In progress
+
+## Acknowledgments
+
+This project was supported by the Italian National PhD Program in Artificial Intelligence “AI & agrifood and environment” pillar. The research activity was conducted at the “CNR-ISAC” with the partnership and support of the University of Naples Federico II.
 
 ## License
 
