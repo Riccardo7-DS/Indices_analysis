@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-Short description of the project. Explain what the project does and its main features.
+This repository contains a series of scripts to predict drought at short term scale using Machine Learning models.
 
 ## Table of Contents
 - [Installation](#installation)
@@ -18,7 +18,7 @@ Use the provided .toml file to install the python environment
 
 ## Usage
 
-This repository contains a series of scripts to predict drought at short term scale using Machine Learning models. It contains an implementation of a ConvLSTM and a Graph Neural Network in the WaveNet architecture. The code is currently under development
+It contains an implementation of a ConvLSTM and a Graph Neural Network in the WaveNet architecture. The code is currently under development
 
 ## Contributing
 
