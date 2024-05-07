@@ -1,8 +1,6 @@
 # Predicting droughts at short-term scale
 
-<div align="center">
-    <img src=drought_logo.jpg alt="Project Logo" width="500" height="300">
-</div>
+![Project Logo](drought_logo.jpg)
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
