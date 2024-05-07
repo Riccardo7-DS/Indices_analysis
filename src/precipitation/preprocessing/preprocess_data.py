@@ -3,7 +3,7 @@ from typing import Literal, Union
 import os 
 import xarray as xr
 import numpy as np
-import logging
+from loguru import logger
 
 class PrecipDataPreparation():
     def __init__(self, args:dict,
@@ -27,7 +27,7 @@ class PrecipDataPreparation():
             precp_ds = self._preprocess_array(precp_ds, interpolate=interpolate)
 
             if len(variables) > 1:
-                logging.info(f"Processing ancillary variables {variables}")
+                logger.info(f"Processing ancillary variables {variables}")
                 precp_ds = self._transform_ancillary(precp_ds, era5_data)
             
         self.ndvi_filename = ndvi_data
@@ -55,7 +55,7 @@ class PrecipDataPreparation():
         import os
         import re
         from utils.function_clns import config
-        logging.info(f"Loading local {precp_dataset} precipitation file")
+        logger.info(f"Loading local {precp_dataset} precipitation file")
 
         config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
                           config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], 
@@ -92,11 +92,11 @@ class PrecipDataPreparation():
         self.time_end = config['DEFAULT']['date_end']
         self.time_start = config['DEFAULT']['date_start']
         
-        logging.info("Querying ARCO data from Google Cloud Storage...")
+        logger.info("Querying ARCO data from Google Cloud Storage...")
         input_data = query_arco_era5(variables)
         input_data = input_data.shift(time=1)\
             .sel(time=slice(self.time_start, self.time_end))
-        logging.info("Processing input data...")
+        logger.info("Processing input data...")
         precp_data = self._process_precp_arco(input_data)
         return precp_data, input_data
     
@@ -171,8 +171,9 @@ class PrecipDataPreparation():
             raise ValueError("The provided dataset must be in xarray format")
 
         if interpolate is True:
-            logging.info()
+            logger.info("Interpolating dataset")
             with ProgressBar():
+                dataset = dataset.chunk(dict(time=-1))
                 dataset = dataset.interpolate_na(dim="time", 
                                                  method="nearest")
 
@@ -208,7 +209,7 @@ class PrecipDataPreparation():
                 sub_dataset = dataset.sel(lat=slice(lat_max, idx_lat), 
                                          lon=slice(lon_min, idx_lon))
             except IndexError:
-                logging.error("The dataset {} is out of bounds when using a subset, using original product"\
+                logger.error("The dataset {} is out of bounds when using a subset, using original product"\
                              .format(self.precp_product))
                 self.dim = max(len(sub_dataset["lat"]),
                                len(sub_dataset["lon"]))
@@ -259,12 +260,12 @@ class PrecipDataPreparation():
         test_ds = process_era5_precp(test_ds, var="total_precipitation")
 
         ### resample to daily
-        logging.info("Starting resampling from hourly to daily...")
+        logger.info("Starting resampling from hourly to daily...")
         precp_ds = test_ds["total_precipitation"].resample(time="1D")\
             .sum()
 
         if save is True:
-            logging.info("Saving dataset locally...")
+            logger.info("Saving dataset locally...")
             compress_kwargs = {"total_precipitation": 
                                {'zlib': True, 'complevel': 4}} # You can adjust 'complevel' based on your needs
             precp_ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"], 

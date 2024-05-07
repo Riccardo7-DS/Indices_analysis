@@ -1,32 +1,17 @@
-from utils.function_clns import load_config, cut_file, subsetting_pipeline
-from utils.xarray_functions import downsample, clean_ndvi, compute_ndvi, clean_outliers
-from vegetation.preprocessing.seviri_cleaning import extract_apply_cloudmask, plot_cloud_correction, compute_difference, compute_correlation
 import xarray as xr 
 import pandas as pd
-import yaml
-from datetime import datetime, timedelta
-import shutil
-#from shapely.geometry import Polygon, mapping
-#import geopandas as gpd
+from datetime import datetime
 import matplotlib.pyplot as plt
-from glob import glob
-import os
 #import datetime as datetime
 import time
 import numpy as np
 from matplotlib import gridspec
 import matplotlib.patches as mpatches
 from matplotlib import gridspec
-import xarray as xr
 import os
-import pandas as pd
 import calendar
-import matplotlib.pyplot as plt
-import numpy as np
 from typing import Union
 from tqdm.auto import tqdm
-import time
-from timeit import default_timer as timer
 
 def get_dates(gap_year=False):
     if gap_year==False:

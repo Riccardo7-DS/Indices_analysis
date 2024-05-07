@@ -9,6 +9,36 @@ import logging
 General utility functions
 """
 
+def init_logging(verbose=False, log_file=None):
+    import os
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(message)s')
+    
+    if verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+
+    # Start up console handler
+    console = logging.StreamHandler()
+    console.setLevel(level)
+    console.setFormatter(formatter)
+
+    logger.addHandler(console)
+    
+    # Log to a file if the option is supplied
+    if log_file:
+        log_dir = os.path.dirname(log_file)
+        if len(log_dir) > 0 and not os.path.exists(log_dir):
+            os.makedirs(os.path.dirname(log_file))
+        
+        logger = logging.getLogger()
+        fileout = logging.FileHandler(log_file, "w")
+        fileout.setLevel(logging.DEBUG)
+        fileout.setFormatter(formatter)
+        logger.addHandler(fileout)
+
 def hoa_bbox():
     minx = -5.48369565
     miny = 32.01630435
@@ -41,11 +71,8 @@ def clip_file(dataset:Union[xr.DataArray, xr.Dataset],
     from shapely.geometry import Polygon, mapping, box
     import geopandas as gpd
     epsg_coords = "EPSG:4326"
-    if isinstance(dataset, xr.Dataset):
-        for var in dataset.data_vars:
-            dataset[var] = prepare(dataset[var])
-    elif isinstance(dataset, xr.DataArray):
-        dataset = prepare(dataset)
+    dataset = prepare(dataset)
+    
     if gdf is not None:
         clipped = dataset.rio.clip(gdf.geometry.apply(mapping), 
                              gdf.crs, 

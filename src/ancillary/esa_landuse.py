@@ -26,6 +26,13 @@ def get_description(df:pd.DataFrame, column:str):
     df['description'] = df[column].replace(values_land_cover.keys(),values_land_cover.values())
     return df
 
+def prepare_covermask(dataset:xr.Dataset):
+        cover_ds = create_copernicus_covermap(dataset)
+        cover_ds = subsetting_pipeline(cover_ds)
+        cover_ds["lat"] = dataset["lat"]
+        cover_ds["lon"] = dataset["lon"]
+        return get_level_1(cover_ds, name="band_data").isel(band=0)
+
 def create_copernicus_covermap(dataset:xr.DataArray, 
                                crop_strategy:Literal["shapefile", "geometry","dataset", None]="shapefile",
                                export:bool=True):

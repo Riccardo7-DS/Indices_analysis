@@ -364,6 +364,11 @@ def remove_ndvi_outliers(ds:xr.DataArray, impute:bool=False):
 """
 Functions to clean, smooth NDVI
 """
+
+def correct_ndvi_bias(dataset):
+    return 0.015705526 + dataset * 1.256689
+
+
 class NDVIPreprocess():
     def __init__(self, data)->None:
         from utils.function_clns import prepare, subsetting_pipeline
