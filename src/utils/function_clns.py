@@ -1,19 +1,43 @@
 import yaml
 import xarray as xr
-import glob
+import sys
 import numpy as np
 from typing import Union, Literal, Sequence, Optional
 import logging
+import psutil
+logger = logging.getLogger(__name__)
 
 """
 General utility functions
 """
 
+def create_xarray_datarray(var_name:str, data, time, lat, lon):
+    return xr.DataArray(
+                data, 
+                dims   = ['time',"lat","lon"],
+                coords = {'time': time, "lat": lat,"lon": lon},
+                name=var_name)
+
+def display_usage(cpu_usage, mem_usage, bars=50):
+    cpu_percent = (cpu_usage/100)
+    cpu_bar = "" * int(cpu_percent * bars) + "-" * (bars-int(cpu_percent * bars)) 
+
+    mem_percent = (mem_usage/ 100)
+    mem_bar = "" * int(mem_percent * bars) + "-" * (bars-int(mem_percent * bars)) 
+
+    print(f"\rCPU Usage: |{cpu_bar}| {cpu_usage:.2f}% ", end="")
+    print(f"\MEM Usage: |{mem_bar}| {mem_usage:.2f}% ", end="\r")
+
+    
+
 def init_logging(verbose=False, log_file=None):
     import os
+    import logging, sys
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(message)s')
+    formatter = logging.Formatter(
+            "%(asctime)s : %(levelname)s : [%(filename)s:%(lineno)s - %(funcName)s()] : %(message)s",
+            "%Y-%m-%d %H:%M:%S")
     
     if verbose:
         level = logging.DEBUG
@@ -21,7 +45,8 @@ def init_logging(verbose=False, log_file=None):
         level = logging.INFO
 
     # Start up console handler
-    console = logging.StreamHandler()
+    #Create a stream-based handler that writes the log entries    #into the standard output stream
+    console = logging.StreamHandler(sys.stdout)
     console.setLevel(level)
     console.setFormatter(formatter)
 
@@ -35,16 +60,29 @@ def init_logging(verbose=False, log_file=None):
         
         logger = logging.getLogger()
         fileout = logging.FileHandler(log_file, "w")
-        fileout.setLevel(logging.DEBUG)
+        fileout.setLevel(level)
         fileout.setFormatter(formatter)
         logger.addHandler(fileout)
 
-def hoa_bbox():
+#Creating a handler
+def handle_unhandled_exception(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+                #Will call default excepthook
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+        #Create a critical level log message with info from the except hook.
+    logger.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+
+def hoa_bbox(invert:bool = False):
     minx = -5.48369565
     miny = 32.01630435
     maxx = 15.48369565
     maxy = 51.48369565
-    return [minx, miny, maxx, maxy]
+    if invert is False:
+        return [miny, minx, maxy, maxx]
+    else:
+        return [minx, miny, maxx, maxy]
 
 def load_config(CONFIG_PATH:str):
     with open(CONFIG_PATH) as file:
@@ -65,8 +103,11 @@ def prepare(dataset:Union[xr.DataArray, xr.Dataset]):
     dataset.rio.set_spatial_dims(x_dim='lon', y_dim='lat', inplace=True)
     return dataset
 
+def roll_longitude(ds):
+    return ds.assign_coords(lon=(((ds.lon + 180) % 360) - 180)).sortby('lon')
+
 def clip_file(dataset:Union[xr.DataArray, xr.Dataset], 
-             gdf=None):
+             gdf=None, invert=False):
     
     from shapely.geometry import Polygon, mapping, box
     import geopandas as gpd
@@ -76,11 +117,12 @@ def clip_file(dataset:Union[xr.DataArray, xr.Dataset],
     if gdf is not None:
         clipped = dataset.rio.clip(gdf.geometry.apply(mapping), 
                              gdf.crs, 
-                             drop=True)
+                             drop=True,
+                             invert=invert)
     elif gdf is None:
         logging.info(f"Using the defeault bbox for the Horn of Africa"
                      f"to clip the images")
-        bbox = hoa_bbox()
+        bbox = hoa_bbox(invert=invert)
         geodf = gpd.GeoDataFrame(
                 geometry=[box(bbox[0], bbox[1], bbox[2], bbox[3])],
                 crs=epsg_coords)
@@ -88,7 +130,7 @@ def clip_file(dataset:Union[xr.DataArray, xr.Dataset],
         clipped = dataset.rio.clip(geodf.geometry.values, 
                                        geodf.crs,
                                        drop=True,
-                                       invert=True)
+                                       invert=invert)
     return clipped
 
 def subsetting_pipeline(dataset:Union[xr.DataArray, xr.Dataset], 
@@ -315,13 +357,6 @@ def unpack_all_in_dir(_dir, extension = ".zip"):
             os.remove(file_name)  # delete zipped file
         elif os.path.isdir(abs_path):
             unpack_all_in_dir(abs_path)  # recurse this function with inner folder
-
-def reproject_odc(ds_1, ds_2):
-    from odc.algo import xr_reproject
-    if ds_2.geobox.crs.geographic:
-        ds_1 = ds_1.rename({"lon": "longitude", "lat": "latitude"})
-    ds_repr = xr_reproject(ds_1, ds_2.geobox, resampling="bilinear")
-    return ds_repr.rename({"longitude": "lon", "latitude": "lat"})
 
 def crop_get_spi(ds:xr.DataArray, thresh:int=-2):
     null_var = xr.where(ds.notnull(), 1,np.NaN)

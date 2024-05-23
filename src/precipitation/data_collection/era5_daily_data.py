@@ -2,8 +2,7 @@ import os
 from utils.function_clns import load_config
 import xarray as xr
 import numpy as np
-from loguru import logger
-
+from typing import Union, Literal
 
 def data_collection(config_path:str, dest_path:str, years:list):
     import cdsapi
@@ -77,25 +76,32 @@ def process_era5_precp(ds: xr.Dataset, var:str = "tp"):
 Functions to collect ERA5 ARCO data with google cloud storage
 """
 
-def query_arco_era5(vars:list=None, subset:bool=False, 
-                    chunks:dict={'time': -1, "latitude": "100MB", "longitude":"100MB"}):
-    import fsspec
-    fs = fsspec.filesystem('gs')
+def query_arco_era5(vars:list,
+                    date_min:str,
+                    date_max:str,    
+                    library_open:Literal["zarr", "xarray"] = "zarr",
+                    chunks:dict={'time': -1, "latitude": "auto", "longitude":"auto"}):
     import xarray as xr
-    import os
-    from loguru import logger
+    import gcsfs
     from utils.function_clns import subsetting_pipeline
+    from utils.zarr import handle_gcs_zarr, load_zarr_arrays
 
-    ar_full_37_1h = xr.open_zarr(
-        'gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3/',
-         chunks=chunks,
-         consolidated=True
-    ).rename({"latitude":"lat", "longitude":"lon"})
-    if subset is True:
-        test_ds = subsetting_pipeline(ar_full_37_1h)
+    url = 'gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3/'
 
-    else:
-        test_ds = ar_full_37_1h
+    if library_open== "zarr":
+        from utils.function_clns import hoa_bbox
+        bbox = hoa_bbox()
+        xr_ds = xr.open_zarr(url, chunks=chunks, consolidated=True)
+        store = handle_gcs_zarr(url)
+        test_ds = load_zarr_arrays(store, vars, date_min, date_max, bbox, xr_ds)
+
+    elif library_open == "xarray":
+        ds = xr.open_zarr(
+            url,
+            chunks=chunks,
+            consolidated=True
+        )
+        test_ds = ds.rename({"latitude":"lat", "longitude":"lon"})
     
     if vars is not None:
         return test_ds[vars]
