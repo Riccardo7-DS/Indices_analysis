@@ -141,9 +141,12 @@ class PrecipDataPreparation():
     def _load_arco_precipitation(self, variables:Union[list, str]):
         from ancillary.hydro_data import query_arco_era5
         from datetime import datetime, timedelta
+        from utils.function_clns import hoa_bbox
         
         logger.debug(f"Querying ARCO data from Google Cloud Storage"\
                      f" for dates {self.time_start} to {self.time_end}")
+        
+        bbox = hoa_bbox()
         
         input_data = query_arco_era5(variables, 
                                      date_min=self.time_start,

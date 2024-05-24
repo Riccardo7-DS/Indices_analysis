@@ -78,22 +78,20 @@ Functions to collect ERA5 ARCO data with google cloud storage
 
 def query_arco_era5(vars:list,
                     date_min:str,
-                    date_max:str,    
+                    date_max:str,
+                    bounding_box:list,   
                     library_open:Literal["zarr", "xarray"] = "zarr",
                     chunks:dict={'time': -1, "latitude": "auto", "longitude":"auto"}):
     import xarray as xr
     import gcsfs
-    from utils.function_clns import subsetting_pipeline
     from utils.zarr import handle_gcs_zarr, load_zarr_arrays
 
     url = 'gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3/'
 
     if library_open== "zarr":
-        from utils.function_clns import hoa_bbox
-        bbox = hoa_bbox()
         xr_ds = xr.open_zarr(url, chunks=chunks, consolidated=True)
         store = handle_gcs_zarr(url)
-        test_ds = load_zarr_arrays(store, vars, date_min, date_max, bbox, xr_ds)
+        test_ds = load_zarr_arrays(store, vars, date_min, date_max, bounding_box, xr_ds)
 
     elif library_open == "xarray":
         ds = xr.open_zarr(

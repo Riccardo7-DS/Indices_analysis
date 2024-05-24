@@ -1,5 +1,4 @@
 import xarray as xr
-from loguru import logger
 from precipitation.data_collection.era5_daily_data import query_arco_era5, process_era5_precp
 import os 
 
