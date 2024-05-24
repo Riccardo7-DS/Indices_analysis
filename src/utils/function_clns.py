@@ -460,12 +460,12 @@ def CNN_split(data:np.array,
 
     print(f"{test_split:.0%} of the training data will be used as independent test")
     ###splitting test and train
-    n_samples = data.shape[-1]
+    n_samples = data.shape[0]
     train_samples = int(round(split_percentage*n_samples, 0))
     test_samples = int(round(test_split*n_samples, 0))
     val_samples = n_samples - (train_samples + test_samples)
 
-    data = np.expand_dims(data.transpose(2,0,1), 0)
+    data = data.transpose(1,0,2,3)
     target = np.expand_dims(target.transpose(2,0,1), 0)
 
     train_data = data[:,:train_samples,:,:]

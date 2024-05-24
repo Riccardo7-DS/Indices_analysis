@@ -16,7 +16,6 @@ from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 import pickle
 import matplotlib.pyplot as plt
-from loguru import logger
 import sys
 
 def generate_adj_dist(df, normalized_k=0.05,):
@@ -35,18 +34,17 @@ def create_paths(args:dict, spi:bool=False):
 
     from utils.function_clns import config
     ### Create all the paths
-    if args.pipeline is "GWNET":
+    if args.model == "GWNET":
         output_dir = os.path.join(ROOT_DIR,  "output/gwnet")
 
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
-
     else: 
         output_dir = os.path.join(ROOT_DIR,  f"output/convlstm/days_{args.step_length}")
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-    if args.pipeline is "GWNET":
+    if args.model == "GWNET":
         ### adjacency matrix
         adj_path = os.path.join(output_dir,  "adjacency_matrix")
         if not os.path.exists(adj_path):

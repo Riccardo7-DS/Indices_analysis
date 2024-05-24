@@ -45,7 +45,7 @@ class CustomConvLSTMDataset(Dataset):
         self.output_channels = config.output_channels
         self.num_timesteps = data.shape[1]
         self.learning_window = config.num_frames_input
-        self.num_samples = config.num_samples
+        self.num_channels = config.num_samples
         self.output_window = config.num_frames_output
         self.num_frames = config.num_frames_input + config.num_frames_output
         self.save_path = config.output_dir
@@ -61,7 +61,7 @@ class CustomConvLSTMDataset(Dataset):
 
         train_data_processed = np.zeros(
             (self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
-                self.num_samples,
+                self.num_channels,
                 self.learning_window, *self.input_size), 
                 dtype=np.float32
             )
@@ -75,7 +75,7 @@ class CustomConvLSTMDataset(Dataset):
 
         current_idx = 0
         
-        if self.num_samples == 1:
+        if self.num_channels == 1:
             while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
                 train_data_processed[current_idx, 0, :, :, :] = \
                     self.data[0, current_idx : current_idx + self.learning_window, :, :]
@@ -86,11 +86,11 @@ class CustomConvLSTMDataset(Dataset):
                 
                 current_idx +=1
         
-        elif self.num_samples > 1:
+        elif self.num_channels > 1:
             while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
-                for chnl in range(0, self.num_samples):
+                for chnl in range(0, self.num_channels):
                     train_data_processed[current_idx, chnl, :, :, :] = \
-                        self.data[0, chnl, current_idx : current_idx + self.learning_window, :, :]
+                        self.data[chnl, current_idx : current_idx + self.learning_window, :, :]
                 
                 label_data_processed[current_idx, 0, :, :, :] = \
                     self.labels[0, current_idx + self.learning_window + 
@@ -112,7 +112,7 @@ class CustomConvLSTMDataset(Dataset):
 
     def _save_files(self, data, labels):
         import pickle
-        for idx in len(data.shape[0]):
+        for idx in range(data.shape[0]):
             img_x = data[idx, :, :, :, :] 
             img_y = labels[idx, :, :, :, :]
             data_dict = {"data": img_x, "label": img_y}

@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from rasterio.enums import Resampling
 from typing import Union, Literal
+import logging 
+logger = logging.getLogger(__name__)
 
 values_land_descr = {0	:'Unknown', 20:	'Shrubland',30:'Herbaceous vegetation',40:	'Cropland',
                         50:	'Built-up',60:	'Bare sparse vegetation',70:'Snow and ice', 
@@ -44,7 +46,7 @@ def create_copernicus_covermap(dataset:xr.DataArray,
     import logging
 
     def generate_new_data(dataset, crop_strategy:str):
-        print("Generating new landcover dataset")
+        logger.info("Generating new landcover dataset")
 
         ee.Authenticate()
         ee.Initialize()
@@ -95,9 +97,9 @@ def create_copernicus_covermap(dataset:xr.DataArray,
         ds = prepare(xr.open_dataset(filename, 
                                      engine="rasterio"))
 
-        if ds.rio.resolution()[0] == dataset.rio.resolution()[0] and \
+        if ds.rio.resolution()[0] == prepare(dataset).rio.resolution()[0] and \
             len(ds["lat"])==len(dataset["lat"]) and len(ds["lon"])==len(dataset["lon"]):
-            print("Loading extisting landcover dataset")
+            logger.info("Loading extisting landcover dataset")
             return ds
         else:
             ds = generate_new_data(dataset, crop_strategy)
@@ -243,7 +245,7 @@ def get_cover_dataset(datarray:xr.DataArray, img_path:str,
         ds_cover = get_level_1(ds_cover)
     ds_cover = subsetting_pipeline(ds_cover)
     if resample ==True:
-        print(f"Starting reprojection to destionation resolution of {ds_cover.rio.resolution()}")
+        logger.info(f"Starting reprojection to destionation resolution of {ds_cover.rio.resolution()}")
         ds = datarray.rio.reproject_match(ds_cover["Band1"],
                     resampling = Resampling.mode).rename({"x":"lon","y":"lat"})
         ds = ds.to_dataset().assign(Band1=ds_cover["Band1"])

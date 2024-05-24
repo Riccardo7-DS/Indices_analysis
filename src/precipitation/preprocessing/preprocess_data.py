@@ -5,48 +5,58 @@ import xarray as xr
 import numpy as np
 import sys
 from dask.diagnostics import ProgressBar
-import matplotlib.pyplot as plt
 import logging
-from tqdm.dask import TqdmCallback
+import pickle
+from definitions import ROOT_DIR
 logger = logging.getLogger(__name__)
 sys.excepthook = handle_unhandled_exception
 
 class PrecipDataPreparation():
-    def __init__(self, args:dict,
+    def __init__(self, 
+                 args:dict,
                  variables:list,
                  precipitation_data:str="ERA5", 
                  ndvi_data:str="seviri_full_image_smoothed.zarr",
-                 model:str = Literal["GWNET", "CONVLSTM"],
                  load_local_precp:bool = False,
                  interpolate:bool = False) -> None:
         
         cb = ProgressBar().register()
         self.basepath = config["DEFAULT"]["basepath"]
-
-        self.model = model
+        self.time_end = config['DEFAULT']['date_end']
+        self.time_start = config['DEFAULT']['date_start']
+        self.model = args.model
         self.precp_product = precipitation_data
         self.ndvi_filename = ndvi_data
 
-        self.process_input_vars(variables, load_local_precp, 
-                                interpolate=False, save=True)
+        precp_ds = self.process_input_vars(variables, 
+                                load_local_precp, 
+                                interpolate=False, 
+                                save=True)
         
         ndvi_ds = self._load_processed_ndvi(self.basepath, 
                                             self.ndvi_filename)
         ndvi_ds = self._preprocess_array(ndvi_ds)
-        ndvi_ds = self._reproject_odc(ndvi_ds, precp_ds)
+        ndvi_ds = self._reproject_odc(ndvi_ds, precp_ds) 
         
         if args.normalize is True:
-            ndvi_ds, self.ndvi_scaler, precp_ds, _ = \
-                self._normalize_datasets(precp_ds, ndvi_ds)
+            datasets, scalers = \
+                self._normalize_datasets(ndvi_ds, precp_ds)
+            ndvi_ds, precp_ds, self.ndvi_scaler = datasets[0], datasets[1], scalers[0]
+            dump_obj = pickle.dumps(self.ndvi_scaler, protocol=pickle.HIGHEST_PROTOCOL)
+            with open(os.path.join(ROOT_DIR,"../data/ndvi_scaler.pickle"), "wb") as handle:
+                handle.write(dump_obj)
             
         self.precp_ds = self._crop_area_for_dl(precp_ds)
         self.ndvi_ds = self._crop_area_for_dl(ndvi_ds)
 
-        if self.model == "GWNET":
+        if args.model == "GWNET":
             precp_ds = self.precp_ds.where(self.ndvi_ds.notnull())
             self.hydro_data = precp_ds[[var for var in precp_ds.data_vars][0]]
         else:
             self.hydro_data = self.precp_ds
+
+        self.hydro_data = self._impute_values(self.hydro_data, -99)
+        self.ndvi_ds = self._impute_values(self.ndvi_ds, -99)
 
     def _estimate_gigs(self, dataset:xr.Dataset, description:str):
         logger.info("{d} dataset has {g} GiB".format(d=description, 
@@ -60,34 +70,35 @@ class PrecipDataPreparation():
                                                filename=self.precp_filename, 
                                                interpolate=interpolate)
         else:
-            precp_ds, era5_data = self._load_arco_precipitation(variables)
-            precp_ds = self._preprocess_array(precp_ds, 
-                                              interpolate=interpolate)
-            self._estimate_gigs(precp_ds, "Precipitation only")
-            logging.info(precp_ds)
+            dest_path = os.path.join(self.basepath, "hydro_vars.zarr")
 
-            if len(variables) > 1:
-                logger.debug(f"Processing ancillary variables {variables}")
-                precp_ds = self._transform_ancillary(precp_ds, era5_data, interpolate=False)
-                self._estimate_gigs(precp_ds, "Hydro variables")
+            if os.stat(dest_path).st_size>0:
+                logger.debug("Found zarr file in destination path. Proceeding with loading...")
+                precp_ds = xr.open_zarr(dest_path)
+            else:
+                precp_ds, era5_data = self._load_arco_precipitation(variables)
+                precp_ds = self._preprocess_array(precp_ds, 
+                                                  interpolate=interpolate)
+                self._estimate_gigs(precp_ds, "Precipitation only")
                 logging.info(precp_ds)
 
-        # import matplotlib.pyplot as plt
-        # precp_ds = precp_ds.load()
-        # Create a subplot with 1 row and 2 columns
-        # fig, axes = plt.subplots(ncols=2, figsize=(15, 7))
-        # Plot the first dataset on the first subplot
-        # precp_ds["sm_1"].isel(time=0).plot(ax=axes[0]) #
-        # plt.show()
-        # Plot the second dataset on the second subplot
-        # precp_ds["total_precipitation"].isel(time=0).plot(ax=axes[1])
+                if len(variables) > 1:
+                    logger.debug(f"Processing ancillary variables {variables}")
+                    precp_ds = self._transform_ancillary(precp_ds, era5_data, interpolate=False)
+                    self._estimate_gigs(precp_ds, "Hydro variables")
+                    logging.info(precp_ds)
 
-        if save is True:
-            logger.debug("Starting exporting processed data to zarr...")
-            out = precp_ds.to_zarr(os.path.join("../data/", 
-                                          "hydro_vars.zarr"), mode="w", compute=False)
-            res = out.compute()
-            logger.debug("Successfully saved preprocessed variables")
+                if save is True:
+                    logger.debug("Starting exporting processed data to zarr...")
+                    out = precp_ds.to_zarr(dest_path, mode="w", compute=False)
+                    res = out.compute()
+                    logger.debug("Successfully saved preprocessed variables")
+
+        return precp_ds
+    
+
+    def _impute_values(self, dataset:Union[xr.Dataset, xr.DataArray], value:float):
+        return dataset.fillna(value)
 
     def _load_local_precipitation(self, precp_dataset:str):
         import os
@@ -130,9 +141,6 @@ class PrecipDataPreparation():
     def _load_arco_precipitation(self, variables:Union[list, str]):
         from ancillary.hydro_data import query_arco_era5
         from datetime import datetime, timedelta
-
-        self.time_end = config['DEFAULT']['date_end']
-        self.time_start = config['DEFAULT']['date_start']
         
         logger.debug(f"Querying ARCO data from Google Cloud Storage"\
                      f" for dates {self.time_start} to {self.time_end}")
@@ -259,21 +267,30 @@ class PrecipDataPreparation():
         return dataset
 
 
-    def _normalize_datasets(self, *args):
+    def _normalize_datasets(self, *datasets):
         from analysis.deep_learning.GWNET.pipeline_gwnet import StandardScaler
 
-        if isinstance(args, xr.Dataset):
-            for var in dataset.data_vars:
-                scaler = StandardScaler(mean=np.nanmean(args[var]), 
-                                           std=np.nanstd(args[var]))
-                args[var] = scaler.transform(args)
+        normalized_datasets = []
+        scalers = []
 
-        elif isinstance(args, xr.DataArray):
-            scaler = StandardScaler(mean=np.nanmean(args), 
-                                               std=np.nanstd(args))
-            dataset = scaler.transform(args)
-        
-        return dataset, scaler
+        for dataset in datasets:
+            if isinstance(dataset, xr.Dataset):
+                dataset_copy = dataset.copy()  # Make a copy to avoid modifying the original dataset
+                for var in dataset_copy.data_vars:
+                    scaler = StandardScaler(mean=np.nanmean(dataset_copy[var]), 
+                                            std=np.nanstd(dataset_copy[var]))
+                    dataset_copy[var] = scaler.transform(dataset_copy[var])
+                normalized_datasets.append(dataset_copy)
+                scalers.append(scaler)
+
+            elif isinstance(dataset, xr.DataArray):
+                dataset_copy = dataset.copy()  # Make a copy to avoid modifying the original dataset
+                scaler = StandardScaler(mean=np.nanmean(dataset_copy), 
+                                        std=np.nanstd(dataset_copy))
+                normalized_datasets.append(scaler.transform(dataset_copy))
+                scalers.append(scaler)
+
+        return normalized_datasets, scalers
     
     def _crop_area_for_dl(self, 
                           dataset:Union[xr.DataArray, xr.Dataset]):

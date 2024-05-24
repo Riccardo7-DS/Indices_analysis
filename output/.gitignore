@@ -2,4 +2,5 @@ log/
 model/
 cache/
 checkpoints/
+data_convlstm/
 *.nc
