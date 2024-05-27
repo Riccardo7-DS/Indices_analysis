@@ -3,6 +3,8 @@ from utils.function_clns import load_config
 import xarray as xr
 import numpy as np
 from typing import Union, Literal
+import logging
+logger = logging.getLogger(__name__)
 
 def data_collection(config_path:str, dest_path:str, years:list):
     import cdsapi
@@ -77,9 +79,9 @@ Functions to collect ERA5 ARCO data with google cloud storage
 """
 
 def query_arco_era5(vars:list,
-                    date_min:str,
-                    date_max:str,
-                    bounding_box:list,   
+                    date_min:str=None,
+                    date_max:str=None,
+                    bounding_box:list=None,   
                     library_open:Literal["zarr", "xarray"] = "zarr",
                     chunks:dict={'time': -1, "latitude": "auto", "longitude":"auto"}):
     import xarray as xr
@@ -87,8 +89,12 @@ def query_arco_era5(vars:list,
     from utils.zarr import handle_gcs_zarr, load_zarr_arrays
 
     url = 'gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3/'
-
+    
     if library_open== "zarr":
+        if date_max is None or date_min is None or bounding_box is None:
+            error = ValueError("Please provide bounding box, maximum and minimum dates parameters")
+            logger.error(error)
+            raise error
         xr_ds = xr.open_zarr(url, chunks=chunks, consolidated=True)
         store = handle_gcs_zarr(url)
         test_ds = load_zarr_arrays(store, vars, date_min, date_max, bounding_box, xr_ds)

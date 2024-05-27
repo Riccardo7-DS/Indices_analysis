@@ -72,7 +72,7 @@ class PrecipDataPreparation():
         else:
             dest_path = os.path.join(self.basepath, "hydro_vars.zarr")
 
-            if os.stat(dest_path).st_size>0:
+            if os.path.isfile(dest_path):
                 logger.debug("Found zarr file in destination path. Proceeding with loading...")
                 precp_ds = xr.open_zarr(dest_path)
             else:
@@ -149,6 +149,7 @@ class PrecipDataPreparation():
         bbox = hoa_bbox()
         
         input_data = query_arco_era5(variables, 
+                                     bounding_box=bbox,
                                      date_min=self.time_start,
                                      date_max=(datetime.strptime(self.time_end, "%Y-%m-%d") + \
                                         timedelta(days=1)).strftime("%Y-%m-%d"))
