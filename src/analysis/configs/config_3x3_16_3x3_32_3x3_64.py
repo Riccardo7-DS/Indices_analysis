@@ -26,10 +26,10 @@ class Config:
     valid_batch_size = 2 * train_batch_size
     test_batch_size = 2 * train_batch_size
     data_file = 'datas/train-images-idx3-ubyte.gz'
-    masked_loss = False
+    masked_loss = True
     model_name = "checkpoint_epoch_99"
 
-    num_frames_input = 30
+    num_frames_input = 90
     num_frames_output = 1
     output_channels = 1
 
@@ -44,9 +44,9 @@ class Config:
     cnn_dropout = None
     decoder_3d = False
     epochs = 100
-    patience = 5
+    patience = 10
     learning_rate = 1e-4
-    batch_size= 8
+    batch_size= 16
 
     max_value = 1
 

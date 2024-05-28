@@ -38,25 +38,34 @@ class PrecipDataPreparation():
         ndvi_ds = self._preprocess_array(ndvi_ds)
         ndvi_ds = self._reproject_odc(ndvi_ds, precp_ds) 
         
+        logger.debug("Normalizing datasets...")
         if args.normalize is True:
             datasets, scalers = \
                 self._normalize_datasets(ndvi_ds, precp_ds)
             ndvi_ds, precp_ds, self.ndvi_scaler = datasets[0], datasets[1], scalers[0]
+            
+            logger.debug("Saving NDVI scaler to file...")
             dump_obj = pickle.dumps(self.ndvi_scaler, protocol=pickle.HIGHEST_PROTOCOL)
             with open(os.path.join(ROOT_DIR,"../data/ndvi_scaler.pickle"), "wb") as handle:
                 handle.write(dump_obj)
-            
+        
+        logger.debug("Cropping datasets...")
         self.precp_ds = self._crop_area_for_dl(precp_ds)
         self.ndvi_ds = self._crop_area_for_dl(ndvi_ds)
+
+        logger.debug("Filling null values...")
+        self.precp_ds = self.precp_ds.fillna(-1)
+        self.ndvi_ds = self.ndvi_ds.fillna(-1)
+
+        ### Check nulls
+        self._count_nulls(self.precp_ds)
+        self._count_nulls(self.ndvi_ds)
 
         if args.model == "GWNET":
             precp_ds = self.precp_ds.where(self.ndvi_ds.notnull())
             self.hydro_data = precp_ds[[var for var in precp_ds.data_vars][0]]
         else:
             self.hydro_data = self.precp_ds
-
-        self.hydro_data = self._impute_values(self.hydro_data, -99)
-        self.ndvi_ds = self._impute_values(self.ndvi_ds, -99)
 
     def _estimate_gigs(self, dataset:xr.Dataset, description:str):
         logger.info("{d} dataset has {g} GiB".format(d=description, 
@@ -72,7 +81,7 @@ class PrecipDataPreparation():
         else:
             dest_path = os.path.join(self.basepath, "hydro_vars.zarr")
 
-            if os.path.isfile(dest_path):
+            if os.path.exists(dest_path):
                 logger.debug("Found zarr file in destination path. Proceeding with loading...")
                 precp_ds = xr.open_zarr(dest_path)
             else:
@@ -221,11 +230,19 @@ class PrecipDataPreparation():
         return ds_clean["ndvi"]
 
 
-    def _set_nulls(self, data):
-        import numpy as np
-        data = data.rio.write_nodata(np.nan, inplace=True)
-        data = data.rio.write_nodata("nan", inplace=True)
-        return data
+    def _set_nulls(self, dataset, value=np.nan):
+
+        if isinstance(dataset, xr.Dataset):
+            for var in dataset.data_vars:
+                dataset[var].rio.write_nodata(value, inplace=True)
+        elif isinstance(dataset, xr.DataArray):
+            dataset.rio.write_nodata(value, inplace=True)
+        else:
+            error = ValueError("The provided dataset must be in xarray format")
+            logging.error(error)
+            raise error
+        # data = data.rio.write_nodata("nan", inplace=True)
+        return dataset
     
     def _preprocess_array(self,
                           dataset: Union[xr.DataArray, xr.Dataset] = None,
@@ -237,6 +254,7 @@ class PrecipDataPreparation():
         from utils.function_clns import clip_file
         from dask.diagnostics import ProgressBar
 
+        ############## 1) Open dataset ############## 
         if dataset is None:
             if path is None or filename is None:
                 error = ValueError(f"Either 'dataset' must be provided or both 'path'" 
@@ -245,19 +263,17 @@ class PrecipDataPreparation():
                 raise error
             # Open the precipitation file with xarray
             dataset = xr.open_dataset(os.path.join(path, filename))
-                
+        
+        ############## 2) Clip dataset ##############
+
         dataset = prepare(clip_file(dataset, gdf=None, invert=invert))\
             .sel(time=slice(self.time_start, self.time_end))
         
-        if isinstance(dataset, xr.Dataset):
-            for var in dataset.data_vars:
-                dataset[var] = self._set_nulls(dataset[var])
-        elif isinstance(dataset, xr.DataArray):
-            dataset = self._set_nulls(dataset)
-        else:
-            error = ValueError("The provided dataset must be in xarray format")
-            logging.error(error)
-            raise error
+        ############## 3) Set nulls ##############
+
+        dataset = self._set_nulls(dataset)
+
+        ############## 4) Interpolating ############
 
         if interpolate is True:
             logger.info("Interpolating dataset")
@@ -265,14 +281,30 @@ class PrecipDataPreparation():
                 dataset = dataset.chunk(dict(time=-1))
                 dataset = dataset.interpolate_na(dim="time", 
                                                  method="nearest")
+        ############## 5) Selecting vars ############
 
         if variable is not None:
             dataset = dataset[["time", "lat", "lon", variable]]
         return dataset
 
+    def _count_nulls(self, dataset):
+        def log(dataset, var=None):
+            if var is None:
+                var = dataset.name
+            logger.info("On average at pixel-level, "
+                        "there are {p} nulls for variable {v}"\
+                        .format(p=dataset.isnull().sum(["time"]).mean().values,
+                        v=var))
+
+        if isinstance(dataset, xr.Dataset):
+            for var in dataset.data_vars:
+                if "time" in dataset[var].dims:
+                    log(dataset[var], var)
+        elif isinstance(dataset, xr.DataArray):
+            log(dataset)
 
     def _normalize_datasets(self, *datasets):
-        from analysis.deep_learning.GWNET.pipeline_gwnet import StandardScaler
+        from analysis.deep_learning.GWNET.pipeline_gwnet import StandardNormalizer
 
         normalized_datasets = []
         scalers = []
@@ -281,16 +313,16 @@ class PrecipDataPreparation():
             if isinstance(dataset, xr.Dataset):
                 dataset_copy = dataset.copy()  # Make a copy to avoid modifying the original dataset
                 for var in dataset_copy.data_vars:
-                    scaler = StandardScaler(mean=np.nanmean(dataset_copy[var]), 
-                                            std=np.nanstd(dataset_copy[var]))
+                    scaler = StandardNormalizer(min=np.nanmin(dataset_copy[var]), 
+                                            max=np.nanmax(dataset_copy[var]))
                     dataset_copy[var] = scaler.transform(dataset_copy[var])
                 normalized_datasets.append(dataset_copy)
                 scalers.append(scaler)
 
             elif isinstance(dataset, xr.DataArray):
                 dataset_copy = dataset.copy()  # Make a copy to avoid modifying the original dataset
-                scaler = StandardScaler(mean=np.nanmean(dataset_copy), 
-                                        std=np.nanstd(dataset_copy))
+                scaler = StandardNormalizer(min=np.nanmin(dataset_copy), 
+                                        max=np.nanmax(dataset_copy))
                 normalized_datasets.append(scaler.transform(dataset_copy))
                 scalers.append(scaler)
 
@@ -361,6 +393,9 @@ class PrecipDataPreparation():
         logger.debug("Starting resampling from hourly to daily...")
         precp_ds = test_ds["total_precipitation"].resample(time="1D")\
             .sum()
+        
+        logger.debug("Setting precipitation values inferior than 0 to 0")
+        precp_ds = precp_ds.where(precp_ds>0, 0)
 
         if save is True:
             logger.info("Saving dataset locally...")
@@ -377,12 +412,20 @@ class PrecipDataPreparation():
         temp = ds["2m_temperature"].resample(time='D')
         ds_temp_max = temp.max(dim='time')
         ds_temp_min = temp.min(dim='time')
+
+        logging.debug("Setting nan values for temperature")
+        ds_temp_max = self._set_nulls(ds_temp_max, np.nan)
+        ds_temp_min = self._set_nulls(ds_temp_min, np.nan)
         return ds_temp_min, ds_temp_max
     
     def _process_evapo_arco(self, ds):
         logging.debug("Processing evaporation data")
         evap = ds["evaporation"].resample(time="D").sum()
         pot_evap = ds["potential_evaporation"].resample(time="D").sum()
+
+        logging.debug("Setting nan values for evaporation")
+        evap = self._set_nulls(evap, np.nan)
+        pot_evap = self._set_nulls(pot_evap, np.nan)
         return evap, pot_evap
     
     def _load_soil_moisture(self):
@@ -391,7 +434,7 @@ class PrecipDataPreparation():
         import xarray as xr
         logging.debug("Loading soil moisture data")
 
-        path = os.path.join(config["SOIL_MO"]["path"], "2019/*.nc") #*
+        path = os.path.join(config["SOIL_MO"]["path"], "*/*.nc") #*
         chunks={'time': -1, "latitude": "auto", "longitude":"auto"}
         ds = xr.open_mfdataset(path, chunks=chunks)
         # ds_ = subsetting_pipeline(prepare(ds).
@@ -411,6 +454,9 @@ class PrecipDataPreparation():
         ds_adjusted = prepare(self._adjust_sm_coords(ds))
         ds_cropped = self._preprocess_array(ds_adjusted)
         ds_reprojected = self._reproject_odc(ds_cropped, target_ds)
+
+        logging.debug("Setting nan values for soil moisture")
+        ds_reprojected = self._set_nulls(ds_reprojected, np.nan)
         
         logger.info(f"The cropped soil moisture dataset has {ds_reprojected.sizes}")
         return ds_reprojected

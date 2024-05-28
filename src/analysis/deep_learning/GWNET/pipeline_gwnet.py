@@ -17,6 +17,8 @@ from geopy.distance import geodesic
 import pickle
 import matplotlib.pyplot as plt
 import sys
+import logging
+logger = logging.getLogger(__name__)
 
 def generate_adj_dist(df, normalized_k=0.05,):
     coord = df[['lat', 'lon']].values
@@ -326,6 +328,22 @@ class StandardScaler():
 
     def inverse_transform(self, data):
         return (data * self.std) + self.mean
+    
+
+class StandardNormalizer():
+    """
+    Standard the input
+    """
+    def __init__(self, min, max):
+        self.min = min
+        self.max = max
+
+    def transform(self, data):
+        norm_data = (data - self.min) / (self.max - self.min)
+        return norm_data
+
+    def inverse_transform(self, norm_data):
+        return (norm_data * (self.max - self.min)) + self.min
 
 def load_dataset(dataset_dir, batch_size, valid_batch_size= None, test_batch_size=None):
     data = {}

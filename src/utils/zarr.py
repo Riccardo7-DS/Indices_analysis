@@ -61,14 +61,15 @@ def load_zarr_arrays(store:zarr.hierarchy.Group,
     lon = store["longitude"][:]
     time = store["time"][:]
 
-    lat_condition = np.where(((lat>bounding_box[1]) & (lat<bounding_box[3])),True, False)
-    lon_condition = np.where(((lon>bounding_box[0]) & (lon<bounding_box[2])),True, False)
+    lat_condition = np.where(((lat>=bounding_box[1]) & (lat<=bounding_box[3])),True, False)
+    lon_condition = np.where(((lon>=bounding_box[0]) & (lon<=bounding_box[2])),True, False)
 
     if ds is not None:
         logger.debug("Using xarray dataset to get maximum and minimum time strings")
         file_time_min = ds["time"].min()
         file_time_max = ds["time"].max()
         time_vector = pd.date_range(file_time_min.values, 
+                                    
                                     file_time_max.values, 
                                     freq="1h")
         time_condition = np.where((time_vector>=pd.to_datetime(min_time))

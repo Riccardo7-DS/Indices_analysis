@@ -39,7 +39,7 @@ distributed = "2024.2.1"
 modape = { git = "https://github.com/Riccardo7-DS/modape"}
 xee = "^0.0.11"
 cartopy = "^0.22.0"
-odc-geo = "^0.4.3"
+odc-geo = "^0.4.5"
 cfgrib = "^0.9.10.4"
 
 

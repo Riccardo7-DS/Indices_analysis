@@ -6,16 +6,19 @@ from typing import Union, Literal
 import logging
 logger = logging.getLogger(__name__)
 
-def data_collection(config_path:str, dest_path:str, years:list):
+def data_collection(dest_path:str=None, years:list=None):
     import cdsapi
+    from tqdm.auto import tqdm
 
-    config = load_config(config_path)
+    from utils.function_clns import config
     cdo_key = config["CDO"]["key"]
     c = cdsapi.Client(key = cdo_key ) #Replace UID:ApiKey with you UID and Api Key
-    years = list(range(1979, 2021))
-    dest_path = os.path.join(config["SPI"]["ERA5"]["path"], "ERA5_daily")
+    if years is None:
+        years = list(range(2005, 2023))
+    if dest_path is None:
+        dest_path = os.path.join(config["SPI"]["ERA5"]["path"], "ERA5_daily")
 
-    for year in years:
+    for year in tqdm(years):
         c.retrieve(
         'reanalysis-era5-land',
         {
@@ -46,7 +49,8 @@ def data_collection(config_path:str, dest_path:str, years:list):
                 '00:00',
             ],
             'area': [
-                -5, 15, 32.7, 51.5, # Bounding box for Horn of Africa
+                -17.48122, 50.360668,-34.463232, 25.422785,
+                #-5, 15, 32.7, 51.5, # Bounding box for Horn of Africa
             ],
             'format': 'netcdf',
         },

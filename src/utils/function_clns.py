@@ -121,7 +121,7 @@ def clip_file(dataset:Union[xr.DataArray, xr.Dataset],
                              invert=invert)
     elif gdf is None:
         logging.info(f"Using the defeault bbox for the Horn of Africa"
-                     f"to clip the images")
+                     f" to clip the images")
         bbox = hoa_bbox(invert=invert)
         geodf = gpd.GeoDataFrame(
                 geometry=[box(bbox[0], bbox[1], bbox[2], bbox[3])],
@@ -533,6 +533,14 @@ def prepare_datarray(datarray:xr.DataArray,
     
     return datarray.transpose("time","lat","lon")
 
+def drop_extra_vars(dataset):
+    vars = ["crs", "spatial_ref"]
+    if isinstance(dataset, xr.Dataset):
+        for var in vars:
+            if var in dataset.data_vars:
+                dataset = dataset.drop_vars(var)
+    return dataset
+
 def interpolate_prepare(input_data:Union[xr.Dataset, xr.DataArray], 
                         target_data:xr.DataArray, 
                         interpolate:bool=True,
@@ -546,15 +554,18 @@ def interpolate_prepare(input_data:Union[xr.Dataset, xr.DataArray],
         input_data = input_data.interpolate_na(dim="time", method="nearest")
         target_data = target_data.interpolate_na(dim="time", method="nearest")
 
+    input_data = drop_extra_vars(input_data)
+
     if isinstance(input_data, xr.Dataset):
             
         shape = (len(input_data['time']), len(input_data.data_vars), 
                  len(input_data['lat']), len(input_data['lon']))
         
         result_array = np.empty(shape)
-
+        logger.debug("Loading variables to unique array...")
         # Populate the numpy array
         for i, variable in enumerate(input_data.data_vars):
+            logger.info(f"Channel {i}: {input_data[variable].name}")
             result_array[:, i, :, :] = input_data[variable]
 
     elif isinstance(input_data, xr.DataArray):
