@@ -7,6 +7,7 @@ import sys
 from dask.diagnostics import ProgressBar
 import logging
 import pickle
+from datetime import timedelta
 from definitions import ROOT_DIR
 logger = logging.getLogger(__name__)
 sys.excepthook = handle_unhandled_exception
@@ -429,16 +430,27 @@ class PrecipDataPreparation():
         return evap, pot_evap
     
     def _load_soil_moisture(self):
-        from utils.function_clns import config, subsetting_pipeline, prepare
+        from utils.function_clns import config, prepare
         import os
         import xarray as xr
+        import pandas as pd
+        import glob
+        from datetime import datetime
         logging.debug("Loading soil moisture data")
 
-        path = os.path.join(config["SOIL_MO"]["path"], "*/*.nc") #*
+        base_path = config["SOIL_MO"]["path"]
+        years = range(datetime.strptime(config["DEFAULT"]["date_start"],"%Y-%m-%d").year, 
+                      datetime.strptime(config["DEFAULT"]["date_end"],"%Y-%m-%d").year +1)
+
         chunks={'time': -1, "latitude": "auto", "longitude":"auto"}
-        ds = xr.open_mfdataset(path, chunks=chunks)
-        # ds_ = subsetting_pipeline(prepare(ds).
-        #                           drop_dims(["depth", "bnds"]))
+
+        # Generate paths
+        paths = []
+        for year in years:
+            year_path = os.path.join(base_path, f"{year}", "*.nc")
+            paths.extend(glob.glob(year_path))  # Collect all matching files for each year
+
+        ds = xr.open_mfdataset(paths, chunks=chunks)
         return prepare(ds).drop_dims(["depth", "bnds"])
     
     def _process_soil_moisture(self, target_ds):
@@ -460,3 +472,32 @@ class PrecipDataPreparation():
         
         logger.info(f"The cropped soil moisture dataset has {ds_reprojected.sizes}")
         return ds_reprojected
+
+
+def shift_time(ds:xr.Dataset, 
+               time_shift:Union[None, timedelta]=None, 
+               add_last_day:bool=False):
+    import pandas as pd
+    from datetime import timedelta
+
+    if time_shift is None:
+        time_shift = timedelta(days=1)
+        
+    start_date = pd.to_datetime(ds["time"].min().values) - time_shift
+    end_date = pd.to_datetime(ds["time"].max().values) - time_shift
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+    ds["time"] = date_range
+
+    if add_last_day is True:
+        # Step 1: Select the last time step
+        last_time_step = ds.isel(time=-1)
+        # Step 2: Create a new time coordinate
+        # Assuming the time coordinate is a datetime64 type, and adding one day to the last time step
+        new_time = pd.to_datetime(ds.time.values[-1]) + pd.Timedelta(days=1)
+        # Step 3: Create a new DataArray with the new time step
+        new_data = last_time_step.expand_dims(time=[new_time])
+        # Step 4: Concatenate the new DataArray to the original Dataset along the time dimension
+        return xr.concat([ds, new_data], dim='time')
+
+    else:
+        return ds

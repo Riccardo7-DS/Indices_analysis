@@ -1,12 +1,11 @@
 from analysis.deep_learning.dataset import MyDataset
-from utils.function_clns import config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays, crop_image_right
+from utils.function_clns import config, prepare, get_lat_lon_window, check_xarray_dataset, check_timeformat_arrays
 import xarray as xr
 import os
 import numpy as np
 from scipy.sparse import linalg
 
 import scipy.sparse as sp
-from analysis.deep_learning.GWNET.gwnet import gwnet
 import torch
 import time
 import argparse
@@ -16,7 +15,6 @@ from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 import pickle
 import matplotlib.pyplot as plt
-import sys
 import logging
 logger = logging.getLogger(__name__)
 
@@ -145,7 +143,7 @@ def data_preparation(args:dict,
     else:
         ndvi_scaler = None
         
-    if args.pipeline == "GWNET":
+    if args.model == "GWNET":
         print("Selecting data for GCNN WaveNet")
         try:
             idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, config['GWNET']['dim'])
@@ -588,7 +586,11 @@ class MetricsRecorder:
 
 
 class trainer():
+    
+
     def __init__(self, scaler, in_dim, seq_length, num_nodes, nhid , dropout, lrate, wdecay, device, supports, gcn_bool, addaptadj, aptinit):
+        from analysis import gwnet
+
         self.model = gwnet(device, num_nodes, dropout, supports=supports, gcn_bool=gcn_bool, addaptadj=addaptadj, aptinit=aptinit, in_dim=in_dim, out_dim=seq_length, residual_channels=nhid, dilation_channels=nhid, skip_channels=nhid * 8, end_channels=nhid * 16)
         self.model.to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lrate, weight_decay=wdecay)
@@ -691,7 +693,7 @@ def main(args, config):
     print("Checking vegetation dataset...")
     check_xarray_dataset(args, ds, save=True)
 
-    dataloader, num_nodes, x_df = get_dataloader(args, CONFIG_PATH, sub_precp, ds, check_matrix=True)
+    dataloader, num_nodes, x_df = get_dataloader(args, sub_precp, ds, check_matrix=True)
     epochs = config.GWNET.epochs
     device = torch.device(args.device)
     adj_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
@@ -840,7 +842,7 @@ if __name__=="__main__":
     # get the start time
 
     start = time.time()
-    config = load_config(CONFIG_PATH)
+    from utils.function_clns import config
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
 
@@ -857,7 +859,7 @@ if __name__=="__main__":
     
 
     args = parser.parse_args()
-    main(args, CONFIG_PATH)
+    main(args)
     end = time.time()
     total_time = end - start
     print("\n The script took "+ time.strftime("%H%M:%S", \

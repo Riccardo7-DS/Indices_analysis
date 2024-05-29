@@ -46,7 +46,7 @@ class Config:
     epochs = 100
     patience = 10
     learning_rate = 1e-4
-    batch_size= 16
+    batch_size= 8
 
     max_value = 1
 

@@ -1,30 +1,48 @@
 import os
-from utils.function_clns import load_config
 import xarray as xr
 import numpy as np
 from typing import Union, Literal
 import logging
 logger = logging.getLogger(__name__)
 
-def data_collection(dest_path:str=None, years:list=None):
+def cdo_api(variables:Union[list, None]=None,
+            dest_path:str=None, 
+            years:list=None, 
+            area:Union[None, list]=None,
+            area_name:Literal["HOA", "Africa", None]=None):
+    
     import cdsapi
     from tqdm.auto import tqdm
-
     from utils.function_clns import config
+
     cdo_key = config["CDO"]["key"]
     c = cdsapi.Client(key = cdo_key ) #Replace UID:ApiKey with you UID and Api Key
-    if years is None:
-        years = list(range(2005, 2023))
     if dest_path is None:
         dest_path = os.path.join(config["SPI"]["ERA5"]["path"], "ERA5_daily")
+
+    if variables is None:
+        ['total_precipitation',"2m_temperature", "total_evaporation", "potential_evaporation"]
+    
+    if area is None:
+        #W, E, S, N
+        if area_name == "Africa":
+            area = [-17.48122, 50.360668,-34.463232, 25.422785]
+        elif area_name == "HOA":
+            area = [32.01630435, 51.48369565, -5.48369565, 15.48369565]
+
+    year_min = 2005
+    year_max = 2023
+
+    if years is None:
+        years = list(range(year_min, year_max+1))
+
+    logger.info(f"Collecting variables {variables} for years {year_min}-{year_max}")
 
     for year in tqdm(years):
         c.retrieve(
         'reanalysis-era5-land',
         {
-            'variable': [
-                'total_precipitation',
-            ],
+            'variable': variables,
             'year': str(year),
             'month': [
                 '01', '02', '03',
@@ -48,10 +66,9 @@ def data_collection(dest_path:str=None, years:list=None):
             'time': [
                 '00:00',
             ],
-            'area': [
-                -17.48122, 50.360668,-34.463232, 25.422785,
+            'area': area,
+                #W, E, S, N
                 #-5, 15, 32.7, 51.5, # Bounding box for Horn of Africa
-            ],
             'format': 'netcdf',
         },
         os.path.join(dest_path, ('era5land_' + str(year) + '.nc')))
@@ -59,10 +76,10 @@ def data_collection(dest_path:str=None, years:list=None):
         print('era5land_' + str(year) + '.nc' + ' downloaded.')
 
 def pipeline_era5_collection_cds(config_path):
-    config = load_config(config_path)
+    from utils.function_clns import config
     years = list(range(1979, 2021))
     dest_path = os.path.join(config["SPI"]["ERA5"]["path"], "ERA5_daily")
-    data_collection(config_path, dest_path, years)
+    cdo_api(dest_path=dest_path, years=years)
     list_files = [os.path.join(dest_path, f) for f in os.listdir(dest_path) 
                   if f.endswith(".nc")]
     ds = xr.open_mfdataset(list_files)
