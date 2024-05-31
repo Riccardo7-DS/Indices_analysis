@@ -8,6 +8,8 @@ from  matplotlib.colors import ListedColormap, BoundaryNorm, LinearSegmentedColo
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Union
+import logging
+logger = logging.getLogger(__name__)
 """
 In this script can be found all the reading, standard cleaning and plotting helper functions
 """
@@ -430,22 +432,22 @@ def process_ndvi(base_dir, file):
         xr_df.to_netcdf(os.path.join(base_dir,'processed', file)) 
         xr_df.close()
 
-def drop_water_bodies_esa(CONFIG_PATH:str,
+def drop_water_bodies_esa(
                           dataset:xr.Dataset, 
                           var:str="ndvi") ->xr.Dataset:
     from ancillary.esa_landuse import get_level_colors, get_cover_dataset
     from utils.function_clns import config
 
     img_path = os.path.join(config["DEFAULT"]["images"], "chirps_esa")
-    ds_cover = get_cover_dataset(CONFIG_PATH, dataset[var], img_path)
+    ds_cover = get_cover_dataset(dataset[var], img_path)
     
     water_mask = xr.where((ds_cover["Band1"]==80) | (ds_cover["Band1"]==200), 1,0)
     ds_process = ds_cover.where(water_mask==0).drop_vars("Band1")
     dataset = dataset.assign(ndvi=ds_process[var])
     return dataset
 
-def get_missing_datarray(datarray, prediction="P1D"):
-    from fusets._xarray_utils import _extract_dates, _output_dates
+def get_missing_datarray(datarray, prediction="P1D", output_dataset:bool=False):
+    from utils.xarray_functions import _extract_dates, _output_dates
     datarray['time'] = datarray.indexes['time'].normalize()
     datarray = datarray.assign_coords(time = datarray.indexes['time'].normalize())
     dates = _extract_dates(datarray)
@@ -453,15 +455,23 @@ def get_missing_datarray(datarray, prediction="P1D"):
     
     dates = [np.datetime64(i) for i in expected_dates]
     missing_dates = [i for i in dates if i not in datarray['time'].values]
-    print("Missing dates are:" , missing_dates)
-    lat = datarray["lat"]
-    lon = datarray["lon"]
-    array_zero = np.zeros((len(lat), len(lon), len(missing_dates)))
-    print(array_zero)
-    print(array_zero.shape)
-    new_ds = xr.DataArray(array_zero,
-                            coords={"lat": lat, "lon":lon, "time":missing_dates},
-                            dims= ["lat","lon","time"],
-                            name="ndvi"
-                            )
-    return new_ds
+    logger.info("Missing dates are:" , missing_dates)
+
+    if output_dataset is True:
+        lat = datarray["lat"]
+        lon = datarray["lon"]
+        array_empty = np.full((len(missing_dates), len(lat), len(lon)),  np.nan, np.float32)
+        new_ds = xr.DataArray(array_empty,
+                                coords={"time":missing_dates, "lat": lat, "lon":lon},
+                                dims= ["time","lat","lon"],
+                                name="ndvi"
+                                )
+        return new_ds
+    
+def extend_dataset_over_time(datarray:xr.Dataset, 
+                             interpolation_dim:str = "time",
+                             interpolation_method:str="linear"):
+    new_da = get_missing_datarray(datarray, output_dataset = True)
+    new_da = xr.concat([new_da, datarray], dim="time")
+    new_da = new_da.sortby("time").chunk(dict(time=-1))
+    return new_da.interpolate_na(dim=interpolation_dim, method=interpolation_method)

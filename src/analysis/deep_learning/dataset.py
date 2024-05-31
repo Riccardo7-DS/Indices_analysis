@@ -5,6 +5,8 @@ from torch.utils.data import Dataset
 import xarray as xr
 from typing import Union
 import torch.nn.functional as F
+import logging
+logger = logging.getLogger(__name__)
 
 """
 Custom Datasets classes for Deep Learning models
@@ -37,6 +39,7 @@ class CustomConvLSTMDataset(Dataset):
 
         self.data = data
         self.labels = labels
+        self.lag = config.include_lag
         self.image_size = config.image_size
         self.input_size = config.input_size
         self.steps_head = args.step_length
@@ -55,51 +58,123 @@ class CustomConvLSTMDataset(Dataset):
 
         #print('Loaded {} samples ({})'.format(self.__len__(), split))
 
+    
     def _generate_traing_data(self):
 
+        logger.debug("Adding one channel to features to account for lagged data" if self.lag else "No lag channel added")
+        tot_channels = self.num_channels + 1 if self.lag else self.num_channels
+
+        available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window
+        shape_train = (available_timesteps, tot_channels, self.learning_window, *self.input_size)
+        shape_label = (available_timesteps, self.output_channels, self.output_window, *self.input_size)
+
+        train_data_processed = np.empty(shape_train, dtype=np.float32)
+        label_data_processed = np.empty(shape_label, dtype=np.float32)
+
+        logger.debug(f"Empty training matrix has shape {train_data_processed.shape}")
+        logger.debug(f"Empty instance matrix has shape {label_data_processed.shape}")
+
+        current_idx = self.learning_window
+
+        while current_idx < self.num_timesteps - self.steps_head - self.output_window:
+            start_idx = current_idx - self.learning_window
+            end_idx = current_idx
+
+            if self.num_channels == 1:
+                train_data_processed[start_idx, 0, :, :, :] = self.data[0, start_idx:end_idx, :, :]
+                label_data_processed[start_idx, 0, :, :, :] = \
+                    self.labels[current_idx + self.steps_head : current_idx + self.steps_head + self.output_window, :, :]
+
+            elif self.num_channels > 1:
+                for chnl in range(self.num_channels):
+                    train_data_processed[start_idx, chnl, :, :, :] = self.data[chnl, start_idx:end_idx, :, :]
+
+                if self.lag:
+                    train_data_processed[start_idx, -1, :, :, :] = self.labels[start_idx:end_idx, :, :]
+
+                label_data_processed[start_idx, 0, :, :, :] = \
+                    self.labels[current_idx + self.steps_head : current_idx + self.steps_head + self.output_window, :, :]
+
+            current_idx += 1
+        
+        
+        self.data = train_data_processed.swapaxes(1,2)
+        self.labels = label_data_processed.swapaxes(1,2)
+    
+    
+    def _generate_traing_data_old(self):
+
+        if self.lag is True:
+            logger.debug("Adding one channel to features to account for lagged data")
+            tot_channels = self.num_channels + 1 
+        else:
+            tot_channels = self.num_channels
+        
+        available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window
+
         train_data_processed = np.zeros(
-            (self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
-                self.num_channels,
+            (available_timesteps, 
+                tot_channels,
                 self.learning_window, *self.input_size), 
                 dtype=np.float32
             )
+        logger.debug(f"Empty training matrix has shape {train_data_processed.shape}")
         
         label_data_processed = np.zeros(
-            (self.num_timesteps - self.learning_window - self.steps_head - self.output_window, 
+            (available_timesteps, 
                 self.output_channels, 
                 self.output_window, *self.input_size), 
                 dtype=np.float32
             )
+        
+        logger.debug(f"Empty instance matrix has shape {train_data_processed.shape}")
 
-        current_idx = 0
+        current_idx += self.learning_window
         
         if self.num_channels == 1:
-            while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
+            while current_idx <  self.num_timesteps - self.steps_head - self.output_window:
                 train_data_processed[current_idx, 0, :, :, :] = \
-                    self.data[0, current_idx : current_idx + self.learning_window, :, :]
+                    self.data[0, current_idx - self.learning_window : current_idx , :, :]
                 
                 label_data_processed[current_idx, 0, :, :, :] = \
-                    self.labels[0, current_idx + self.steps_head + 
-                    self.learning_window : current_idx + self.steps_head + self.learning_window + self.output_window, :, :]
+                    self.labels[current_idx + self.steps_head : \
+                    current_idx + self.steps_head + self.output_window, :, :]
                 
                 current_idx +=1
         
-        elif self.num_channels > 1:
-            while current_idx + self.steps_head + self.learning_window + self.output_window <  self.num_timesteps:
+        elif (self.num_channels > 1) & (self.lag is False):
+
+            while current_idx <  self.num_timesteps - self.steps_head - self.output_window:
                 for chnl in range(0, self.num_channels):
-                    train_data_processed[current_idx, chnl, :, :, :] = \
-                        self.data[chnl, current_idx : current_idx + self.learning_window, :, :]
+                    train_data_processed[current_idx -  self.learning_window, chnl, :, :, :] = \
+                        self.data[chnl, current_idx-self.learning_window: current_idx, :, :]
                 
-                label_data_processed[current_idx, 0, :, :, :] = \
-                    self.labels[0, current_idx + self.learning_window + 
-                    self.steps_head : current_idx + self.learning_window  + self.steps_head + self.output_window, :, :]
+                label_data_processed[current_idx -  self.learning_window, 0, :, :, :] = \
+                    self.labels[current_idx + self.steps_head : \
+                    current_idx + self.steps_head + self.output_window, :, :]
+                
                 current_idx +=1
 
-        self.data = train_data_processed.swapaxes(1,2)
-        self.labels = label_data_processed.swapaxes(1,2)
+        elif (self.num_channels > 1) & (self.lag is True):
+
+            while current_idx <  self.num_timesteps - self.steps_head - self.output_window:
+                for chnl in range(0, self.num_channels):
+                    train_data_processed[current_idx -  self.learning_window, chnl, :, :, :] = \
+                        self.data[chnl, current_idx-self.learning_window: current_idx, :, :]
+                 
+                train_data_processed[current_idx -  self.learning_window, tot_channels-1, :, :, :] = \
+                        self.labels[current_idx-self.learning_window: current_idx, :, :]
+                
+                label_data_processed[current_idx -  self.learning_window, 0, :, :, :] = \
+                    self.labels[current_idx + self.steps_head : \
+                    current_idx + self.steps_head + self.output_window, :, :]
+                
+                current_idx +=1
+
+
 
     def __len__(self):
-        return self.data.shape[0]
+        return self.data.shape[0] - self.learning_window - self.steps_head - self.output_window
 
     def __getitem__(self, index):
         #X = np.expand_dims(self.data[index, :, :, :], axis=1)
@@ -115,7 +190,7 @@ class CustomConvLSTMDataset(Dataset):
             img_y = labels[idx, :, :, :, :]
             data_dict = {"data": img_x, "label": img_y}
 
-            dest_path = self.save_path+ "/data_convlstm" + f"/{self.filename}"
+            dest_path = self.save_path + "/data_convlstm" + f"/{self.filename}"
             if not os.path.exists(dest_path):
                 os.makedirs(dest_path)
             pfilename= os.path.join(dest_path,  f"{idx:06d}"+".pkl")

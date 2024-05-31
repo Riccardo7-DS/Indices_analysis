@@ -29,13 +29,14 @@ class Config:
     masked_loss = True
     model_name = "checkpoint_epoch_99"
 
-    num_frames_input = 90
-    num_frames_output = 1
+    num_frames_input = 60
+    num_frames_output = 1 ### means 1 frame as output
     output_channels = 1
+    include_lag = True
 
     image_size = (64, 64)
     input_size = (64, 64)
-    step_length = 4 #### the jump in the future
+    # step_length = 15 #### the jump in the future
     num_samples = 9 #### the number of channels to use
     num_objects = [3]
     display = 100
@@ -43,10 +44,10 @@ class Config:
     rnn_dropout = None
     cnn_dropout = None
     decoder_3d = False
-    epochs = 100
+    epochs = 200
     patience = 10
-    learning_rate = 1e-4
-    batch_size= 8
+    learning_rate = 0.5e-4
+    batch_size= 4
 
     max_value = 1
 
@@ -71,17 +72,18 @@ class Config:
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    checkpoint_dir =  os.path.join(output_dir, 'checkpoints')
-    if not os.path.exists(checkpoint_dir):
-        os.makedirs(checkpoint_dir)
     model_dir = os.path.join(output_dir, 'model')
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
     log_dir = os.path.join(output_dir, 'log')
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    cache_dir = os.path.join(output_dir, 'cache')
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
+
+    # checkpoint_dir =  os.path.join(output_dir, 'checkpoints')
+    # if not os.path.exists(checkpoint_dir):
+    #     os.makedirs(checkpoint_dir)
+    # cache_dir = os.path.join(output_dir, 'cache')
+    # if not os.path.exists(cache_dir):
+    #     os.makedirs(cache_dir)
 
 config = Config()

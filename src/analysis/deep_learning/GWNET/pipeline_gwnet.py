@@ -31,37 +31,31 @@ def generate_adj_dist(df, normalized_k=0.05,):
 
 def create_paths(args:dict, spi:bool=False):
     from definitions import ROOT_DIR
-
     from utils.function_clns import config
+
     ### Create all the paths
     if args.model == "GWNET":
         output_dir = os.path.join(ROOT_DIR,  "output/gwnet")
-
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-    else: 
-        output_dir = os.path.join(ROOT_DIR,  f"output/convlstm/days_{args.step_length}")
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+    elif args.model == "CONVLSTM": 
+        output_dir = os.path.join(ROOT_DIR,  
+                    f"output/convlstm/days_{args.step_length}/features_{args.feature_days}")
+    
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     if args.model == "GWNET":
         ### adjacency matrix
         adj_path = os.path.join(output_dir,  "adjacency_matrix")
         if not os.path.exists(adj_path):
             os.makedirs(adj_path)
-
         
     img_path = os.path.join(output_dir,  f"images")
-    if not os.path.exists(img_path):
-        os.makedirs(img_path)
-
     checkp_path = os.path.join(output_dir,  f"checkpoints")
-    if not os.path.exists(checkp_path):
-        os.makedirs(checkp_path)
-
     log_path = os.path.join(output_dir,  "logs")
-    if not os.path.exists(log_path):
-        os.makedirs(log_path)
+
+    for sub_path in [img_path, checkp_path, log_path]:
+        if not os.path.exists(sub_path):
+            os.makedirs(sub_path)
     
     return output_dir, log_path, img_path, checkp_path
 

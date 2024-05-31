@@ -37,7 +37,11 @@ class PrecipDataPreparation():
         ndvi_ds = self._load_processed_ndvi(self.basepath, 
                                             self.ndvi_filename)
         ndvi_ds = self._preprocess_array(ndvi_ds)
-        ndvi_ds = self._reproject_odc(ndvi_ds, precp_ds) 
+        ndvi_ds = self._reproject_odc(ndvi_ds, precp_ds)
+
+        logger.debug("Proceeding with interpolation of instance over time")
+        from utils.xarray_functions import extend_dataset_over_time 
+        ndvi_ds = extend_dataset_over_time(ndvi_ds)
         
         logger.debug("Normalizing datasets...")
         if args.normalize is True:
@@ -482,7 +486,7 @@ def shift_time(ds:xr.Dataset,
 
     if time_shift is None:
         time_shift = timedelta(days=1)
-        
+
     start_date = pd.to_datetime(ds["time"].min().values) - time_shift
     end_date = pd.to_datetime(ds["time"].max().values) - time_shift
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')

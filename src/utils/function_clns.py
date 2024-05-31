@@ -455,31 +455,32 @@ def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset],
 
 def CNN_split(data:np.array, 
               target:np.array, 
-              split_percentage:float=0.7, 
-              test_split:float=0.1):
-
-    print(f"{test_split:.0%} of the training data will be used as independent test")
+              split_percentage:float=0.7,
+              test_split:float=0.5):
+    perc_val = test_split * (1 - split_percentage)
+    perc_test = 1 - perc_val - split_percentage
+    logger.info(f"Data is divided as {split_percentage :.0%} train, {perc_val :.0%} validation and {perc_test :.0%} independent test")
     ###splitting test and train
     n_samples = data.shape[0]
     train_samples = int(round(split_percentage*n_samples, 0))
-    test_samples = int(round(test_split*n_samples, 0))
+    test_samples = int(round(perc_test*n_samples, 0))
     val_samples = n_samples - (train_samples + test_samples)
 
     data = data.transpose(1,0,2,3)
-    target = np.expand_dims(target.transpose(2,0,1), 0)
+    # target = np.expand_dims(target.transpose(2,0,1), 0)
 
-    train_data = data[:,:train_samples,:,:]
-    test_data =  data[:,train_samples:,:,:]
-    train_label = target[:,:train_samples,:,:]
-    test_label =  target[:,train_samples:,:,:]
+    # train_data = data[:,:train_samples,:,:]
+    # test_data =  data[:,train_samples:,:,:]
+    # train_label = target[:train_samples,:,:]
+    # test_label =  target[train_samples:,:,:]
 
     train_data = data[:,:train_samples,:,:]
     val_data =  data[:,train_samples:train_samples+val_samples,:,:]
     test_data= data[:,train_samples+ val_samples:,:,:]
 
-    train_label = target[:,:train_samples,:,:]
-    val_label =  target[:,train_samples:train_samples+val_samples,:,:]
-    test_label = target[:,train_samples+ val_samples:,:,:]
+    train_label = target[:train_samples,:,:]
+    val_label =  target[train_samples:train_samples+val_samples,:,:]
+    test_label = target[train_samples+ val_samples:,:,:]
 
     return train_data, val_data, train_label, val_label, test_data, test_label
 
