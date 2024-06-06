@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 def cdo_api(variables:Union[list, None]=None,
             dest_path:str=None, 
+            name:str=None,
             years:list=None, 
             area:Union[None, list]=None,
             area_name:Literal["HOA", "Africa", None]=None):
@@ -28,10 +29,12 @@ def cdo_api(variables:Union[list, None]=None,
         if area_name == "Africa":
             area = [-17.48122, 50.360668,-34.463232, 25.422785]
         elif area_name == "HOA":
-            area = [32.01630435, 51.48369565, -5.48369565, 15.48369565]
+            area = [15.48369565, 32.01630435,-5.48369565, 51.48369565 ]
 
     year_min = 2005
     year_max = 2023
+
+    new_name = "vars" if name == None else name
 
     if years is None:
         years = list(range(year_min, year_max+1))
@@ -71,7 +74,7 @@ def cdo_api(variables:Union[list, None]=None,
                 #-5, 15, 32.7, 51.5, # Bounding box for Horn of Africa
             'format': 'netcdf',
         },
-        os.path.join(dest_path, ('era5land_' + str(year) + '.nc')))
+        os.path.join(dest_path, (f"era5land_{new_name}"+ str(year) + '.nc')))
 
         print('era5land_' + str(year) + '.nc' + ' downloaded.')
 

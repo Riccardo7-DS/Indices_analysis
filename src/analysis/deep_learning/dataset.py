@@ -40,17 +40,19 @@ class CustomConvLSTMDataset(Dataset):
         self.data = data
         self.labels = labels
         self.lag = config.include_lag
-        self.image_size = config.image_size
-        self.input_size = config.input_size
-        self.steps_head = args.step_length
-        self.output_channels = config.output_channels
+        # self.image_size = config.image_size
+        self.input_size = config.input_size if args.model  == "CONVLSTM" else data.shape[-1] if args.model=="GWNET" else None
         self.num_timesteps = data.shape[1]
-        self.learning_window = config.num_frames_input
-        self.num_channels = config.num_samples
+        self.num_channels = data.shape[0]
+
+        self.steps_head = args.step_length
+        self.learning_window = args.feature_days
+        
+        self.output_channels = config.output_channels
         self.output_window = config.num_frames_output
-        self.num_frames = config.num_frames_input + config.num_frames_output
+        # self.num_frames = config.num_frames_input + config.num_frames_output
         self.save_path = config.output_dir
-        self._generate_traing_data()
+        self._generate_traing_data(args)
         
         if save_files is True:
             self.filename = filename
@@ -59,14 +61,16 @@ class CustomConvLSTMDataset(Dataset):
         #print('Loaded {} samples ({})'.format(self.__len__(), split))
 
     
-    def _generate_traing_data(self):
+    def _generate_traing_data(self, args):
 
         logger.debug("Adding one channel to features to account for lagged data" if self.lag else "No lag channel added")
         tot_channels = self.num_channels + 1 if self.lag else self.num_channels
 
         available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window
-        shape_train = (available_timesteps, tot_channels, self.learning_window, *self.input_size)
-        shape_label = (available_timesteps, self.output_channels, self.output_window, *self.input_size)
+        shape_train = (available_timesteps, tot_channels, self.learning_window, *self.input_size) if isinstance(self.input_size, tuple) else \
+                      (available_timesteps, tot_channels, self.learning_window, self.input_size)
+        shape_label = (available_timesteps, self.output_channels, self.output_window, *self.input_size) if isinstance(self.input_size, tuple) else \
+                      (available_timesteps, self.output_channels, self.output_window, self.input_size) 
 
         train_data_processed = np.empty(shape_train, dtype=np.float32)
         label_data_processed = np.empty(shape_label, dtype=np.float32)
@@ -74,32 +78,38 @@ class CustomConvLSTMDataset(Dataset):
         logger.debug(f"Empty training matrix has shape {train_data_processed.shape}")
         logger.debug(f"Empty instance matrix has shape {label_data_processed.shape}")
 
-        current_idx = self.learning_window
+        def populate_arrays(args, train_data_processed, label_data_processed):
 
-        while current_idx < self.num_timesteps - self.steps_head - self.output_window:
-            start_idx = current_idx - self.learning_window
-            end_idx = current_idx
+            current_idx = self.learning_window
+            while current_idx < self.num_timesteps - self.steps_head - self.output_window:
+                start_idx = current_idx - self.learning_window
+                end_idx = current_idx
 
-            if self.num_channels == 1:
-                train_data_processed[start_idx, 0, :, :, :] = self.data[0, start_idx:end_idx, :, :]
-                label_data_processed[start_idx, 0, :, :, :] = \
-                    self.labels[current_idx + self.steps_head : current_idx + self.steps_head + self.output_window, :, :]
+                if self.num_channels == 1:
+                    train_data_processed[start_idx, 0, :] = self.data[0, start_idx:end_idx]
+                    label_data_processed[start_idx, 0, :] = \
+                        self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window]
 
-            elif self.num_channels > 1:
-                for chnl in range(self.num_channels):
-                    train_data_processed[start_idx, chnl, :, :, :] = self.data[chnl, start_idx:end_idx, :, :]
+                elif self.num_channels > 1:
+                    for chnl in range(self.num_channels):
+                        train_data_processed[start_idx, chnl, :] = self.data[chnl, start_idx:end_idx]
 
-                if self.lag:
-                    train_data_processed[start_idx, -1, :, :, :] = self.labels[start_idx:end_idx, :, :]
+                    if self.lag:
+                        train_data_processed[start_idx, -1, :] = self.labels[0, start_idx:end_idx]
 
-                label_data_processed[start_idx, 0, :, :, :] = \
-                    self.labels[current_idx + self.steps_head : current_idx + self.steps_head + self.output_window, :, :]
+                    label_data_processed[start_idx, 0, :] = \
+                        self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window]
 
-            current_idx += 1
+                current_idx += 1
+            
+            if args.model == "CONVLSTM":
+                train_data_processed = train_data_processed.swapaxes(1,2)
+                label_data_processed = label_data_processed.swapaxes(1,2)
+            
+            return train_data_processed, label_data_processed
         
         
-        self.data = train_data_processed.swapaxes(1,2)
-        self.labels = label_data_processed.swapaxes(1,2)
+        self.data, self.labels = populate_arrays(args, train_data_processed, label_data_processed)
     
     
     def _generate_traing_data_old(self):
@@ -174,7 +184,7 @@ class CustomConvLSTMDataset(Dataset):
 
 
     def __len__(self):
-        return self.data.shape[0] - self.learning_window - self.steps_head - self.output_window
+        return self.data.shape[0] #- self.learning_window - self.steps_head - self.output_window
 
     def __getitem__(self, index):
         #X = np.expand_dims(self.data[index, :, :, :], axis=1)
@@ -254,7 +264,7 @@ class EarlyStopping:
             
         elif score < self.best_score:
             self.counter += 1
-            print(
+            logger.info(
                 f'EarlyStopping counter: {self.counter} out of {self.patience}'
             )            
             if self.counter >= self.patience:
@@ -267,7 +277,7 @@ class EarlyStopping:
     def save_checkpoint(self, val_loss, model, epoch, save_path):
         '''Saves model when validation loss decrease.'''
         if self.verbose:
-            print(
+            logger.info(
                 f'Validation loss change: ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...'
             )
         torch.save(

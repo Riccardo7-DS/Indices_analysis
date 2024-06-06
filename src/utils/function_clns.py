@@ -30,10 +30,20 @@ def display_usage(cpu_usage, mem_usage, bars=50):
 
     
 
-def init_logging(verbose=False, log_file=None):
+def init_logging(name:str=None, verbose=False, log_file=None):
     import os
     import logging, sys
-    logger = logging.getLogger()
+    if name is not None:
+        logger = logging.getLogger(name)
+    else:
+        logger = logging.getLogger()
+
+    # Remove all handlers associated with the logger object if they exist
+    if logger.hasHandlers():
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
+
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
             "%(asctime)s : %(levelname)s : [%(filename)s:%(lineno)s - %(funcName)s()] : %(message)s",
@@ -56,9 +66,11 @@ def init_logging(verbose=False, log_file=None):
     if log_file:
         log_dir = os.path.dirname(log_file)
         if len(log_dir) > 0 and not os.path.exists(log_dir):
-            os.makedirs(os.path.dirname(log_file))
-        
-        logger = logging.getLogger()
+            os.makedirs(log_dir)
+        # if name is not None:
+        #     logger = logging.getLogger(name)
+        # else:
+        #     logger = logging.getLogger()
         fileout = logging.FileHandler(log_file, "w")
         fileout.setLevel(level)
         fileout.setFormatter(formatter)

@@ -1,7 +1,7 @@
 
 import argparse
-from p_drought_indices.analysis.DeepLearning.dataset import MyDataset
-from p_drought_indices.functions.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays
+from analysis.deep_learning.dataset import MyDataset
+from utils.function_clns import load_config, prepare, get_lat_lon_window, subsetting_pipeline, check_xarray_dataset, check_timeformat_arrays
 import xarray as xr
 import os
 import numpy as np
@@ -60,7 +60,7 @@ if __name__=="__main__":
 
     args = parser.parse_args()
 
-    from p_drought_indices.analysis.DeepLearning.GWNET.pipeline_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
+    from analysis.deep_learning.GWNET.pipeline_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
     path = config["PRECIP"]["ERA5_land"]["path"]
     args.output_dir = os.path.join(path,  "graph_net")
     checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")

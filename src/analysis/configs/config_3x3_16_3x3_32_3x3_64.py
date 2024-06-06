@@ -8,7 +8,9 @@ from __future__ import print_function
 import os
 import yaml
 import torch
-root_dir = os.path.join(os.getcwd(), '.')
+from definitions import ROOT_DIR
+
+root_dir =  os.path.join(ROOT_DIR, '..') #os.getcwd()
 print(root_dir)
 
 class Config:
@@ -26,10 +28,10 @@ class Config:
     valid_batch_size = 2 * train_batch_size
     test_batch_size = 2 * train_batch_size
     data_file = 'datas/train-images-idx3-ubyte.gz'
-    masked_loss = True
+    masked_loss = False
     model_name = "checkpoint_epoch_99"
 
-    num_frames_input = 60
+    # num_frames_input = 60
     num_frames_output = 1 ### means 1 frame as output
     output_channels = 1
     include_lag = True
@@ -41,13 +43,10 @@ class Config:
     num_objects = [3]
     display = 100
     draw = 10
-    rnn_dropout = None
-    cnn_dropout = None
-    decoder_3d = False
-    epochs = 200
+    epochs = 300
     patience = 10
-    learning_rate = 0.5e-4
-    batch_size= 4
+    learning_rate = 1e-4
+    batch_size= 16
 
     max_value = 1
 

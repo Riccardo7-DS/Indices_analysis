@@ -35,7 +35,8 @@ def create_paths(args:dict, spi:bool=False):
 
     ### Create all the paths
     if args.model == "GWNET":
-        output_dir = os.path.join(ROOT_DIR,  "output/gwnet")
+        output_dir = os.path.join(ROOT_DIR, 
+                    f"output/gwnet/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "CONVLSTM": 
         output_dir = os.path.join(ROOT_DIR,  
                     f"output/convlstm/days_{args.step_length}/features_{args.feature_days}")
@@ -43,11 +44,11 @@ def create_paths(args:dict, spi:bool=False):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    if args.model == "GWNET":
+    # if args.model == "GWNET":
         ### adjacency matrix
-        adj_path = os.path.join(output_dir,  "adjacency_matrix")
-        if not os.path.exists(adj_path):
-            os.makedirs(adj_path)
+        # adj_path = os.path.join(output_dir,  "adjacency_matrix")
+        # if not os.path.exists(adj_path):
+        #     os.makedirs(adj_path)
         
     img_path = os.path.join(output_dir,  f"images")
     checkp_path = os.path.join(output_dir,  f"checkpoints")
@@ -167,22 +168,49 @@ def data_preparation(args:dict,
         return sub_precp, ds
 
 
-def get_dataloader(args, sub_precp:xr.DataArray, 
+def prepare_array_wgcnet(data):
+
+    def transform_array(array, lag):
+        T, C, V = array.shape
+        # Calculate the number of samples S
+        S = T - lag + 1
+        # Initialize the new array of shape (S, C, lag, V)
+        transformed_array = np.zeros((S, C, lag, V))
+
+        for s in range(S):
+            transformed_array[s] = array[s:s+lag].transpose(1, 0, 2)
+
+        return transformed_array
+    
+    if len(data.shape)==3:
+        logger.info("Adding one channel dimension")
+        data = np.expand_dims(data, 1)
+
+    # Get the dimensions of the input array
+    T, C, lat, lon = data.shape
+
+    # Reshape the array to combine the lat and lon dimensions into one
+    data_reshaped = data.reshape(T, C, lat * lon).transpose(1, 0, 2) # C, T, V
+
+    # data_lag = transform_array(data_reshaped, lag)
+    return data_reshaped
+
+def get_dataloader(args, dataset:xr.DataArray, 
                    ds:xr.DataArray, check_matrix:bool=False):
     
     from utils.function_clns import config
 
-    x_df = sub_precp.to_dataframe()
+    x_df = dataset.to_dataframe()
 
-    if args.spi is False:
-        x_df = x_df.swaplevel(1,2)
-    else:
-        x_df = x_df.swaplevel(0,2)
+    # if args.spi is False:
+    #     x_df = x_df.swaplevel(1,2)
+    # else:
+    #     x_df = x_df.swaplevel(0,2)
 
     for col in ["spatial_ref","crs"]:
         if col in x_df:
             x_df.drop(columns={col}, inplace=True)
-    var_target = sub_precp.name
+    var_target = dataset.name
     x_df = x_df.dropna(subset={var_target})
     x_df = x_df.sort_values(["lat", "lon","time"],ascending=False)
 
@@ -208,8 +236,8 @@ def get_dataloader(args, sub_precp:xr.DataArray,
     print(data_y_unstack.isnull().sum().sum())
     y_unstack = data_y_unstack.to_numpy()
     y_unstack = np.expand_dims(y_unstack, axis=-1)
-    logger.info("The instance have dimensions: {}", y_unstack.shape)
 
+    logger.info("The instance have dimensions: {}", y_unstack.shape)
     st_df = x_df.reset_index()[["lon","lat"]].drop_duplicates()
 
     dest_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), \
@@ -265,6 +293,173 @@ def get_dataloader(args, sub_precp:xr.DataArray,
     batch_size = config["GWNET"]["batch_size"]
     dataloader = load_dataset(args.output_dir, batch_size, batch_size, batch_size)
     return dataloader, num_nodes, data_y_unstack.iloc[num_train: num_test+num_train,:]
+
+
+def train_wcnet(args):
+    import torch.nn.functional as F
+    import numpy as np
+    from definitions import ROOT_DIR
+    from analysis import WGCNModel, train_loop, valid_loop, EarlyStopping
+    from utils.function_clns import init_logging
+    import torch
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+    import os
+    from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
+
+    data_dir = model_config.data_dir+"/data_convlstm"
+    data = np.load(os.path.join(data_dir, "data.npy"))
+    target = np.load(os.path.join(data_dir, "target.npy"))
+    with open(os.path.join(ROOT_DIR,"../data/ndvi_scaler.pickle"), "rb") as handle:
+            ndvi_scaler = pickle.loads(handle.read())
+
+    ################################# Module level logging #############################
+    _, log_path, img_path, checkpoint_dir = create_paths(args)
+    init_logging("training_gwnet", verbose=False, log_file=os.path.join(log_path, 
+                                                      f"gwnet_days_{args.step_length}"
+                                                      f"features_{args.feature_days}.log"))
+    logger = logging.getLogger("training_gwnet")
+
+    train_dl, valid_dl, dataset = get_train_valid_loader(model_config, args, data, target)
+    model = WGCNModel(args, model_config, dataset.data).to(device)
+
+    epochs = model_config.epochs
+    metrics_recorder = MetricsRecorder()
+    train_records, valid_records, test_records = [], [], []
+    rmse_train, rmse_valid, rmse_test = [], [], []
+    mape_train, mape_valid, mape_test = [], [], []
+    early_stopping = EarlyStopping(model_config, verbose=True)
+
+    loss_func = F.l1_loss
+    loss_func_2 = F.mse_loss
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=model_config.learning_rate)
+
+    for epoch in range(epochs):
+        # model.train()
+        # for xb, yb in train_dl:
+            # pred = model(xb.to(device))
+            # loss = loss_func(pred, yb.to(device))
+        epoch_records = train_loop(model_config, args, epoch, model, train_dl, loss_func, 
+                            optimizer, scaler=ndvi_scaler, mask=None, draw_scatter=False)
+        
+        train_records.append(np.mean(epoch_records['loss']))
+        rmse_train.append(np.mean(epoch_records['rmse']))
+        mape_train.append(np.mean(epoch_records['mape']))
+
+        metrics_recorder.add_train_metrics(np.mean(epoch_records['mape']), 
+                                           np.mean(epoch_records['rmse']), 
+                                           np.mean(epoch_records['loss']))
+        
+        log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
+        logger.info(log.format(epoch, np.mean(epoch_records['loss']), 
+                               np.mean(epoch_records['mape']), 
+                               np.mean(epoch_records['rmse'])))
+        
+        epoch_records = valid_loop(model_config, args,  epoch, model, valid_dl, loss_func, 
+                                   scaler=ndvi_scaler, mask=None, draw_scatter=args.scatterplot)
+        
+        valid_records.append(np.mean(epoch_records['loss']))
+        rmse_valid.append(np.mean(epoch_records['rmse']))
+        mape_valid.append(np.mean(epoch_records['mape']))
+
+        log = 'Epoch: {:03d}, Val Loss: {:.4f}, Val MAPE: {:.4f}, Val RMSE: {:.4f}'
+        logger.info(log.format(epoch, np.mean(epoch_records['loss']), 
+                               np.mean(epoch_records['mape']), 
+                               np.mean(epoch_records['rmse'])))
+        
+        metrics_recorder.add_val_metrics(np.mean(epoch_records['mape']), 
+                                         np.mean(epoch_records['rmse']), 
+                                         np.mean(epoch_records['loss']))
+        
+        model_dict = {
+            'epoch': epoch,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict()
+        }
+
+        early_stopping( np.mean(epoch_records['loss']), 
+                       model_dict, epoch, checkpoint_dir)
+        
+        if early_stopping.early_stop:
+            print("Early stopping")
+            break
+
+        plt.plot(range(epoch + 1), train_records, label='train')
+        plt.plot(range(epoch + 1), valid_records, label='valid')
+        plt.legend()
+        plt.savefig(os.path.join(img_path, f'learning_curve_feat_'
+                                 f'{args.feature_days}.png'))
+        plt.close()
+
+
+            # opt.zero_grad()
+            # loss.backward()
+            # opt.step()
+
+        # model.eval()
+        # with torch.no_grad():
+        #     valid_loss = 0.0
+            # valid_num = 0
+
+            # for xb, yb in valid_dl:
+            #     batch_valid_loss = loss_func(model(xb.to(device)), yb.to(device), reduction='none')
+            #     valid_loss += torch.sum(batch_valid_loss, dim=0)
+            #     valid_num += len(xb)
+
+            # valid_loss /= valid_num # average of all samples
+            # mean_valid_loss = torch.mean(valid_loss) # average of all outputs
+
+            # if mean_valid_loss < best_mean_valid_loss:
+            #     torch.save(model.state_dict(), "trained_models/best_model_dk_" + date_time_string + ".pt")
+            #     print("---Model with the following mean valid loss saved: ", mean_valid_loss.item())
+            #     best_mean_valid_loss = mean_valid_loss
+
+
+            # print(epoch, mean_valid_loss)
+
+# # # # # # # # # #
+
+
+def get_train_valid_loader(model_config, args, data, labels, add_lag:bool=True):
+    from scipy.io import loadmat
+    from torch.utils.data import TensorDataset
+    from torch.utils.data import DataLoader
+    from torch.utils.data.sampler import SubsetRandomSampler
+
+    data = prepare_array_wgcnet(data)
+    labels = prepare_array_wgcnet(labels)
+
+    dataset = CustomConvLSTMDataset(model_config, args, data, labels)
+
+    # if add_lag is True:
+    #     new_data = data[:, :, lag:, :]
+    #     lag_target = target[:, :, lag:, :]
+
+    #     target = target[:, :, lag:, :]
+    #     data = np.concatenate((new_data, lag_target), axis=1)
+
+    x = torch.tensor(dataset.data) #N, C, T, V (vertices e.g. lat-lon)
+    y = torch.tensor(dataset.labels)
+
+    train_val_dataset = TensorDataset(x, y)
+
+    num_train = len(train_val_dataset)
+    indices = list(range(num_train))
+    split = int(np.floor(0.1 * num_train))
+
+    np.random.seed(123)
+    np.random.shuffle(indices)
+
+    train_idx, valid_idx = indices[split:], indices[:split]
+    train_sampler = SubsetRandomSampler(train_idx)
+    valid_sampler = SubsetRandomSampler(valid_idx)
+
+    train_loader = DataLoader(train_val_dataset, batch_size=model_config.batch_size, sampler=train_sampler)
+    valid_loader = DataLoader(train_val_dataset, batch_size=model_config.batch_size, sampler=valid_sampler)
+
+    return train_loader, valid_loader, dataset
+
+
 
 class DataLoader(object):
     def __init__(self, xs, ys, batch_size, pad_with_last_sample=True):
@@ -580,8 +775,6 @@ class MetricsRecorder:
 
 
 class trainer():
-    
-
     def __init__(self, scaler, in_dim, seq_length, num_nodes, nhid , dropout, lrate, wdecay, device, supports, gcn_bool, addaptadj, aptinit):
         from analysis import gwnet
 
@@ -832,29 +1025,37 @@ def main(args, config):
 
 
 if __name__=="__main__":
-    import time
-    # get the start time
+    # import time
+    # # get the start time
 
-    start = time.time()
+    # start = time.time()
     from utils.function_clns import config
+    import os
+    from analysis import CustomConvLSTMDataset
+    from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
 
-    parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
-    parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
-    parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
-    parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
-    parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
+    # parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
+    # parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
+    # parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
+    # parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
+    # parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
 
-    parser.add_argument('--expid',type=int,default=1,help='experiment id')
-    parser.add_argument("--country", type=list, default=["Kenya", "Ethiopia","Somalia"], help="Location for dataset")
-    parser.add_argument("--region",type=list, default=None, help="region location for dataset")
-    parser.add_argument("--convlstm", type=bool, default= False, help="")
-    
+    # parser.add_argument('--expid',type=int,default=1,help='experiment id')
+    # parser.add_argument("--country", type=list, default=["Kenya", "Ethiopia","Somalia"], help="Location for dataset")
+    # parser.add_argument("--region",type=list, default=None, help="region location for dataset")
+    parser.add_argument("--model", type=str, default="GWNET", help="DL model training")
+    parser.add_argument('--step_length',type=int,default=15)
+    parser.add_argument('--feature_days',type=int,default=60)
+    parser.add_argument('--scatterplot',type=bool,default=True)
+    parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 
     args = parser.parse_args()
-    main(args)
-    end = time.time()
-    total_time = end - start
-    print("\n The script took "+ time.strftime("%H%M:%S", \
-                                                    time.gmtime(total_time)) + "to run")
+    # main(args)
+    # end = time.time()
+    # total_time = end - start
+    # print("\n The script took "+ time.strftime("%H%M:%S", \
+    #                                                 time.gmtime(total_time)) + "to run")
+
+    train_wcnet(args)
