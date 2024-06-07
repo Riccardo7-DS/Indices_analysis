@@ -55,22 +55,16 @@ class PrecipDataPreparation():
                 handle.write(dump_obj)
         
         logger.debug("Cropping datasets...")
-        self.precp_ds = self._crop_area_for_dl(precp_ds)
+        self.hydro_data = self._crop_area_for_dl(precp_ds)
         self.ndvi_ds = self._crop_area_for_dl(ndvi_ds)
 
         logger.debug("Filling null values...")
-        self.precp_ds = self.precp_ds.fillna(-1)
+        self.hydro_data = self.hydro_data.fillna(-1)
         self.ndvi_ds = self.ndvi_ds.fillna(-1)
 
         ### Check nulls
-        self._count_nulls(self.precp_ds)
+        self._count_nulls(self.hydro_data)
         self._count_nulls(self.ndvi_ds)
-
-        if args.model == "GWNET":
-            precp_ds = self.precp_ds.where(self.ndvi_ds.notnull())
-            self.hydro_data = precp_ds[[var for var in precp_ds.data_vars][0]]
-        else:
-            self.hydro_data = self.precp_ds
 
     def _estimate_gigs(self, dataset:xr.Dataset, description:str):
         logger.info("{d} dataset has {g} GiB".format(d=description, 

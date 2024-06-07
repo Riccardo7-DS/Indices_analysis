@@ -4,3 +4,5 @@ cache/
 checkpoints/
 data_convlstm/
 *.nc
+convlstm/
+gwnet/

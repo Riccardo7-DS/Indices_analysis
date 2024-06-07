@@ -1,4 +1,3 @@
-from analysis.deep_learning.dataset import MyDataset
 from utils.function_clns import config, prepare, get_lat_lon_window, check_xarray_dataset, check_timeformat_arrays
 import xarray as xr
 import os
@@ -15,6 +14,7 @@ from scipy.spatial.distance import cdist
 from geopy.distance import geodesic
 import pickle
 import matplotlib.pyplot as plt
+import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def generate_adj_dist(df, normalized_k=0.05,):
     adj_mx[adj_mx < normalized_k] = 0
     return adj_mx
 
-def create_paths(args:dict, spi:bool=False):
+def create_runtime_paths(args:dict, spi:bool=False):
     from definitions import ROOT_DIR
     from utils.function_clns import config
 
@@ -40,15 +40,11 @@ def create_paths(args:dict, spi:bool=False):
     elif args.model == "CONVLSTM": 
         output_dir = os.path.join(ROOT_DIR,  
                     f"output/convlstm/days_{args.step_length}/features_{args.feature_days}")
-    
+    elif args.model == "WNET":
+        output_dir = os.path.join(ROOT_DIR, 
+                    f"output/wnet/days_{args.step_length}/features_{args.feature_days}")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-
-    # if args.model == "GWNET":
-        ### adjacency matrix
-        # adj_path = os.path.join(output_dir,  "adjacency_matrix")
-        # if not os.path.exists(adj_path):
-        #     os.makedirs(adj_path)
         
     img_path = os.path.join(output_dir,  f"images")
     checkp_path = os.path.join(output_dir,  f"checkpoints")
@@ -66,7 +62,7 @@ def data_preparation(args:dict,
                      ndvi_dataset:str='ndvi_smoothed_w2s.nc'):
     
     from utils.function_clns import config, crop_image_left
-    from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
+    from analysis.configs.config_models import config as model_config
 
     config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
                           config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
@@ -90,7 +86,7 @@ def data_preparation(args:dict,
         file = f"{precp_dataset}_merged.nc"
 
     if args.pipeline == "CONVLSTM":
-        from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
+        from analysis.configs.config_models import config as model_config
         logger.info(f"Starting NDVI prediction with product {config['CONVLSTM']['precp_product']} with {model_config.num_frames_input} days of features and {args.step_length} in the future...")
     else:
         logger.info(f"Starting NDVI prediction with product {config['GWNET']['precp_product']} with {args.forecast} days of features...")
@@ -169,18 +165,6 @@ def data_preparation(args:dict,
 
 
 def prepare_array_wgcnet(data):
-
-    def transform_array(array, lag):
-        T, C, V = array.shape
-        # Calculate the number of samples S
-        S = T - lag + 1
-        # Initialize the new array of shape (S, C, lag, V)
-        transformed_array = np.zeros((S, C, lag, V))
-
-        for s in range(S):
-            transformed_array[s] = array[s:s+lag].transpose(1, 0, 2)
-
-        return transformed_array
     
     if len(data.shape)==3:
         logger.info("Adding one channel dimension")
@@ -295,7 +279,7 @@ def get_dataloader(args, dataset:xr.DataArray,
     return dataloader, num_nodes, data_y_unstack.iloc[num_train: num_test+num_train,:]
 
 
-def train_wcnet(args):
+def train_WeatherGCNet(args, checkpoint_path=None):
     import torch.nn.functional as F
     import numpy as np
     from definitions import ROOT_DIR
@@ -304,42 +288,53 @@ def train_wcnet(args):
     import torch
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     import os
-    from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
+    from analysis.configs.config_models import config_gwnet 
 
-    data_dir = model_config.data_dir+"/data_convlstm"
+    data_dir = config_gwnet.data_dir+"/data_convlstm"
     data = np.load(os.path.join(data_dir, "data.npy"))
     target = np.load(os.path.join(data_dir, "target.npy"))
     with open(os.path.join(ROOT_DIR,"../data/ndvi_scaler.pickle"), "rb") as handle:
             ndvi_scaler = pickle.loads(handle.read())
 
     ################################# Module level logging #############################
-    _, log_path, img_path, checkpoint_dir = create_paths(args)
+    _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
     init_logging("training_gwnet", verbose=False, log_file=os.path.join(log_path, 
                                                       f"gwnet_days_{args.step_length}"
                                                       f"features_{args.feature_days}.log"))
     logger = logging.getLogger("training_gwnet")
 
-    train_dl, valid_dl, dataset = get_train_valid_loader(model_config, args, data, target)
-    model = WGCNModel(args, model_config, dataset.data).to(device)
+    train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, 
+                                                         args, 
+                                                         data, 
+                                                         target)
+    model = WGCNModel(args, config_gwnet, dataset.data).to(device)
 
-    epochs = model_config.epochs
     metrics_recorder = MetricsRecorder()
     train_records, valid_records, test_records = [], [], []
     rmse_train, rmse_valid, rmse_test = [], [], []
     mape_train, mape_valid, mape_test = [], [], []
-    early_stopping = EarlyStopping(model_config, verbose=True)
+
+    early_stopping = EarlyStopping(config_gwnet, logger, verbose=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config_gwnet.learning_rate)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=0.1, patience=10, verbose=True
+    )
 
     loss_func = F.l1_loss
     loss_func_2 = F.mse_loss
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=model_config.learning_rate)
+    if checkpoint_path is not None:
+        checkpoint = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['lr_sched'])
+        checkp_epoch = checkpoint['epoch']
+        logger.info(f"Resuming training from epoch {checkp_epoch}")
 
-    for epoch in range(epochs):
-        # model.train()
-        # for xb, yb in train_dl:
-            # pred = model(xb.to(device))
-            # loss = loss_func(pred, yb.to(device))
-        epoch_records = train_loop(model_config, args, epoch, model, train_dl, loss_func, 
+    start_epoch = 0 if checkpoint_path is None else checkp_epoch
+
+    for epoch in range(start_epoch, config_gwnet.epochs):
+        epoch_records = train_loop(config_gwnet, args, epoch, model, train_dl, loss_func, 
                             optimizer, scaler=ndvi_scaler, mask=None, draw_scatter=False)
         
         train_records.append(np.mean(epoch_records['loss']))
@@ -355,7 +350,10 @@ def train_wcnet(args):
                                np.mean(epoch_records['mape']), 
                                np.mean(epoch_records['rmse'])))
         
-        epoch_records = valid_loop(model_config, args,  epoch, model, valid_dl, loss_func, 
+        mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
+        scheduler.step(mean_loss)
+        
+        epoch_records = valid_loop(config_gwnet, args,  epoch, model, valid_dl, loss_func, 
                                    scaler=ndvi_scaler, mask=None, draw_scatter=args.scatterplot)
         
         valid_records.append(np.mean(epoch_records['loss']))
@@ -374,7 +372,8 @@ def train_wcnet(args):
         model_dict = {
             'epoch': epoch,
             'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict()
+            'optimizer': optimizer.state_dict(),
+            "lr_sched": scheduler.state_dict()
         }
 
         early_stopping( np.mean(epoch_records['loss']), 
@@ -384,38 +383,12 @@ def train_wcnet(args):
             print("Early stopping")
             break
 
-        plt.plot(range(epoch + 1), train_records, label='train')
-        plt.plot(range(epoch + 1), valid_records, label='valid')
+        plt.plot(range(epoch - start_epoch + 1), train_records, label='train')
+        plt.plot(range(epoch - start_epoch + 1), valid_records, label='valid')
         plt.legend()
         plt.savefig(os.path.join(img_path, f'learning_curve_feat_'
                                  f'{args.feature_days}.png'))
         plt.close()
-
-
-            # opt.zero_grad()
-            # loss.backward()
-            # opt.step()
-
-        # model.eval()
-        # with torch.no_grad():
-        #     valid_loss = 0.0
-            # valid_num = 0
-
-            # for xb, yb in valid_dl:
-            #     batch_valid_loss = loss_func(model(xb.to(device)), yb.to(device), reduction='none')
-            #     valid_loss += torch.sum(batch_valid_loss, dim=0)
-            #     valid_num += len(xb)
-
-            # valid_loss /= valid_num # average of all samples
-            # mean_valid_loss = torch.mean(valid_loss) # average of all outputs
-
-            # if mean_valid_loss < best_mean_valid_loss:
-            #     torch.save(model.state_dict(), "trained_models/best_model_dk_" + date_time_string + ".pt")
-            #     print("---Model with the following mean valid loss saved: ", mean_valid_loss.item())
-            #     best_mean_valid_loss = mean_valid_loss
-
-
-            # print(epoch, mean_valid_loss)
 
 # # # # # # # # # #
 
@@ -425,18 +398,12 @@ def get_train_valid_loader(model_config, args, data, labels, add_lag:bool=True):
     from torch.utils.data import TensorDataset
     from torch.utils.data import DataLoader
     from torch.utils.data.sampler import SubsetRandomSampler
+    from analysis import CustomConvLSTMDataset
 
     data = prepare_array_wgcnet(data)
     labels = prepare_array_wgcnet(labels)
 
     dataset = CustomConvLSTMDataset(model_config, args, data, labels)
-
-    # if add_lag is True:
-    #     new_data = data[:, :, lag:, :]
-    #     lag_target = target[:, :, lag:, :]
-
-    #     target = target[:, :, lag:, :]
-    #     data = np.concatenate((new_data, lag_target), axis=1)
 
     x = torch.tensor(dataset.data) #N, C, T, V (vertices e.g. lat-lon)
     y = torch.tensor(dataset.labels)
@@ -454,8 +421,12 @@ def get_train_valid_loader(model_config, args, data, labels, add_lag:bool=True):
     train_sampler = SubsetRandomSampler(train_idx)
     valid_sampler = SubsetRandomSampler(valid_idx)
 
-    train_loader = DataLoader(train_val_dataset, batch_size=model_config.batch_size, sampler=train_sampler)
-    valid_loader = DataLoader(train_val_dataset, batch_size=model_config.batch_size, sampler=valid_sampler)
+    train_loader = DataLoader(train_val_dataset, 
+                              batch_size=model_config.batch_size, 
+                              sampler=train_sampler)
+    valid_loader = DataLoader(train_val_dataset, 
+                              batch_size=model_config.batch_size, 
+                              sampler=valid_sampler)
 
     return train_loader, valid_loader, dataset
 
@@ -712,17 +683,16 @@ def masked_mse_loss(criterion, preds, labels, mask):
     return mse_loss_val
 
 
-def save_figures(args:dict, epoch:int, train_loss:list, train_mape:list, train_rmse:list, test_loss:list, test_mape:list, test_rmse:list):
-    epochs = list(range(1, epoch + 1))
-    if args.spi is False:
-        output = os.path.join(args.output_dir,  f"images_results/forecast_{args.forecast}")
-    else:
-        output = os.path.join(args.output_dir,  f"images_results/forecast_{args.precp_product}_SPI_{args.latency}")
+def save_figures(args:dict, 
+                 epoch:int, 
+                 output, 
+                 metrics_recorder:dict):
 
-    # Plot MAPE
+    epochs = list(range(1, epoch + 1))
+
     plt.figure()
-    plt.plot(epochs, train_mape, label='Train MAPE')
-    plt.plot(epochs, test_mape, label='Validation MAPE')
+    plt.plot(epochs, metrics_recorder["train_mape"], label='Train MAPE')
+    plt.plot(epochs, metrics_recorder["test_mape"], label='Validation MAPE')
     plt.xlabel('Epoch')
     plt.ylabel('MAPE')
     plt.legend()
@@ -732,8 +702,8 @@ def save_figures(args:dict, epoch:int, train_loss:list, train_mape:list, train_r
 
     # Plot RMSE
     plt.figure()
-    plt.plot(epochs, train_rmse, label='Train RMSE')
-    plt.plot(epochs, test_rmse, label='Validation RMSE')
+    plt.plot(epochs, metrics_recorder["train_rmse"], label='Train RMSE')
+    plt.plot(epochs, metrics_recorder["test_rmse"],  label='Validation RMSE')
     plt.xlabel('Epoch')
     plt.ylabel('RMSE')
     plt.legend()
@@ -743,15 +713,15 @@ def save_figures(args:dict, epoch:int, train_loss:list, train_mape:list, train_r
 
     # Plot Loss
     plt.figure()
-    plt.plot(epochs, train_loss, label='Train Loss')
-    plt.plot(epochs, test_loss, label='Validation Loss')
+    plt.plot(epochs, metrics_recorder["train_loss"] , label='Train Loss')
+    plt.plot(epochs,metrics_recorder["test_loss"]  , label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
     plt.title('Loss vs. Epoch')
     plt.savefig(os.path.join(output, 'loss_vs_epoch.png'))
     plt.close()
-    logger.info(f"Figures saved for {args.precp_product} {args.forecast} days forecast")
+    # logger.info(f"Figures saved for {args.precp_product} {args.forecast} days forecast")
     
 
 class MetricsRecorder:
@@ -775,16 +745,28 @@ class MetricsRecorder:
 
 
 class trainer():
-    def __init__(self, scaler, in_dim, seq_length, num_nodes, nhid , dropout, lrate, wdecay, device, supports, gcn_bool, addaptadj, aptinit):
+    def __init__(self, model_config, scaler, args,
+                 num_nodes:int, supports):
+        
         from analysis import gwnet
 
-        self.model = gwnet(device, num_nodes, dropout, supports=supports, gcn_bool=gcn_bool, addaptadj=addaptadj, aptinit=aptinit, in_dim=in_dim, out_dim=seq_length, residual_channels=nhid, dilation_channels=nhid, skip_channels=nhid * 8, end_channels=nhid * 16)
-        self.model.to(device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=lrate, weight_decay=wdecay)
+        self.device = model_config.device
+        self.model = gwnet(self.device, num_nodes, model_config.dropout, supports=supports, 
+                           gcn_bool=args.gcn_bool, addaptadj=args.addaptadj, 
+                           aptinit=args.aptinit, in_dim=model_config.in_dim, 
+                           out_dim=args.seq_length, 
+                           residual_channels=model_config.nhid, 
+                           dilation_channels=model_config.nhid,
+                           skip_channels=model_config.nhid * 8,
+                           end_channels=model_config.nhid * 16)
+        
+        self.model.to(self.device)
+        self.optimizer = optim.Adam(self.model.parameters(), 
+                                    lr=model_config.learning_rate,
+                                    weight_decay=model_config.weight_decay)
         self.loss = masked_mae
         self.scaler = scaler
         self.clip = 5
-        self.device = device
 
     def train(self, input, real_val):
         self.model.train()
@@ -871,33 +853,63 @@ def build_model(args, config):
                          adjinit)
     return engine, scaler, dataloader, adj_mx
 
-def main(args, config):
-    sub_precp, ds, _ =  data_preparation(args, precp_dataset=config.GWNET.precp_product)
-    logger.info("Prepared data from {s} to {e}".format(s=sub_precp["time"].values[0], e=sub_precp["time"].values[-1]))
+def gwnet_train_loop(model_config, engine, x, y):
+    trainx = torch.Tensor(x).to(model_config.device)
+    trainx= trainx.transpose(1, 3)
+    trainy = torch.Tensor(y).to(model_config.device)
+    trainy = trainy.transpose(1, 3)
+    metrics = engine.train(trainx, trainy[:,0,:,:])
+    return metrics
 
-    print("Checking precipitation dataset...")
-    check_xarray_dataset(args, sub_precp, save=True)
-    print("Checking vegetation dataset...")
-    check_xarray_dataset(args, ds, save=True)
+def gwnet_val_loop(model_config, engine, x, y):
+    trainx = torch.Tensor(x).to(model_config.device)
+    trainx= trainx.transpose(1, 3)
+    trainy = torch.Tensor(y).to(model_config.device)
+    trainy = trainy.transpose(1, 3)
+    metrics = engine.eval(trainx, trainy[:,0,:,:])
+    return metrics
 
-    dataloader, num_nodes, x_df = get_dataloader(args, sub_precp, ds, check_matrix=True)
-    epochs = config.GWNET.epochs
-    device = torch.device(args.device)
-    adj_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
-    adj_mx = load_adj(adj_path,  args.adjtype)
-    scaler = dataloader['scaler']
+def generate_adj_matrix(args:dict, data:pd.DataFrame, save_plot:bool=True):
+    import seaborn as sns
+
+    output_dir, log_path, img_path, checkp_path, adj_path = create_runtime_paths(args)
+
+    adj_dist = generate_adj_dist(data)
+    with open(os.path.join(adj_path, "adj_dist.pkl"), 'wb') as f:
+            pickle.dump(adj_dist, f, protocol=2)
+    mask = np.zeros_like(adj_dist)
+    mask[np.triu_indices_from(mask)] = True
+    ax_labels = [data.iloc[i].id for i in range(adj_dist.shape[0])]
+    if save_plot is True:
+        sns.heatmap(adj_dist, mask=mask, cmap="YlGnBu", xticklabels=ax_labels, yticklabels=ax_labels)\
+            .get_figure().savefig(os.path.join(img_path, "adj_dist.png"))
+
+
+def pipeline_wavenet(args):
+    import pickle
+    from analysis.configs.config_models import config_gwnet
+    from definitions import ROOT_DIR
+    import sys
+
+    _, _, img_path, checkp_path = create_runtime_paths(args)
+
+    device = config_gwnet.device
+    data_dir = config_gwnet.data_dir+"/data_convlstm"
+    data = np.load(os.path.join(data_dir, "data.npy"))
+    target = np.load(os.path.join(data_dir, "target.npy"))
+    with open(os.path.join(config_gwnet.data_dir, "ndvi_scaler.pickle"), "rb") as handle:
+            scaler = pickle.loads(handle.read())
+
+    if os.path.exists(os.path.join(config_gwnet.adj_path, "adj_dist.pkl")):
+        generate_adj_matrix(args, data)
+
+    adj_mx = load_adj(config_gwnet.adj_path, args.adjtype)
+
+    train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, args, data, target)
+    num_nodes = dataset.data.shape[-1]
+                                                   
     supports = [torch.tensor(i).to(device) for i in adj_mx]
     metrics_recorder = MetricsRecorder()
-
-    dictionary = {'predFile': args.output_dir + '/predicted_data/data/' + "pred_{p}_{f}".format(f=str(args.precp_product), 
-                                                                                          p=str(args.forecast)) + '.pkl',
-                  'targetFile': args.output_dir + '/predicted_data/data/' + "target_{p}_{f}".format(f=str(args.precp_product), 
-                                                                                          p=str(args.forecast)) + '.pkl',}
-
-    if args.spi is True:
-        checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
-    else:
-        checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")
 
     if args.randomadj:
         adjinit = None
@@ -907,49 +919,35 @@ def main(args, config):
     if args.aptonly:
         supports = None
 
-    engine = trainer(scaler, args.in_dim, args.seq_length, num_nodes, args.nhid, args.dropout,
-                         args.learning_rate, args.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
-                         adjinit)
-
+    engine = trainer(config_gwnet, scaler, args, num_nodes, supports)
 
     logger.info("Starting training...",flush=True)
     
-    his_loss =[]
-    val_time = []
-    train_time = []
-    for i in range(1,epochs+1):
-        train_loss = []
-        train_mape = []
-        train_rmse = []
+    his_loss, val_time, train_time = [],[],[]
+
+    for epoch in range(1, config_gwnet.epochs+1):
+        train_loss, train_mape, train_rmse = [],[],[]
+        valid_loss, valid_mape, valid_rmse = [],[],[]
+
         t1 = time.time()
-        dataloader['train_loader'].shuffle()
-        for iter, (x, y) in enumerate(dataloader['train_loader'].get_iterator()):
-            trainx = torch.Tensor(x).to(device)
-            trainx= trainx.transpose(1, 3)
-            trainy = torch.Tensor(y).to(device)
-            trainy = trainy.transpose(1, 3)
-            metrics = engine.train(trainx, trainy[:,0,:,:])
+        train_dl.shuffle()
+        for iter, (x, y) in enumerate(train_dl.get_iterator()):
+            metrics = gwnet_train_loop(config_gwnet, engine, x, y)
             train_loss.append(metrics[0])
             train_mape.append(metrics[1])
             train_rmse.append(metrics[2])
-            if iter % args.print_every == 0 :
+            if iter % config_gwnet.print_every == 0 :
                 log = 'Iter: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
                 logger.info(log.format(iter, train_loss[-1], train_mape[-1], train_rmse[-1]),flush=True)
+        
         t2 = time.time()
         train_time.append(t2-t1)
-        #validation
-        valid_loss = []
-        valid_mape = []
-        valid_rmse = []
-
+        
+        ###validation
 
         s1 = time.time()
-        for iter, (x, y) in enumerate(dataloader['val_loader'].get_iterator()):
-            testx = torch.Tensor(x).to(device)
-            testx = testx.transpose(1, 3)
-            testy = torch.Tensor(y).to(device)
-            testy = testy.transpose(1, 3)
-            metrics = engine.eval(testx, testy[:,0,:,:])
+        for iter, (x, y) in enumerate(valid_dl.get_iterator()):
+            metrics = gwnet_val_loop(config_gwnet, engine, x, y)
             valid_loss.append(metrics[0])
             valid_mape.append(metrics[1])
             valid_rmse.append(metrics[2])
@@ -963,29 +961,31 @@ def main(args, config):
         mtrain_rmse = np.mean(train_rmse)
         metrics_recorder.add_train_metrics(mtrain_mape, mtrain_rmse, mtrain_loss)
 
-
         mvalid_loss = np.mean(valid_loss)
         mvalid_mape = np.mean(valid_mape)
         mvalid_rmse = np.mean(valid_rmse)
         his_loss.append(mvalid_loss)
         metrics_recorder.add_val_metrics(mvalid_mape, mvalid_rmse, mvalid_loss)
 
-        save_figures(args=args, epoch=i, train_loss=metrics_recorder.train_loss, 
-                    train_mape=metrics_recorder.train_mape, train_rmse=metrics_recorder.train_rmse, 
-                    test_loss=metrics_recorder.val_loss, test_rmse=metrics_recorder.val_loss, 
-                    test_mape=metrics_recorder.val_mape)
+        save_figures(args=args, epoch=epoch, metrics_recorder=metrics_recorder)
 
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}, Valid Loss: {:.4f}, Valid MAPE: {:.4f}, Valid RMSE: {:.4f}, Training Time: {:.4f}/epoch'
         logger.info(log.format(i, mtrain_loss, mtrain_mape, mtrain_rmse, mvalid_loss, mvalid_mape, mvalid_rmse, (t2 - t1)),flush=True)
-        torch.save(engine.model.state_dict(), checkp_path+"/checkpoints_epoch_"+str(i)+"_"+str(round(mvalid_loss,2))+".pth")
+        
+        torch.save(engine.model.state_dict(), 
+                   checkp_path+"/checkpoints_epoch_"+str(i)+"_"+str(round(mvalid_loss,2))+".pth")
+    
     logger.info("Average Training Time: {:.4f} secs/epoch".format(np.mean(train_time)))
     logger.info("Average Inference Time: {:.4f} secs".format(np.mean(val_time)))
 
     #testing
+    sys.exit(0)
+
     bestid = np.argmin(his_loss)
     engine.model.load_state_dict(torch.load(checkp_path +"/checkpoints_epoch_"+str(bestid+1)+"_"+str(round(his_loss[bestid],2))+".pth"))
 
     print(engine.model)
+
 
     realy = torch.Tensor(dataloader['y_test']).to(device)
     realy = realy.transpose(1,3)[:,0,:,:]
@@ -1022,40 +1022,81 @@ def main(args, config):
     log = 'On average over {} horizons, Test MAE: {:.4f}, Test MAPE: {:.4f}, Test RMSE: {:.4f}'
     logger.info(log.format(args.forecast, np.mean(amae),np.mean(amape),np.mean(armse)))
     torch.save(engine.model.state_dict(), checkp_path +"/checkpoints_exp"+str(args.expid)+"_best_"+str(round(his_loss[bestid],2))+".pth")
+  
 
+
+
+def old_main(args, config):
+    sub_precp, ds, _ =  data_preparation(args, precp_dataset=config.GWNET.precp_product)
+    logger.info("Prepared data from {s} to {e}".format(s=sub_precp["time"].values[0], e=sub_precp["time"].values[-1]))
+
+    print("Checking precipitation dataset...")
+    check_xarray_dataset(args, sub_precp, save=True)
+    print("Checking vegetation dataset...")
+    check_xarray_dataset(args, ds, save=True)
+
+    dataloader, num_nodes, x_df = get_dataloader(args, sub_precp, ds, check_matrix=True)
+    epochs = config.GWNET.epochs
+    device = torch.device(args.device)
+    adj_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
+    adj_mx = load_adj(adj_path,  args.adjtype)
+    scaler = dataloader['scaler']
+    supports = [torch.tensor(i).to(device) for i in adj_mx]
+    metrics_recorder = MetricsRecorder()
+
+    dictionary = {'predFile': args.output_dir + '/predicted_data/data/' + "pred_{p}_{f}".format(f=str(args.precp_product), 
+                                                                                          p=str(args.forecast)) + '.pkl',
+                  'targetFile': args.output_dir + '/predicted_data/data/' + "target_{p}_{f}".format(f=str(args.precp_product), 
+                                                                                          p=str(args.forecast)) + '.pkl',}
+
+    if args.spi is True:
+        checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
+    else:
+        checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")
+
+    if args.randomadj:
+        adjinit = None
+    else:
+        adjinit = supports[0]
+
+    if args.aptonly:
+        supports = None
+
+    
 
 if __name__=="__main__":
     # import time
     # # get the start time
 
-    # start = time.time()
+    start = time.time()
     from utils.function_clns import config
     import os
-    from analysis import CustomConvLSTMDataset
-    from analysis.configs.config_3x3_16_3x3_32_3x3_64 import config as model_config
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
 
-    # parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
-    # parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
-    # parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
-    # parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
-    # parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
+    parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
+    parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
+    parser.add_argument('--aptonly',action='store_true',help='whether   adaptive adj')
+    parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
+    parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
+    parser.add_argument('--aptinit',action=None)
 
     # parser.add_argument('--expid',type=int,default=1,help='experiment id')
     # parser.add_argument("--country", type=list, default=["Kenya", "Ethiopia","Somalia"], help="Location for dataset")
     # parser.add_argument("--region",type=list, default=None, help="region location for dataset")
-    parser.add_argument("--model", type=str, default="GWNET", help="DL model training")
+    parser.add_argument("--model", type=str, default="WNET", help="DL model training")
     parser.add_argument('--step_length',type=int,default=15)
-    parser.add_argument('--feature_days',type=int,default=60)
+    parser.add_argument('--feature_days',type=int,default=90)
     parser.add_argument('--scatterplot',type=bool,default=True)
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 
     args = parser.parse_args()
     # main(args)
-    # end = time.time()
-    # total_time = end - start
-    # print("\n The script took "+ time.strftime("%H%M:%S", \
-    #                                                 time.gmtime(total_time)) + "to run")
 
-    train_wcnet(args)
+    # checkpoint = "src/output/gwnet/days_15/features_60/checkpoints/checkpoint_epoch_261.pth.tar"
+    train_WeatherGCNet(args)
+    end = time.time()
+    total_time = end - start
+    print("\n The script took "+ time.strftime("%H%M:%S", \
+                                                    time.gmtime(total_time)) + "to run")

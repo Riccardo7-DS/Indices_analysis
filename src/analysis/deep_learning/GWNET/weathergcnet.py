@@ -43,14 +43,14 @@ class unit_tcn(nn.Module):
 
 
 class unit_gcn(nn.Module):
-    def __init__(self, in_channels, out_channels, tensor_channels):
+    def __init__(self, in_channels, out_channels, vertices):
         super(unit_gcn, self).__init__()
 
         self.conv = nn.Conv2d(in_channels, out_channels, 1)
-        self.B = nn.Parameter(torch.zeros(tensor_channels, tensor_channels) + 1e-6)
+        self.B = nn.Parameter(torch.zeros(vertices, vertices) + 1e-6)
         self.bn = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
-        self.A = Variable(torch.eye(tensor_channels), requires_grad=False)
+        self.A = Variable(torch.eye(vertices), requires_grad=False)
 
         if in_channels != out_channels:
             self.down = nn.Sequential(
@@ -96,10 +96,10 @@ class unit_gcn(nn.Module):
 
 
 class TCN_GCN_unit(nn.Module):
-    def __init__(self, in_channels, out_channels, tensor_channels, stride=1, residual=True):
+    def __init__(self, in_channels, out_channels, vertices, stride=1, residual=True):
         super(TCN_GCN_unit, self).__init__()
 
-        self.gcn1 = unit_gcn(in_channels, out_channels, tensor_channels)
+        self.gcn1 = unit_gcn(in_channels, out_channels, vertices)
         self.tcn1 = unit_tcn(out_channels, out_channels, stride=stride)
         self.relu = nn.ReLU()
 
