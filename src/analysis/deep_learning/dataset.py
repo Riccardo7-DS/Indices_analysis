@@ -41,7 +41,7 @@ class CustomConvLSTMDataset(Dataset):
         self.labels = labels
         self.lag = config.include_lag
         # self.image_size = config.image_size
-        self.input_size = config.input_size if args.model  == "CONVLSTM" else data.shape[-1] if args.model=="GWNET" else None
+        self.input_size = config.input_size if args.model  == "CONVLSTM" else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
         self.num_timesteps = data.shape[1]
         self.num_channels = data.shape[0]
 

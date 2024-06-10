@@ -330,7 +330,7 @@ class PrecipDataPreparation():
     def _crop_area_for_dl(self, 
                           dataset:Union[xr.DataArray, xr.Dataset]):
         
-        if self.model == "GWNET":
+        if self.model == "GWNET" or self.model=="WNET":
             logger.info("Selecting data for GCNN WaveNet")
             try:
                 self.dim = config['GWNET']['dim']

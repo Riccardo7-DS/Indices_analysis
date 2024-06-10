@@ -70,7 +70,7 @@ class ConfigGWNET():
 
     epochs = 300
     patience = 20
-    learning_rate = 1e-3
+    learning_rate = 1e-4
     batch_size= 8
     dim = 64
 
@@ -80,9 +80,8 @@ class ConfigGWNET():
     weight_decay = 0.0001
     in_dim = 10
     dropout = 0.3
-    nhid = 32
-    print_every = 50
-    num_nodes = 500
+    nhid = 16
+    print_every = 100
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     

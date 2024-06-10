@@ -6,3 +6,4 @@ data_convlstm/
 *.nc
 convlstm/
 gwnet/
+wnet/

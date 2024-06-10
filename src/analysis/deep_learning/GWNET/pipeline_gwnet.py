@@ -18,30 +18,19 @@ import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
 
-def generate_adj_dist(df, normalized_k=0.05,):
-    coord = df[['lat', 'lon']].values
-    dist_mx = cdist(coord, coord,
-                   lambda u, v: geodesic(u, v).kilometers)
-    distances = dist_mx[~np.isinf(dist_mx)].flatten()
-    std = distances.std()
-    adj_mx = np.exp(-np.square(dist_mx / std))
-
-    adj_mx[adj_mx < normalized_k] = 0
-    return adj_mx
-
 def create_runtime_paths(args:dict, spi:bool=False):
     from definitions import ROOT_DIR
     from utils.function_clns import config
 
     ### Create all the paths
     if args.model == "GWNET":
-        output_dir = os.path.join(ROOT_DIR, 
+        output_dir = os.path.join(ROOT_DIR, "..",
                     f"output/gwnet/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "CONVLSTM": 
-        output_dir = os.path.join(ROOT_DIR,  
+        output_dir = os.path.join(ROOT_DIR, "..",
                     f"output/convlstm/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "WNET":
-        output_dir = os.path.join(ROOT_DIR, 
+        output_dir = os.path.join(ROOT_DIR, "..", 
                     f"output/wnet/days_{args.step_length}/features_{args.feature_days}")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -578,6 +567,7 @@ def load_pickle(pickle_file):
 
 def load_adj(pkl_filename, adjtype):
     adj_mx = load_pickle(pkl_filename)
+    logger.info("Loading adjacency matrix...")
     if adjtype == "scalap":
         adj = [calculate_scaled_laplacian(adj_mx)]
     elif adjtype == "normlap":
@@ -685,41 +675,41 @@ def masked_mse_loss(criterion, preds, labels, mask):
 
 def save_figures(args:dict, 
                  epoch:int, 
-                 output, 
+                 path, 
                  metrics_recorder:dict):
 
     epochs = list(range(1, epoch + 1))
 
     plt.figure()
-    plt.plot(epochs, metrics_recorder["train_mape"], label='Train MAPE')
-    plt.plot(epochs, metrics_recorder["test_mape"], label='Validation MAPE')
+    plt.plot(epochs, metrics_recorder.train_mape, label='Train MAPE')
+    plt.plot(epochs, metrics_recorder.val_mape, label='Validation MAPE')
     plt.xlabel('Epoch')
     plt.ylabel('MAPE')
     plt.legend()
     plt.title('Mean Absolute Percentage Error (MAPE) vs. Epoch')
-    plt.savefig(os.path.join(output, 'mape_vs_epoch.png'))
+    plt.savefig(os.path.join(path, 'mape_vs_epoch.png'))
     plt.close()
 
     # Plot RMSE
     plt.figure()
-    plt.plot(epochs, metrics_recorder["train_rmse"], label='Train RMSE')
-    plt.plot(epochs, metrics_recorder["test_rmse"],  label='Validation RMSE')
+    plt.plot(epochs, metrics_recorder.train_rmse, label='Train RMSE')
+    plt.plot(epochs, metrics_recorder.val_rmse,  label='Validation RMSE')
     plt.xlabel('Epoch')
     plt.ylabel('RMSE')
     plt.legend()
     plt.title('Root Mean Squared Error (RMSE) vs. Epoch')
-    plt.savefig(os.path.join(output, 'rmse_vs_epoch.png'))
+    plt.savefig(os.path.join(path, 'rmse_vs_epoch.png'))
     plt.close()
 
     # Plot Loss
     plt.figure()
-    plt.plot(epochs, metrics_recorder["train_loss"] , label='Train Loss')
-    plt.plot(epochs,metrics_recorder["test_loss"]  , label='Validation Loss')
+    plt.plot(epochs, metrics_recorder.train_loss , label='Train Loss')
+    plt.plot(epochs,metrics_recorder.val_loss  , label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
     plt.title('Loss vs. Epoch')
-    plt.savefig(os.path.join(output, 'loss_vs_epoch.png'))
+    plt.savefig(os.path.join(path, 'loss_vs_epoch.png'))
     plt.close()
     # logger.info(f"Figures saved for {args.precp_product} {args.forecast} days forecast")
     
@@ -754,7 +744,7 @@ class trainer():
         self.model = gwnet(self.device, num_nodes, model_config.dropout, supports=supports, 
                            gcn_bool=args.gcn_bool, addaptadj=args.addaptadj, 
                            aptinit=args.aptinit, in_dim=model_config.in_dim, 
-                           out_dim=args.seq_length, 
+                           out_dim=args.step_length, 
                            residual_channels=model_config.nhid, 
                            dilation_channels=model_config.nhid,
                            skip_channels=model_config.nhid * 8,
@@ -764,6 +754,9 @@ class trainer():
         self.optimizer = optim.Adam(self.model.parameters(), 
                                     lr=model_config.learning_rate,
                                     weight_decay=model_config.weight_decay)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        self.optimizer, factor=0.1, patience=10, verbose=True
+        )
         self.loss = masked_mae
         self.scaler = scaler
         self.clip = 5
@@ -855,32 +848,62 @@ def build_model(args, config):
 
 def gwnet_train_loop(model_config, engine, x, y):
     trainx = torch.Tensor(x).to(model_config.device)
-    trainx= trainx.transpose(1, 3)
+    trainx= trainx.transpose(3, 2)
     trainy = torch.Tensor(y).to(model_config.device)
-    trainy = trainy.transpose(1, 3)
+    trainy = trainy.transpose(3, 2)
     metrics = engine.train(trainx, trainy[:,0,:,:])
     return metrics
 
 def gwnet_val_loop(model_config, engine, x, y):
     trainx = torch.Tensor(x).to(model_config.device)
-    trainx= trainx.transpose(1, 3)
+    trainx= trainx.transpose(2, 3)
     trainy = torch.Tensor(y).to(model_config.device)
-    trainy = trainy.transpose(1, 3)
+    trainy = trainy.transpose(2, 3)
     metrics = engine.eval(trainx, trainy[:,0,:,:])
     return metrics
 
-def generate_adj_matrix(args:dict, data:pd.DataFrame, save_plot:bool=True):
+def generate_adj_dist(df, normalized_k=0.05,):
+    coord = df[['lat', 'lon']].values
+    dist_mx = cdist(coord, coord,
+                   lambda u, v: geodesic(u, v).kilometers)
+    distances = dist_mx[~np.isinf(dist_mx)].flatten()
+    std = distances.std()
+    adj_mx = np.exp(-np.square(dist_mx / std))
+
+    adj_mx[adj_mx < normalized_k] = 0
+    return adj_mx
+
+def generate_adj_matrix(args:dict, save_plot:bool=True):
+    logger.info("Generating new adjacency matrix...")
     import seaborn as sns
+    from analysis.configs.config_models import config_gwnet
+    from utils.function_clns import config, crop_image_left
 
-    output_dir, log_path, img_path, checkp_path, adj_path = create_runtime_paths(args)
+    output_dir, log_path, img_path, checkp_path = create_runtime_paths(args)
 
-    adj_dist = generate_adj_dist(data)
+    path = os.path.join(config["DEFAULT"]["basepath"], "hydro_vars.zarr")
+    data = xr.open_zarr(path).isel(time=0)["total_precipitation"]
+
+    dim = config["GWNET"]["dim"]
+    logger.debug(f"The adjacency matrix has coordinates {dim} x  {dim}")
+    adj_path = config_gwnet.adj_path
+
+    idx_lat, lat_max, idx_lon, lon_min = crop_image_left(data, dim)
+    sub_dataset = data.sel(lat=slice(lat_max, idx_lat), 
+                                          lon=slice(lon_min, idx_lon))
+
+    df = sub_dataset.to_dataframe()
+
+    adj_dist = generate_adj_dist(df.reset_index())
     with open(os.path.join(adj_path, "adj_dist.pkl"), 'wb') as f:
             pickle.dump(adj_dist, f, protocol=2)
-    mask = np.zeros_like(adj_dist)
-    mask[np.triu_indices_from(mask)] = True
-    ax_labels = [data.iloc[i].id for i in range(adj_dist.shape[0])]
     if save_plot is True:
+        df = df.reset_index()
+        df["lat_lon"] = df["lat"].astype(str) + ", " + df["lon"].astype(str)
+        mask = np.zeros_like(adj_dist)
+        mask[np.triu_indices_from(mask)] = True
+        ax_labels = [df.iloc[i].lat_lon for i in range(adj_dist.shape[0])]
+    
         sns.heatmap(adj_dist, mask=mask, cmap="YlGnBu", xticklabels=ax_labels, yticklabels=ax_labels)\
             .get_figure().savefig(os.path.join(img_path, "adj_dist.png"))
 
@@ -890,22 +913,31 @@ def pipeline_wavenet(args):
     from analysis.configs.config_models import config_gwnet
     from definitions import ROOT_DIR
     import sys
+    from utils.function_clns import init_logging
 
-    _, _, img_path, checkp_path = create_runtime_paths(args)
+    _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
+    init_logging("training_wavenet", verbose=True, log_file=os.path.join(log_path, 
+                                                      f"wavenet_days_{args.step_length}"
+                                                      f"features_{args.feature_days}.log"))
+    logger = logging.getLogger("training_wavenet")
 
     device = config_gwnet.device
     data_dir = config_gwnet.data_dir+"/data_convlstm"
     data = np.load(os.path.join(data_dir, "data.npy"))
     target = np.load(os.path.join(data_dir, "target.npy"))
+    adj_mx_path = os.path.join(config_gwnet.adj_path, "adj_dist.pkl")
     with open(os.path.join(config_gwnet.data_dir, "ndvi_scaler.pickle"), "rb") as handle:
             scaler = pickle.loads(handle.read())
 
-    if os.path.exists(os.path.join(config_gwnet.adj_path, "adj_dist.pkl")):
-        generate_adj_matrix(args, data)
+    if not os.path.exists(adj_mx_path):
+        generate_adj_matrix(args)
 
-    adj_mx = load_adj(config_gwnet.adj_path, args.adjtype)
+    adj_mx = load_adj(adj_mx_path, args.adjtype)
 
-    train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, args, data, target)
+    train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, 
+                                                         args, 
+                                                         data, 
+                                                         target)
     num_nodes = dataset.data.shape[-1]
                                                    
     supports = [torch.tensor(i).to(device) for i in adj_mx]
@@ -921,7 +953,7 @@ def pipeline_wavenet(args):
 
     engine = trainer(config_gwnet, scaler, args, num_nodes, supports)
 
-    logger.info("Starting training...",flush=True)
+    logger.info("Starting training...")
     
     his_loss, val_time, train_time = [],[],[]
 
@@ -930,23 +962,26 @@ def pipeline_wavenet(args):
         valid_loss, valid_mape, valid_rmse = [],[],[]
 
         t1 = time.time()
-        train_dl.shuffle()
-        for iter, (x, y) in enumerate(train_dl.get_iterator()):
+        # train_dl.shuffle()
+        for iter, (x, y) in enumerate(train_dl):
             metrics = gwnet_train_loop(config_gwnet, engine, x, y)
             train_loss.append(metrics[0])
             train_mape.append(metrics[1])
             train_rmse.append(metrics[2])
             if iter % config_gwnet.print_every == 0 :
                 log = 'Iter: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
-                logger.info(log.format(iter, train_loss[-1], train_mape[-1], train_rmse[-1]),flush=True)
+                logger.info(log.format(iter, train_loss[-1], train_mape[-1], train_rmse[-1]))
         
         t2 = time.time()
         train_time.append(t2-t1)
+
+        mean_loss = sum(train_loss) / len(train_loss)
+        engine.scheduler.step(mean_loss)
         
         ###validation
 
         s1 = time.time()
-        for iter, (x, y) in enumerate(valid_dl.get_iterator()):
+        for iter, (x, y) in enumerate(valid_dl):
             metrics = gwnet_val_loop(config_gwnet, engine, x, y)
             valid_loss.append(metrics[0])
             valid_mape.append(metrics[1])
@@ -954,12 +989,13 @@ def pipeline_wavenet(args):
         
         s2 = time.time()
         log = 'Epoch: {:03d}, Inference Time: {:.4f} secs'
-        logger.info(log.format(i,(s2-s1)))
+        logger.info(log.format(epoch,(s2-s1)))
         val_time.append(s2-s1)
         mtrain_loss = np.mean(train_loss)
         mtrain_mape = np.mean(train_mape)
         mtrain_rmse = np.mean(train_rmse)
         metrics_recorder.add_train_metrics(mtrain_mape, mtrain_rmse, mtrain_loss)
+
 
         mvalid_loss = np.mean(valid_loss)
         mvalid_mape = np.mean(valid_mape)
@@ -967,13 +1003,13 @@ def pipeline_wavenet(args):
         his_loss.append(mvalid_loss)
         metrics_recorder.add_val_metrics(mvalid_mape, mvalid_rmse, mvalid_loss)
 
-        save_figures(args=args, epoch=epoch, metrics_recorder=metrics_recorder)
+        save_figures(args=args, epoch=epoch, path=img_path, metrics_recorder=metrics_recorder)
 
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}, Valid Loss: {:.4f}, Valid MAPE: {:.4f}, Valid RMSE: {:.4f}, Training Time: {:.4f}/epoch'
-        logger.info(log.format(i, mtrain_loss, mtrain_mape, mtrain_rmse, mvalid_loss, mvalid_mape, mvalid_rmse, (t2 - t1)),flush=True)
+        logger.info(log.format(epoch, mtrain_loss, mtrain_mape, mtrain_rmse, mvalid_loss, mvalid_mape, mvalid_rmse, (t2 - t1)))
         
         torch.save(engine.model.state_dict(), 
-                   checkp_path+"/checkpoints_epoch_"+str(i)+"_"+str(round(mvalid_loss,2))+".pth")
+                   checkpoint_dir+"/checkpoints_epoch_"+str(epoch)+"_"+str(round(mvalid_loss,2))+".pth")
     
     logger.info("Average Training Time: {:.4f} secs/epoch".format(np.mean(train_time)))
     logger.info("Average Inference Time: {:.4f} secs".format(np.mean(val_time)))
@@ -1076,9 +1112,9 @@ if __name__=="__main__":
     parser.add_argument('-f')
 
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
-    parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
+    parser.add_argument('--gcn_bool',default=True,help='whether to add graph convolution layer')
     parser.add_argument('--aptonly',action='store_true',help='whether   adaptive adj')
-    parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
+    parser.add_argument('--addaptadj',default=True,help='whether add adaptive adj')
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
     parser.add_argument('--aptinit',action=None)
 
@@ -1087,7 +1123,7 @@ if __name__=="__main__":
     # parser.add_argument("--region",type=list, default=None, help="region location for dataset")
     parser.add_argument("--model", type=str, default="WNET", help="DL model training")
     parser.add_argument('--step_length',type=int,default=15)
-    parser.add_argument('--feature_days',type=int,default=90)
+    parser.add_argument('--feature_days',type=int,default=30)
     parser.add_argument('--scatterplot',type=bool,default=True)
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 
@@ -1095,7 +1131,7 @@ if __name__=="__main__":
     # main(args)
 
     # checkpoint = "src/output/gwnet/days_15/features_60/checkpoints/checkpoint_epoch_261.pth.tar"
-    train_WeatherGCNet(args)
+    pipeline_wavenet(args)
     end = time.time()
     total_time = end - start
     print("\n The script took "+ time.strftime("%H%M:%S", \
