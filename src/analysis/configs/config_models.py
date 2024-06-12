@@ -28,6 +28,7 @@ class ConfigConvLSTM:
     patience = 20
     learning_rate = 1e-3
     batch_size= 8
+    null_value = -1
 
     image_size = (64, 64)
     input_size = (64, 64)
@@ -73,6 +74,8 @@ class ConfigGWNET():
     learning_rate = 1e-3
     batch_size= 16
     dim = 64
+
+    null_value = -1
 
     masked_loss = False
 

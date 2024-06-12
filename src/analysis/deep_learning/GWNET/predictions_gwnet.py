@@ -60,7 +60,7 @@ if __name__=="__main__":
 
     args = parser.parse_args()
 
-    from analysis.deep_learning.GWNET.pipeline_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
+    from analysis.deep_learning.GWNET.utils_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
     path = config["PRECIP"]["ERA5_land"]["path"]
     args.output_dir = os.path.join(path,  "graph_net")
     checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")
