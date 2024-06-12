@@ -50,7 +50,7 @@ class gwnet(nn.Module):
     def __init__(self, device, num_nodes, dropout=0.3, supports=None, 
                  gcn_bool=True, addaptadj=True, aptinit=None, 
                  in_dim=2,out_dim=12,residual_channels=32,dilation_channels=32,
-                 skip_channels=256,end_channels=512,kernel_size=2,blocks=4,layers=2):
+                 skip_channels=256,end_channels=512,kernel_size=2,blocks=5,layers=2):
         super(gwnet, self).__init__()
         self.dropout = dropout
         self.blocks = blocks

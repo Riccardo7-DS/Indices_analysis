@@ -27,7 +27,7 @@ def cdo_api(variables:Union[list, None]=None,
     if area is None:
         #W, E, S, N
         if area_name == "Africa":
-            area = [-17.48122, 50.360668,-34.463232, 25.422785]
+            area = [  25.422785, -17.48122,-34.463232,50.360668]
         elif area_name == "HOA":
             area = [15.48369565, 32.01630435,-5.48369565, 51.48369565 ]
 

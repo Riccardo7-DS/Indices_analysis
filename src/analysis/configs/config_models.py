@@ -70,8 +70,8 @@ class ConfigGWNET():
 
     epochs = 300
     patience = 20
-    learning_rate = 1e-4
-    batch_size= 8
+    learning_rate = 1e-3
+    batch_size= 16
     dim = 64
 
     masked_loss = False
@@ -79,6 +79,7 @@ class ConfigGWNET():
     ### Parameters specific to GWNET
     weight_decay = 0.0001
     in_dim = 10
+    out_dim = 1
     dropout = 0.3
     nhid = 16
     print_every = 100

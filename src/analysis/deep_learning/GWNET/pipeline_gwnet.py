@@ -369,7 +369,7 @@ def train_WeatherGCNet(args, checkpoint_path=None):
                        model_dict, epoch, checkpoint_dir)
         
         if early_stopping.early_stop:
-            print("Early stopping")
+            logger.info("Early stopping")
             break
 
         plt.plot(range(epoch - start_epoch + 1), train_records, label='train')
@@ -736,7 +736,7 @@ class MetricsRecorder:
 
 class trainer():
     def __init__(self, model_config, scaler, args,
-                 num_nodes:int, supports):
+                 num_nodes:int, supports, checkpoint_path=None):
         
         from analysis import gwnet
 
@@ -744,7 +744,7 @@ class trainer():
         self.model = gwnet(self.device, num_nodes, model_config.dropout, supports=supports, 
                            gcn_bool=args.gcn_bool, addaptadj=args.addaptadj, 
                            aptinit=args.aptinit, in_dim=model_config.in_dim, 
-                           out_dim=args.step_length, 
+                           out_dim=model_config.out_dim, 
                            residual_channels=model_config.nhid, 
                            dilation_channels=model_config.nhid,
                            skip_channels=model_config.nhid * 8,
@@ -755,23 +755,31 @@ class trainer():
                                     lr=model_config.learning_rate,
                                     weight_decay=model_config.weight_decay)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        self.optimizer, factor=0.1, patience=10, verbose=True
+        self.optimizer, factor=0.7, patience=3, verbose=False
         )
-        self.loss = masked_mae
+        self.loss = masked_mse
         self.scaler = scaler
         self.clip = 5
+
+        if checkpoint_path is not None:
+            checkpoint = torch.load(checkpoint_path)
+            self.model.load_state_dict(checkpoint['state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.scheduler.load_state_dict(checkpoint['lr_sched'])
+            self.checkp_epoch = checkpoint['epoch']
+            logger.info(f"Resuming training from epoch {self.checkp_epoch}")
 
     def train(self, input, real_val):
         self.model.train()
         self.optimizer.zero_grad()
         input = nn.functional.pad(input,(1,0,0,0))
         output = self.model(input)
-        output = output.transpose(1,3)
+        # output = output.transpose(2,3)
         #output = [batch_size,12,num_nodes,1]
         real = torch.unsqueeze(real_val,dim=1)
         predict = self.scaler.inverse_transform(output)
 
-        loss = self.loss(predict, real, 0.0)
+        loss = self.loss(predict, real, -1)
         loss.backward()
         if self.clip is not None:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
@@ -780,21 +788,21 @@ class trainer():
         #for name, param in self.model.named_parameters():
         #    if param.grad is not None:
         #        print("Gradient Stats:", name, param.grad.mean().item(), param.grad.max().item(), param.grad.min().item())
-        mape = masked_mape(predict,real,0.0).item()
-        rmse = masked_rmse(predict,real,0.0).item()
+        mape = masked_mape(predict,real, -1).item()
+        rmse = masked_rmse(predict,real,-1).item()
         return loss.item(),mape,rmse
 
     def eval(self, input, real_val):
         self.model.eval()
         input = nn.functional.pad(input,(1,0,0,0))
         output = self.model(input)
-        output = output.transpose(1,3)
+        # output = output.transpose(2,3)
         #output = [batch_size,12,num_nodes,1]
         real = torch.unsqueeze(real_val,dim=1)
         predict = self.scaler.inverse_transform(output)
-        loss = self.loss(predict, real, 0.0)
-        mape = masked_mape(predict,real,0.0).item()
-        rmse = masked_rmse(predict,real,0.0).item()
+        loss = self.loss(predict, real, -1)
+        mape = masked_mape(predict,real,-1).item()
+        rmse = masked_rmse(predict,real,-1).item()
         return loss.item(),mape,rmse
     
     def test(self, test_loader):
@@ -908,8 +916,9 @@ def generate_adj_matrix(args:dict, save_plot:bool=True):
             .get_figure().savefig(os.path.join(img_path, "adj_dist.png"))
 
 
-def pipeline_wavenet(args):
+def pipeline_wavenet(args, checkpoint_path):
     import pickle
+    from analysis import EarlyStopping
     from analysis.configs.config_models import config_gwnet
     from definitions import ROOT_DIR
     import sys
@@ -920,6 +929,9 @@ def pipeline_wavenet(args):
                                                       f"wavenet_days_{args.step_length}"
                                                       f"features_{args.feature_days}.log"))
     logger = logging.getLogger("training_wavenet")
+
+    logger.info(f"Starting training WaveNet model for {args.step_length} days in the future"
+                f" with {args.feature_days} days of features")
 
     device = config_gwnet.device
     data_dir = config_gwnet.data_dir+"/data_convlstm"
@@ -933,6 +945,8 @@ def pipeline_wavenet(args):
         generate_adj_matrix(args)
 
     adj_mx = load_adj(adj_mx_path, args.adjtype)
+    early_stopping = EarlyStopping(config_gwnet, logger, verbose=True)
+        
 
     train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, 
                                                          args, 
@@ -951,13 +965,16 @@ def pipeline_wavenet(args):
     if args.aptonly:
         supports = None
 
-    engine = trainer(config_gwnet, scaler, args, num_nodes, supports)
+    engine = trainer(config_gwnet, scaler, args, 
+                     num_nodes, supports, checkpoint_path)
+    
+    start_epoch = 0 if checkpoint_path is None else engine.checkp_epoch
 
     logger.info("Starting training...")
     
     his_loss, val_time, train_time = [],[],[]
 
-    for epoch in range(1, config_gwnet.epochs+1):
+    for epoch in range(start_epoch+1, config_gwnet.epochs+1):
         train_loss, train_mape, train_rmse = [],[],[]
         valid_loss, valid_mape, valid_rmse = [],[],[]
 
@@ -968,15 +985,13 @@ def pipeline_wavenet(args):
             train_loss.append(metrics[0])
             train_mape.append(metrics[1])
             train_rmse.append(metrics[2])
-            if iter % config_gwnet.print_every == 0 :
-                log = 'Iter: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
-                logger.info(log.format(iter, train_loss[-1], train_mape[-1], train_rmse[-1]))
-        
+            # if iter % config_gwnet.print_every == 0 :
+            #     log = 'Iter: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
+            #     logger.info(log.format(iter, train_loss[-1], train_mape[-1], train_rmse[-1]))
+            if iter % config_gwnet.print_every == 0:
+                logger.info(f"learning rate {engine.scheduler.get_last_lr()}")
         t2 = time.time()
         train_time.append(t2-t1)
-
-        mean_loss = sum(train_loss) / len(train_loss)
-        engine.scheduler.step(mean_loss)
         
         ###validation
 
@@ -988,14 +1003,13 @@ def pipeline_wavenet(args):
             valid_rmse.append(metrics[2])
         
         s2 = time.time()
-        log = 'Epoch: {:03d}, Inference Time: {:.4f} secs'
-        logger.info(log.format(epoch,(s2-s1)))
+        # log = 'Epoch: {:03d}, Inference Time: {:.4f} secs'
+        # logger.info(log.format(epoch,(s2-s1)))
         val_time.append(s2-s1)
         mtrain_loss = np.mean(train_loss)
         mtrain_mape = np.mean(train_mape)
         mtrain_rmse = np.mean(train_rmse)
         metrics_recorder.add_train_metrics(mtrain_mape, mtrain_rmse, mtrain_loss)
-
 
         mvalid_loss = np.mean(valid_loss)
         mvalid_mape = np.mean(valid_mape)
@@ -1003,14 +1017,28 @@ def pipeline_wavenet(args):
         his_loss.append(mvalid_loss)
         metrics_recorder.add_val_metrics(mvalid_mape, mvalid_rmse, mvalid_loss)
 
-        save_figures(args=args, epoch=epoch, path=img_path, metrics_recorder=metrics_recorder)
+        save_figures(args=args, epoch=epoch-start_epoch, path=img_path, metrics_recorder=metrics_recorder)
 
-        log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}, Valid Loss: {:.4f}, Valid MAPE: {:.4f}, Valid RMSE: {:.4f}, Training Time: {:.4f}/epoch'
-        logger.info(log.format(epoch, mtrain_loss, mtrain_mape, mtrain_rmse, mvalid_loss, mvalid_mape, mvalid_rmse, (t2 - t1)))
+        log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train RMSE: {:.4f}, Valid Loss: {:.4f}, Valid RMSE: {:.4f}'
+        logger.info(log.format(epoch, mtrain_loss, mtrain_rmse, mvalid_loss, mvalid_rmse))
         
-        torch.save(engine.model.state_dict(), 
-                   checkpoint_dir+"/checkpoints_epoch_"+str(epoch)+"_"+str(round(mvalid_loss,2))+".pth")
-    
+        
+        model_dict = {
+            'epoch': epoch,
+            'state_dict': engine.model.state_dict(),
+            'optimizer': engine.optimizer.state_dict(),
+            "lr_sched": engine.scheduler.state_dict()
+        }
+
+        mean_loss = sum(valid_loss) / len(valid_loss)
+        engine.scheduler.step(mean_loss)
+
+        early_stopping(mvalid_loss, model_dict, epoch, checkpoint_dir)
+        
+        if early_stopping.early_stop:
+            logger.info("Early stopping")
+            break
+
     logger.info("Average Training Time: {:.4f} secs/epoch".format(np.mean(train_time)))
     logger.info("Average Inference Time: {:.4f} secs".format(np.mean(val_time)))
 
