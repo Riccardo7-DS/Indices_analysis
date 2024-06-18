@@ -1,6 +1,6 @@
 if __name__=="__main__":
     from analysis.deep_learning.ConvLSTM.pipeline_convlstm import pipeline_convlstm
-    from analysis import train_WeatherGCNet, pipeline_wavenet
+    from analysis import pipeline_wavenet, pipeline_weatherGCNet
     import argparse
     import os
     import pyproj
@@ -25,16 +25,18 @@ if __name__=="__main__":
     args = parser.parse_args()
     os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
 
-    for window in [15, 30, 45, 60, 90]:
-        for feature_days in [60, 90, 120]:
-            parser.add_argument('--step_length', type=int, default=feature_days)
-            parser.add_argument('--feature_days', type=int, default=window)
+    for feature_days in [90, 60, 45, 30, 15]: 
+        for window in [15, 30, 45, 60, 90, 120]:
+            parser.add_argument('--step_length', type=int, default=window)
+            parser.add_argument('--feature_days', type=int, default=feature_days)
             args = parser.parse_args()
             try:
                 if args.model == "CONVLSTM":
-                    pipeline_convlstm(args, precipitation_only=False, train_split=0.5)
+                    pipeline_convlstm(args, precipitation_only=False)
                 elif args.model == "WNET":
-                    pipeline_wavenet(args)
+                    pipeline_wavenet(args, None)
+                elif args.model == "GWNET":
+                    pipeline_weatherGCNet(args, None)
             except RuntimeError as e:
                 if 'out of memory' in str(e):
                     print("CUDA out of memory error caught.")

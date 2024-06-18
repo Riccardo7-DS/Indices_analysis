@@ -37,13 +37,17 @@ class CustomConvLSTMDataset(Dataset):
             save_files:bool=False,
             filename = "dataset"):
 
-        self.data = data
-        self.labels = labels
+        self.data = np.swapaxes(data, 1,0)
+        self.labels= np.swapaxes(labels, 1,0)
+        # if (len(labels.shape) == 3):
+        #     self.labels = np.expand_dims(labels, 0)
+        # else:              
+        #     self.labels = labels
         self.lag = config.include_lag
         # self.image_size = config.image_size
         self.input_size = config.input_size if args.model  == "CONVLSTM" else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
-        self.num_timesteps = data.shape[1]
-        self.num_channels = data.shape[0]
+        self.num_timesteps = data.shape[0]
+        self.num_channels = data.shape[1]
 
         self.steps_head = args.step_length
         self.learning_window = args.feature_days
@@ -86,18 +90,18 @@ class CustomConvLSTMDataset(Dataset):
                 end_idx = current_idx
 
                 if self.num_channels == 1:
-                    train_data_processed[start_idx, 0, :] = self.data[0, start_idx:end_idx]
+                    train_data_processed[start_idx, 0] = self.data[0, start_idx:end_idx]
                     label_data_processed[start_idx, 0, :] = \
                         self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window]
 
                 elif self.num_channels > 1:
                     for chnl in range(self.num_channels):
-                        train_data_processed[start_idx, chnl, :] = self.data[chnl, start_idx:end_idx]
+                        train_data_processed[start_idx, chnl ] = self.data[chnl, start_idx:end_idx]
 
                     if self.lag:
-                        train_data_processed[start_idx, -1, :] = self.labels[0, start_idx:end_idx]
+                        train_data_processed[start_idx, -1] = self.labels[0, start_idx:end_idx]
 
-                    label_data_processed[start_idx, 0, :] = \
+                    label_data_processed[start_idx, 0 ] = \
                         self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window]
 
                 current_idx += 1
@@ -181,23 +185,19 @@ class CustomConvLSTMDataset(Dataset):
                 
                 current_idx +=1
 
-
-
     def __len__(self):
         return self.data.shape[0] #- self.learning_window - self.steps_head - self.output_window
 
     def __getitem__(self, index):
-        #X = np.expand_dims(self.data[index, :, :, :], axis=1)
-        #y = np.expand_dims(self.targets[index, :, :, :], axis=1)
-        X = self.data[index, :, :, :, :]
-        y = self.labels[index,:,  :, :, :]
+        X = self.data[index]
+        y = self.labels[index]
         return X, y
 
     def _save_files(self, data, labels):
         import pickle
         for idx in range(data.shape[0]):
-            img_x = data[idx, :, :, :, :] 
-            img_y = labels[idx, :, :, :, :]
+            img_x = data[idx] 
+            img_y = labels[idx]
             data_dict = {"data": img_x, "label": img_y}
 
             dest_path = self.save_path + "/data_convlstm" + f"/{self.filename}"

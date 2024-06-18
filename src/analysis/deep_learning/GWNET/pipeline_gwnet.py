@@ -5,14 +5,36 @@ import torch
 import time
 import matplotlib.pyplot as plt
 import pickle
-from analysis import EarlyStopping, save_figures, create_runtime_paths, MetricsRecorder, gwnet_train_loop, gwnet_val_loop, trainer, generate_adj_matrix, load_adj, get_train_valid_loader
+from analysis import EarlyStopping, save_figures, create_runtime_paths, print_lr_change, MetricsRecorder, gwnet_train_loop, gwnet_val_loop, trainer, generate_adj_matrix, load_adj, get_train_valid_loader
+
+class StandardNormalizer():
+    """
+    Standard the input
+    """
+    def __init__(self, min, max):
+        self.min = min
+        self.max = max
+
+    def transform(self, data):
+        norm_data = (data - self.min) / (self.max - self.min)
+        return norm_data
+
+    def inverse_transform(self, norm_data, null_value=None):
+        transf = (norm_data * (self.max - self.min)) + self.min 
+        if null_value is not None:
+            mask = norm_data == null_value
+            transf[mask] = null_value
+            return transf
+        else:
+            return transf
 
 def pipeline_weatherGCNet(args, checkpoint_path=None):
     import torch.nn.functional as F
     import numpy as np
     from definitions import ROOT_DIR
-    from analysis import WGCNModel, train_loop, valid_loop, EarlyStopping
-    from utils.function_clns import init_logging
+    from analysis import WGCNModel, train_loop, valid_loop, EarlyStopping, update_tensorboard_scalars
+    from utils.function_clns import init_logging, config
+    from analysis import check_shape_dataloaders, init_tb
     import torch
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     import os
@@ -29,12 +51,15 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
     init_logging("training_gwnet", verbose=False, log_file=os.path.join(log_path, 
                                                       f"gwnet_days_{args.step_length}"
                                                       f"features_{args.feature_days}.log"))
+    writer = init_tb(log_path)
     logger = logging.getLogger("training_gwnet")
 
     train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, 
                                                          args, 
                                                          data, 
-                                                         target)
+                                                         target,
+                                                         config.MODELS.split)
+    check_shape_dataloaders(train_dl, valid_dl)
     model = WGCNModel(args, config_gwnet, dataset.data).to(device)
 
     metrics_recorder = MetricsRecorder()
@@ -42,14 +67,15 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
     rmse_train, rmse_valid, rmse_test = [], [], []
     mape_train, mape_valid, mape_test = [], [], []
 
-    early_stopping = EarlyStopping(config_gwnet, logger, verbose=True)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config_gwnet.learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, factor=0.1, patience=10, verbose=True
-    )
-
     loss_func = F.l1_loss
     loss_func_2 = F.mse_loss
+    learning_rate = config_gwnet.learning_rate
+
+    early_stopping = EarlyStopping(config_gwnet, logger, verbose=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=config_gwnet.scheduler_factor, 
+        patience=config_gwnet.scheduler_patience)
 
     if checkpoint_path is not None:
         checkpoint = torch.load(checkpoint_path)
@@ -62,26 +88,22 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
     start_epoch = 0 if checkpoint_path is None else checkp_epoch
 
     for epoch in range(start_epoch, config_gwnet.epochs):
-        epoch_records = train_loop(config_gwnet, args, epoch, model, train_dl, loss_func, 
+        epoch_records = train_loop(config_gwnet, args, model, train_dl, loss_func, 
                             optimizer, scaler=ndvi_scaler, mask=None, draw_scatter=False)
         
         train_records.append(np.mean(epoch_records['loss']))
         rmse_train.append(np.mean(epoch_records['rmse']))
         mape_train.append(np.mean(epoch_records['mape']))
 
-        metrics_recorder.add_train_metrics(np.mean(epoch_records['mape']), 
-                                           np.mean(epoch_records['rmse']), 
-                                           np.mean(epoch_records['loss']))
+        metrics_recorder.add_train_metrics(epoch_records, epoch)
         
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
         logger.info(log.format(epoch, np.mean(epoch_records['loss']), 
                                np.mean(epoch_records['mape']), 
                                np.mean(epoch_records['rmse'])))
         
-        mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
-        scheduler.step(mean_loss)
         
-        epoch_records = valid_loop(config_gwnet, args,  epoch, model, valid_dl, loss_func, 
+        epoch_records = valid_loop(config_gwnet, args,  model, valid_dl, loss_func, 
                                    scaler=ndvi_scaler, mask=None, draw_scatter=args.scatterplot)
         
         valid_records.append(np.mean(epoch_records['loss']))
@@ -93,9 +115,7 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
                                np.mean(epoch_records['mape']), 
                                np.mean(epoch_records['rmse'])))
         
-        metrics_recorder.add_val_metrics(np.mean(epoch_records['mape']), 
-                                         np.mean(epoch_records['rmse']), 
-                                         np.mean(epoch_records['loss']))
+        metrics_recorder.add_val_metrics(epoch_records)
         
         model_dict = {
             'epoch': epoch,
@@ -103,9 +123,16 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
             'optimizer': optimizer.state_dict(),
             "lr_sched": scheduler.state_dict()
         }
-
+    
+        mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
+        scheduler.step(mean_loss)
+        new_lr = print_lr_change(learning_rate, scheduler)
+        learning_rate = new_lr
         early_stopping( np.mean(epoch_records['loss']), 
                        model_dict, epoch, checkpoint_dir)
+        
+        update_tensorboard_scalars(writer, metrics_recorder)
+        learning_rate = print_lr_change(learning_rate, scheduler)
         
         if early_stopping.early_stop:
             logger.info("Early stopping")
@@ -123,14 +150,17 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
 def pipeline_wavenet(args, checkpoint_path):
     import pickle
     from analysis.configs.config_models import config_gwnet
+    from analysis import check_shape_dataloaders
     from definitions import ROOT_DIR
+    from analysis import init_tb, update_tensorboard_scalars
     import sys
-    from utils.function_clns import init_logging
+    from utils.function_clns import init_logging, config
 
     _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
     init_logging("training_wavenet", verbose=True, log_file=os.path.join(log_path, 
                                                       f"wavenet_days_{args.step_length}"
                                                       f"features_{args.feature_days}.log"))
+    writer = init_tb(log_path)
     logger = logging.getLogger("training_wavenet")
 
     logger.info(f"Starting training WaveNet model for {args.step_length}"
@@ -150,14 +180,15 @@ def pipeline_wavenet(args, checkpoint_path):
         generate_adj_matrix(args)
 
     adj_mx = load_adj(adj_mx_path, args.adjtype)
-    early_stopping = EarlyStopping(config_gwnet, logger, verbose=True)
 
     train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, 
                                                          args, 
                                                          data, 
-                                                         target)
-    num_nodes = dataset.data.shape[-1]
-                                                   
+                                                         target,
+                                                         config["MODELS"]["split"])
+    check_shape_dataloaders(train_dl, valid_dl)
+
+    num_nodes = dataset.data.shape[-1]                         
     supports = [torch.tensor(i).to(device) for i in adj_mx]
     metrics_recorder = MetricsRecorder()
 
@@ -168,10 +199,9 @@ def pipeline_wavenet(args, checkpoint_path):
     if args.aptonly:
         supports = None
 
-    engine = trainer(config_gwnet, scaler, args, 
-                     num_nodes, supports, checkpoint_path)
-    
+    engine = trainer(config_gwnet, scaler, args, num_nodes, supports, checkpoint_path)
     start_epoch = 0 if checkpoint_path is None else engine.checkp_epoch
+    early_stopping = EarlyStopping(config_gwnet, logger, verbose=True)
 
     ################################  Training  ################################ 
 
@@ -179,48 +209,37 @@ def pipeline_wavenet(args, checkpoint_path):
     
     his_loss, val_time, train_time = [],[],[]
 
+
     for epoch in range(start_epoch+1, config_gwnet.epochs+1):
+
         train_loss, train_mape, train_rmse = [],[],[]
         valid_loss, valid_mape, valid_rmse = [],[],[]
 
-        t1 = time.time()
-        for iter, (x, y) in enumerate(train_dl):
-            metrics = gwnet_train_loop(config_gwnet, engine, x, y)
-            train_loss.append(metrics[0])
-            train_mape.append(metrics[1])
-            train_rmse.append(metrics[2])
-            if iter % config_gwnet.print_every == 0:
-                logger.info(f"learning rate {engine.scheduler.get_last_lr()}")
-        t2 = time.time()
-        train_time.append(t2-t1)
+        epoch_records = gwnet_train_loop(config_gwnet, engine, train_dl)
+        train_loss.append(epoch_records["loss"])
+        train_mape.append(epoch_records["mape"])
+        train_rmse.append(epoch_records["rmse"])
+        metrics_recorder.add_train_metrics(epoch_records, epoch)
         
     ################################  Validation ###############################
-
-        s1 = time.time()
-        for iter, (x, y) in enumerate(valid_dl):
-            metrics = gwnet_val_loop(config_gwnet, engine, x, y)
-            valid_loss.append(metrics[0])
-            valid_mape.append(metrics[1])
-            valid_rmse.append(metrics[2])
         
-        s2 = time.time()
-        val_time.append(s2-s1)
+        epoch_records = gwnet_val_loop(config_gwnet, engine, valid_dl)
+        valid_loss.append(epoch_records["loss"])
+        valid_mape.append(epoch_records["mape"])
+        valid_rmse.append(epoch_records["rmse"])
+        metrics_recorder.add_val_metrics(epoch_records)
+        
         mtrain_loss = np.mean(train_loss)
-        mtrain_mape = np.mean(train_mape)
-        mtrain_rmse = np.mean(train_rmse)
-        metrics_recorder.add_train_metrics(mtrain_mape, mtrain_rmse, mtrain_loss)
-
+        mtrain_rmse = np.mean(train_rmse)  
         mvalid_loss = np.mean(valid_loss)
-        mvalid_mape = np.mean(valid_mape)
         mvalid_rmse = np.mean(valid_rmse)
-        his_loss.append(mvalid_loss)
-        metrics_recorder.add_val_metrics(mvalid_mape, mvalid_rmse, mvalid_loss)
+        # his_loss.append(mvalid_loss)
 
-        save_figures(args=args, epoch=epoch-start_epoch, path=img_path, metrics_recorder=metrics_recorder)
+        save_figures(args=args, epoch=epoch-start_epoch, 
+                     path=img_path, metrics_recorder=metrics_recorder)
 
         log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train RMSE: {:.4f}, Valid Loss: {:.4f}, Valid RMSE: {:.4f}'
         logger.info(log.format(epoch, mtrain_loss, mtrain_rmse, mvalid_loss, mvalid_rmse))
-        
         
         model_dict = {
             'epoch': epoch,
@@ -229,10 +248,8 @@ def pipeline_wavenet(args, checkpoint_path):
             "lr_sched": engine.scheduler.state_dict()
         }
 
-        mean_loss = sum(valid_loss) / len(valid_loss)
-        engine.scheduler.step(mean_loss)
-
         early_stopping(mvalid_loss, model_dict, epoch, checkpoint_dir)
+        update_tensorboard_scalars(writer, metrics_recorder)
         
         if early_stopping.early_stop:
             logger.info("Early stopping")

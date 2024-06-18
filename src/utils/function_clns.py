@@ -30,51 +30,44 @@ def display_usage(cpu_usage, mem_usage, bars=50):
 
     
 
-def init_logging(name:str=None, verbose=False, log_file=None):
+def init_logging(log_file=None, verbose=False):
     import os
-    import logging, sys
-    if name is not None:
-        logger = logging.getLogger(name)
-    else:
-        logger = logging.getLogger()
-
-    # Remove all handlers associated with the logger object if they exist
-    if logger.hasHandlers():
-        for handler in logger.handlers[:]:
-            handler.close()
-            logger.removeHandler(handler)
-
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-            "%(asctime)s : %(levelname)s : [%(filename)s:%(lineno)s - %(funcName)s()] : %(message)s",
-            "%Y-%m-%d %H:%M:%S")
-    
+    # Determine the logging level
     if verbose:
         level = logging.DEBUG
     else:
         level = logging.INFO
 
-    # Start up console handler
-    #Create a stream-based handler that writes the log entries    #into the standard output stream
-    console = logging.StreamHandler(sys.stdout)
-    console.setLevel(level)
-    console.setFormatter(formatter)
-
-    logger.addHandler(console)
+    # Define the logging format
+    formatter = "%(asctime)s : %(levelname)s : [%(filename)s:%(lineno)s - %(funcName)s()] : %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
     
-    # Log to a file if the option is supplied
+    # Setup basic configuration for logging
     if log_file:
         log_dir = os.path.dirname(log_file)
-        if len(log_dir) > 0 and not os.path.exists(log_dir):
+        if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir)
-        # if name is not None:
-        #     logger = logging.getLogger(name)
-        # else:
-        #     logger = logging.getLogger()
-        fileout = logging.FileHandler(log_file, "w")
-        fileout.setLevel(level)
-        fileout.setFormatter(formatter)
-        logger.addHandler(fileout)
+        logging.basicConfig(
+            level=level,
+            format=formatter,
+            datefmt=datefmt,
+            handlers=[
+                logging.FileHandler(log_file, "w"),
+                logging.StreamHandler()
+            ]
+        )
+    else:
+        logging.basicConfig(
+            level=level,
+            format=formatter,
+            datefmt=datefmt,
+            handlers=[
+                logging.StreamHandler()
+            ]
+        )
+
+    logger = logging.getLogger()
+    return logger
 
 #Creating a handler
 def handle_unhandled_exception(exc_type, exc_value, exc_traceback):
@@ -469,30 +462,23 @@ def CNN_split(data:np.array,
               target:np.array, 
               split_percentage:float=0.7,
               test_split:float=0.5):
-    perc_val = test_split * (1 - split_percentage)
-    perc_test = 1 - perc_val - split_percentage
-    logger.info(f"Data is divided as {split_percentage :.0%} train, {perc_val :.0%} validation and {perc_test :.0%} independent test")
+    tot_perc_val = (1 - split_percentage) * test_split
+    tot_perc_test = 1 - tot_perc_val - split_percentage 
+    logger.info(f"Data is divided as {split_percentage :.0%} train," 
+                f" {tot_perc_val :.0%} validation and {tot_perc_test :.0%} independent test")
     ###splitting test and train
     n_samples = data.shape[0]
     train_samples = int(round(split_percentage*n_samples, 0))
-    test_samples = int(round(perc_test*n_samples, 0))
+    test_samples = int(round(tot_perc_test*n_samples, 0))
     val_samples = n_samples - (train_samples + test_samples)
 
-    data = data.transpose(1,0,2,3)
-    # target = np.expand_dims(target.transpose(2,0,1), 0)
+    train_data = data[:train_samples]
+    val_data =  data[train_samples:train_samples+val_samples]
+    test_data= data[train_samples+ val_samples:]
 
-    # train_data = data[:,:train_samples,:,:]
-    # test_data =  data[:,train_samples:,:,:]
-    # train_label = target[:train_samples,:,:]
-    # test_label =  target[train_samples:,:,:]
-
-    train_data = data[:,:train_samples,:,:]
-    val_data =  data[:,train_samples:train_samples+val_samples,:,:]
-    test_data= data[:,train_samples+ val_samples:,:,:]
-
-    train_label = target[:train_samples,:,:]
-    val_label =  target[train_samples:train_samples+val_samples,:,:]
-    test_label = target[train_samples+ val_samples:,:,:]
+    train_label = target[:train_samples]
+    val_label =  target[train_samples:train_samples+val_samples]
+    test_label = target[train_samples+ val_samples:]
 
     return train_data, val_data, train_label, val_label, test_data, test_label
 

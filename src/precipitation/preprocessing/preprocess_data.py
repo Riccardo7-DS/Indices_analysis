@@ -31,7 +31,7 @@ class PrecipDataPreparation():
 
         precp_ds = self.process_input_vars(variables, 
                                 load_local_precp, 
-                                interpolate=False, 
+                                interpolate=interpolate, 
                                 save=True)
         
         ndvi_ds = self._load_processed_ndvi(self.basepath, 
@@ -77,12 +77,22 @@ class PrecipDataPreparation():
             precp_ds = self._preprocess_array(path = self.precp_path,
                                                filename=self.precp_filename, 
                                                interpolate=interpolate)
+            precp_ds = self._local_precipitation_cleaning(precp_ds, self.precp_product)
+            if len(variables) > 1:
+                logger.debug(f"Adding soil moisture to variables {variables}")
+                precp_ds = self._transform_ancillary(precp_ds, temporal_resolution="daily")
+                self._estimate_gigs(precp_ds, "Hydro variables")
+                logging.info(precp_ds)
+
         else:
             dest_path = os.path.join(self.basepath, "hydro_vars.zarr")
 
             if os.path.exists(dest_path):
                 logger.debug("Found zarr file in destination path. Proceeding with loading...")
                 precp_ds = xr.open_zarr(dest_path)
+
+                self._estimate_gigs(precp_ds, "Precipitation only")
+                logging.info(precp_ds)
             else:
                 precp_ds, era5_data = self._load_arco_precipitation(variables)
                 precp_ds = self._preprocess_array(precp_ds, 
@@ -104,47 +114,73 @@ class PrecipDataPreparation():
 
         return precp_ds
     
-
+    
     def _impute_values(self, dataset:Union[xr.Dataset, xr.DataArray], value:float):
         return dataset.fillna(value)
 
-    def _load_local_precipitation(self, precp_dataset:str):
+    def _local_precipitation_cleaning(self, dataset, precp_dataset):
+        from utils.xarray_functions import shift_xarray_overtime
+        if precp_dataset == "ERA5_land":
+            ds = shift_xarray_overtime(dataset, "1D") 
+            return ds.rename({"pev":"potential_evaporation", "e":"evaporation",
+                         "t2m":"2m_temperature","tp":"total_precipitation"})
+
+    def _load_local_precipitation(self, precp_dataset:str, format:Literal["nc", "zarr"]="zarr"):
         import os
         import re
         from utils.function_clns import config
-        logger.debug(f"Loading local {precp_dataset} precipitation file")
+        logger.debug(f"Loading local {precp_dataset} precipitation file in format {format}")
 
-        config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
-                          config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], 
-                          config['SPI']['MSWEP']['path'] ]
-        config_dir_precp = [config['PRECIP']['IMERG']['path'],config['PRECIP']['GPCC']['path'], 
-                            config['PRECIP']['CHIRPS']['path'], config['PRECIP']['ERA5']['path'],
-                            config['PRECIP']['TAMSTAT']['path'],config['PRECIP']['MSWEP']['path'],
-                            config["PRECIP"]["ERA5_land"]["path"]]
-    
-        list_precp_prods = ["ERA5", "GPCC","CHIRPS","SPI_ERA5", "SPI_GPCC","SPI_CHIRPS",
-                            "ERA5_land"]
+        def get_path(config_dict, dataset, product):
+            """
+            Function to retrieve the path for a given metric and product.
 
-        if precp_dataset not in list_precp_prods:
-            error = ValueError(f"Precipitation product must be one of {list_precp_prods}")
-            logger.error(error)
-            raise error
+            Parameters:
+            config_dict (dict): The configuration dictionary containing paths.
+            dataset (str): The metric type (e.g., 'SPI' or 'PRECIP').
+            product (str): The product name (e.g., 'IMERG', 'GPCC').
+
+            Returns:
+            str: The path associated with the specified metric and product.
+            """
+            try:
+                return config_dict[dataset][product]
+            except KeyError:
+                return f"Path not found for metric '{dataset}' and product '{product}'"
+
+        # Create the dictionary
+        config_dict = {
+            "SPI": {
+                "IMERG": config['SPI']['IMERG']['path'],
+                "GPCC": config['SPI']['GPCC']['path'],
+                "CHIRPS": config['SPI']['CHIRPS']['path'],
+                "ERA5": config['SPI']['ERA5']['path'],
+                "MSWEP": config['SPI']['MSWEP']['path']
+            },
+            "PRECIP": {
+                "IMERG": config['PRECIP']['IMERG']['path'],
+                "GPCC": config['PRECIP']['GPCC']['path'],
+                "CHIRPS":config['PRECIP']['CHIRPS']['path'],
+                "ERA5": config['PRECIP']['ERA5']['path'],
+                "TAMSTAT": config['PRECIP']['TAMSTAT']['path'],
+                "MSWEP": config['PRECIP']['MSWEP']['path'],
+                "ERA5_land": config["PRECIP"]["ERA5_land"]["path"]
+            }
+        }
 
         if "SPI" in precp_dataset:
             precp_dataset = precp_dataset.replace("SPI_","")
-            path = [f for f in config_directories if precp_dataset in f][0]
+            path = get_path(config_dict, "SPI", precp_dataset)
             late =  re.search(r'\d+', path).group()
             filename = "spi_gamma_{}".format(late)
-            file = [f for f in os.listdir(path) if filename in f][0]
+            filename = [f for f in os.listdir(path) if filename in f][0]
             self.spi_latency = late
         else:
-            path = [f for f in config_dir_precp if precp_dataset in f][0]
-            filename = f"{precp_dataset}_merged.nc"
+            path = get_path(config_dict,"PRECIP", precp_dataset)
+            filename = f"{precp_dataset}_merged.{format}"
 
         self.precp_path = path
-        self.precp_filename = file
-        self.time_end = config['PRECIP'][precp_dataset]['date_end']
-        self.time_start = config['PRECIP'][precp_dataset]['date_start']
+        self.precp_filename = filename
 
     def _load_arco_precipitation(self, variables:Union[list, str]):
         from ancillary.hydro_data import query_arco_era5
@@ -188,24 +224,25 @@ class PrecipDataPreparation():
 
     
     def _transform_ancillary(self, precp_data:xr.DataArray, 
-                        input_data:xr.Dataset, 
-                        interpolate:bool)-> xr.Dataset:
+                        input_data:xr.Dataset=None, 
+                        temporal_resolution:Literal["daily","hourly"]="hourly")-> xr.Dataset:
         
-        ds_temp_min, ds_temp_max = self._process_temperature_arco(input_data)
-        evap, pot_evap = self._process_evapo_arco(input_data)
+        if temporal_resolution == "hourly":
+            ds_temp_min, ds_temp_max = self._process_temperature_arco(input_data)
+            evap, pot_evap = self._process_evapo_arco(input_data)
+            precp_data = precp_data.to_dataset()
+            precp_data = precp_data.assing(evap = evap, potential_evap= pot_evap, 
+                                    temp_max= ds_temp_max, temp_min = ds_temp_min)
 
-        precp_dataset = precp_data.to_dataset()
-        sm_data = self._process_soil_moisture(precp_dataset)
+        sm_data = self._process_soil_moisture(precp_data)
+        precp_data = precp_data.assign(sm_1 = sm_data["var40"], 
+                                        sm_2 = sm_data["var41"],
+                                        sm_3 = sm_data["var42"], 
+                                        sm_4 = sm_data["var43"])
         
-        precp_dataset = precp_dataset.assign(
-                                    evap = evap, potential_evap= pot_evap, 
-                                    temp_max= ds_temp_max, temp_min = ds_temp_min,
-                                    sm_1 = sm_data["var40"], sm_2 = sm_data["var41"],
-                                    sm_3 = sm_data["var42"], sm_4 = sm_data["var43"])
-        
-        precp_dataset = precp_dataset.chunk(chunks={"time":-1, "lat":"auto", "lon":"auto"})
+        precp_data = precp_data.chunk(chunks={"time":-1, "lat":"auto", "lon":"auto"})
 
-        return precp_dataset
+        return precp_data
     
     def _load_processed_ndvi(self, 
                              path:str, 
@@ -260,9 +297,17 @@ class PrecipDataPreparation():
                                  f" and 'filename' must be provided.")
                 logging.error(error)
                 raise error
+            else:
             # Open the precipitation file with xarray
-            dataset = xr.open_dataset(os.path.join(path, filename))
-        
+                if filename.endswith(".nc"):
+                    dataset = xr.open_dataset(os.path.join(path, filename))
+                elif filename.endswith(".zarr"):
+                    dataset = xr.open_zarr(os.path.join(path, filename))
+                else:
+                    err = logger.error(f"Please select a valid file format between "
+                                       f"\"zarr\" or \"netcdf\"")
+                    raise err
+                
         ############## 2) Clip dataset ##############
 
         dataset = prepare(clip_file(dataset, gdf=None, invert=invert))\
@@ -434,7 +479,7 @@ class PrecipDataPreparation():
         import pandas as pd
         import glob
         from datetime import datetime
-        logging.debug("Loading soil moisture data")
+        logging.info("Loading soil moisture data")
 
         base_path = config["SOIL_MO"]["path"]
         years = range(datetime.strptime(config["DEFAULT"]["date_start"],"%Y-%m-%d").year, 

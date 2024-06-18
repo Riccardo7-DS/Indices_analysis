@@ -18,6 +18,13 @@ import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
 
+
+def init_tb(log_path):
+    from torch.utils.tensorboard import SummaryWriter
+    writer = SummaryWriter(log_dir=log_path)
+    print("Tensorboard:  tensorboard --logdir="+ log_path)
+    return writer
+
 def create_runtime_paths(args:dict, spi:bool=False):
     from definitions import ROOT_DIR
     from utils.function_clns import config
@@ -152,21 +159,6 @@ def data_preparation(args:dict,
         sub_precp = sub_precp.where(ds.notnull())
         return sub_precp, ds
 
-def prepare_array_wgcnet(data):
-    
-    if len(data.shape)==3:
-        logger.info("Adding one channel dimension")
-        data = np.expand_dims(data, 1)
-
-    # Get the dimensions of the input array
-    T, C, lat, lon = data.shape
-
-    # Reshape the array to combine the lat and lon dimensions into one
-    data_reshaped = data.reshape(T, C, lat * lon).transpose(1, 0, 2) # C, T, V
-
-    # data_lag = transform_array(data_reshaped, lag)
-    return data_reshaped
-
 def get_dataloader(args, dataset:xr.DataArray, 
                    ds:xr.DataArray, check_matrix:bool=False):
     
@@ -267,23 +259,66 @@ def get_dataloader(args, dataset:xr.DataArray,
     return dataloader, num_nodes, data_y_unstack.iloc[num_train: num_test+num_train,:]
 
 
-def train_loop(config, args, epoch, model, train_loader, criterion, 
-               optimizer, scaler=None, mask=None, draw_scatter:bool=False):
-    from analysis.deep_learning.utils_gwnet import masked_mse_loss, masked_rmse, masked_mape, mask_mape, mask_rmse, MetricsRecorder, create_paths
+def check_shape_dataloaders(train_dataloader, val_dataloader):
+    for batch_idx, (inputs, targets) in enumerate(train_dataloader):
+        inputs = inputs.float()
+        targets = targets.float()
+        logger.info("Logging data info for train dataloader: "
+            "Input shape: %s, Target shape: %s, "
+            "Input max: %s, Input min: %s, "
+            "Target max: %s, Target min: %s", 
+            inputs.shape, targets.shape, 
+            inputs.max().item(), inputs.min().item(),
+            targets.max().item(), targets.min().item())
+    
+    
+    for batch_idx, (inputs, targets) in enumerate(val_dataloader):
+        inputs = inputs.float()
+        targets = targets.float()
+        logger.info("Logging data info for validation dataloader: "
+            "Input shape: %s, Target shape: %s, "
+            "Input max: %s, Input min: %s, "
+            "Target max: %s, Target min: %s", 
+            inputs.shape, targets.shape, 
+            inputs.max().item(), inputs.min().item(),
+            targets.max().item(), targets.min().item())
 
-    _, _, img_path, _ = create_paths(args)
+def prepare_array_wgcnet(data):
+    
+    if len(data.shape)==3:
+        logger.info("Adding one channel dimension")
+        data = np.expand_dims(data, 1)
+
+    # Get the dimensions of the input array
+    T, C, lat, lon = data.shape
+
+    # Reshape the array to combine the lat and lon dimensions into one
+    data_reshaped = data.reshape(T, C, lat * lon) # T, C, V
+
+    # data_lag = transform_array(data_reshaped, lag)
+    return data_reshaped
+
+def print_lr_change(old_lr, scheduler):
+    lr = scheduler.get_last_lr()[0]
+    if lr != old_lr:
+        logger.info(f"Learning rate changed: {old_lr} --> {lr}")
+    return lr
+
+def train_loop(config, args, model, train_loader, criterion, 
+               optimizer, scaler=None, mask=None, draw_scatter:bool=False):
+    from analysis.deep_learning.utils_gwnet import masked_mse_loss, masked_rmse, masked_mape, mask_mape, mask_rmse, MetricsRecorder, create_runtime_paths
+
+    _, _, img_path, _ = create_runtime_paths(args)
     
     #from torcheval.metrics import R2Score
     model.train()
-    epoch_records = {'loss': [], "mape":[], "rmse":[], "r2":[]}
+    epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
     #metric = R2Score()
 
     if draw_scatter is True:
         nbins= 200
         bin0 = np.linspace(0, config.max_value, nbins+1)
         n = np.zeros((nbins,nbins))
-
-    num_batchs = len(train_loader)
 
     for batch_idx, (inputs, targets) in enumerate(train_loader):
 
@@ -295,8 +330,8 @@ def train_loop(config, args, epoch, model, train_loader, criterion,
             img_pred = outputs.detach().cpu().numpy()
             img_real = targets.detach().cpu().numpy()
             if args.normalize is True:
-                img_pred = scaler.inverse_transform(img_pred, config.null_value)
-                img_real = scaler.inverse_transform(img_real, config.null_value)
+                img_pred = scaler.inverse_transform(img_pred)
+                img_real = scaler.inverse_transform(img_real)
             h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins)
             n = n+h
 
@@ -320,10 +355,7 @@ def train_loop(config, args, epoch, model, train_loader, criterion,
         epoch_records['loss'].append(losses.item())
         epoch_records["rmse"].append(rmse)
         epoch_records["mape"].append(mape)
-        # if batch_idx and batch_idx % config.display == 0:
-        #     logger.info('EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'\
-        #                 .format(epoch, batch_idx, num_batchs,
-        #                         epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
+        
 
     if draw_scatter is True:
         plot_scatter_hist(n,  bin0, img_path)
@@ -331,14 +363,14 @@ def train_loop(config, args, epoch, model, train_loader, criterion,
     return epoch_records
 
 
-def valid_loop(config, args, epoch, model, valid_loader, criterion, 
+def valid_loop(config, args, model, valid_loader, criterion, scheduler,
                scaler=None, mask=None, draw_scatter:bool=False):
     
-    from analysis.deep_learning.utils_gwnet import masked_mse_loss, masked_mape, masked_rmse, mask_mape, mask_rmse, masked_mse, MetricsRecorder, create_paths
-    _, _, img_path, _ = create_paths(args)
+    from analysis.deep_learning.utils_gwnet import masked_mse_loss, masked_mape, masked_rmse, mask_mape, mask_rmse, masked_mse, MetricsRecorder, create_runtime_paths
+    _, _, img_path, _ = create_runtime_paths(args)
 
     model.eval()
-    epoch_records = {'loss': [], "mape":[], "rmse":[]}
+    epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
 
     if draw_scatter is True:
         nbins= 200
@@ -357,8 +389,8 @@ def valid_loop(config, args, epoch, model, valid_loader, criterion,
                 img_pred = outputs.cpu().detach().numpy().flatten()
                 img_real = targets.cpu().detach().numpy().flatten()
                 if args.normalize is True:
-                    img_pred = scaler.inverse_transform(img_pred, config.null_value)
-                    img_real = scaler.inverse_transform(img_real, config.null_value)
+                    img_pred = scaler.inverse_transform(img_pred)
+                    img_real = scaler.inverse_transform(img_real)
                 h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins)
                 n = n+h
 
@@ -375,13 +407,17 @@ def valid_loop(config, args, epoch, model, valid_loader, criterion,
                     mape = mask_mape(outputs,targets, mask).item()
                     rmse = mask_rmse(outputs,targets, mask).item()
 
+
             epoch_records['loss'].append(losses.item())
             epoch_records["rmse"].append(rmse)
             epoch_records["mape"].append(mape)
-            # if batch_idx and batch_idx % config.display == 0:
-            #     logger.info('[V] EP:{:03d}\tBI:{:05d}/{:05d}\tLoss:{:.6f}({:.6f})'\
-            #                 .format(epoch, batch_idx, num_batchs,
-            #                         epoch_records['loss'][-1], np.mean(epoch_records['loss'])))
+
+    ##### Step learning rate
+    mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
+    scheduler.step(mean_loss)
+    learning_rate = scheduler.get_last_lr()[0]
+    epoch_records["lr"].append(learning_rate)
+            
     if draw_scatter is True:
         plot_scatter_hist(n,  bin0, img_path)
     
@@ -422,42 +458,62 @@ def persistence_baseline(train_label):
     logger.info("The baseline is a RMSE of {}".format(np.mean(batch_rmse)))
 
 
-def get_train_valid_loader(model_config, args, data, labels, add_lag:bool=True):
+def get_train_valid_loader(model_config, args, data, labels, train_split:float=0.7, 
+                           add_lag:bool=True):
     from scipy.io import loadmat
     from torch.utils.data import TensorDataset
     from torch.utils.data import DataLoader
     from torch.utils.data.sampler import SubsetRandomSampler
     from analysis import CustomConvLSTMDataset
+    from utils.function_clns import CNN_split
 
     data = prepare_array_wgcnet(data)
     labels = prepare_array_wgcnet(labels)
+    
 
-    dataset = CustomConvLSTMDataset(model_config, args, data, labels)
+    train_data, val_data, train_label, val_label, \
+        test_valid, test_label = CNN_split(data, labels, split_percentage=train_split)
+    
+    train_dataset = CustomConvLSTMDataset(model_config, args, 
+                                          train_data, train_label, 
+                                          save_files=True, filename="train_ds")
+    
+    val_dataset = CustomConvLSTMDataset(model_config, args, 
+                                        val_data, val_label, 
+                                        save_files=True, filename="val_ds")
+    
+    # create a DataLoader object that uses the dataset
+    train_dataloader = DataLoader(train_dataset, 
+                                  batch_size=model_config.batch_size, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, 
+                                batch_size=model_config.batch_size, shuffle=False)
 
-    x = torch.tensor(dataset.data) #N, C, T, V (vertices e.g. lat-lon)
-    y = torch.tensor(dataset.labels)
+    # dataset = CustomConvLSTMDataset(model_config, args, data, labels)
 
-    train_val_dataset = TensorDataset(x, y)
+    # x = torch.tensor(dataset.data) #N, C, T, V (vertices e.g. lat-lon)
+    # y = torch.tensor(dataset.labels)
 
-    num_train = len(train_val_dataset)
-    indices = list(range(num_train))
-    split = int(np.floor(0.1 * num_train))
+    # train_val_dataset = TensorDataset(x, y)
 
-    np.random.seed(123)
-    np.random.shuffle(indices)
+    # num_train = len(train_val_dataset)
+    # indices = list(range(num_train))
+    # split = int(np.floor(0.1 * num_train))
 
-    train_idx, valid_idx = indices[split:], indices[:split]
-    train_sampler = SubsetRandomSampler(train_idx)
-    valid_sampler = SubsetRandomSampler(valid_idx)
+    # np.random.seed(123)
+    # np.random.shuffle(indices)
 
-    train_loader = DataLoader(train_val_dataset, 
-                              batch_size=model_config.batch_size, 
-                              sampler=train_sampler)
-    valid_loader = DataLoader(train_val_dataset, 
-                              batch_size=model_config.batch_size, 
-                              sampler=valid_sampler)
+    # train_idx, valid_idx = indices[split:], indices[:split]
+    # train_sampler = SubsetRandomSampler(train_idx)
+    # valid_sampler = SubsetRandomSampler(valid_idx)
 
-    return train_loader, valid_loader, dataset
+    # train_loader = DataLoader(train_val_dataset, 
+    #                           batch_size=model_config.batch_size, 
+    #                           sampler=train_sampler)
+    # valid_loader = DataLoader(train_val_dataset, 
+    #                           batch_size=model_config.batch_size, 
+    #                           sampler=valid_sampler)
+
+    return train_dataloader, val_dataloader, train_dataset
 
 
 
@@ -729,8 +785,8 @@ def save_figures(args:dict,
     epochs = list(range(1, epoch + 1))
 
     plt.figure()
-    plt.plot(epochs, metrics_recorder.train_mape, label='Train MAPE')
-    plt.plot(epochs, metrics_recorder.val_mape, label='Validation MAPE')
+    plt.plot(epochs, metrics_recorder.train_mape, label='train MAPE')
+    plt.plot(epochs, metrics_recorder.val_mape, label='validation MAPE')
     plt.xlabel('Epoch')
     plt.ylabel('MAPE')
     plt.legend()
@@ -740,8 +796,8 @@ def save_figures(args:dict,
 
     # Plot RMSE
     plt.figure()
-    plt.plot(epochs, metrics_recorder.train_rmse, label='Train RMSE')
-    plt.plot(epochs, metrics_recorder.val_rmse,  label='Validation RMSE')
+    plt.plot(epochs, metrics_recorder.train_rmse, label='train RMSE')
+    plt.plot(epochs, metrics_recorder.val_rmse,  label='validation RMSE')
     plt.xlabel('Epoch')
     plt.ylabel('RMSE')
     plt.legend()
@@ -751,8 +807,8 @@ def save_figures(args:dict,
 
     # Plot Loss
     plt.figure()
-    plt.plot(epochs, metrics_recorder.train_loss , label='Train Loss')
-    plt.plot(epochs,metrics_recorder.val_loss  , label='Validation Loss')
+    plt.plot(epochs, metrics_recorder.train_loss , label='train Loss')
+    plt.plot(epochs,metrics_recorder.val_loss  , label='validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
@@ -770,16 +826,32 @@ class MetricsRecorder:
         self.val_mape = []
         self.val_rmse = []
         self.val_loss = []
+        self.lr = []
+        self.epoch = []
 
-    def add_train_metrics(self, mape, rmse, loss):
-        self.train_mape.append(mape)
-        self.train_rmse.append(rmse)
-        self.train_loss.append(loss)
+    def add_train_metrics(self, metrics, epoch):
+        self.train_mape.append(np.mean(metrics['mape']))
+        self.train_rmse.append(np.mean(metrics["rmse"]))
+        self.train_loss.append(np.mean(metrics["loss"]))
+        self.epoch.append(epoch)
 
-    def add_val_metrics(self, mape, rmse, loss):
-        self.val_mape.append(mape)
-        self.val_rmse.append(rmse)
-        self.val_loss.append(loss)
+    def add_val_metrics(self, metrics):
+        self.val_mape.append(np.mean(metrics['mape']))
+        self.val_rmse.append(np.mean(metrics["rmse"]))
+        self.val_loss.append(np.mean(metrics["loss"]))
+        self.lr.append(metrics["lr"][-1])
+
+def update_tensorboard_scalars(writer, recorder:MetricsRecorder):
+    writer.add_scalars('loss', {'train': recorder.train_loss[-1]}, recorder.epoch[-1])
+    #writer.add_scalars('LossTR', {'trainD': train.lossd[-1]}, train.epoch[-1])
+    writer.add_scalars('loss', {'valid': recorder.val_loss[-1]}, recorder.epoch[-1])
+    #writer.add_scalars('LossVAL', {'validD': valid.lossd[-1]}, valid.epoch[-1])
+    
+    writer.add_scalars('rmse', {'train': recorder.train_rmse[-1]}, recorder.epoch[-1])
+    writer.add_scalars('rmse', {'valid': recorder.val_rmse[-1]}, recorder.epoch[-1])
+    writer.add_scalars('mape', {'train': recorder.train_mape[-1]}, recorder.epoch[-1])
+    writer.add_scalars('mape', {'valid': recorder.val_mape[-1]}, recorder.epoch[-1])
+    writer.add_scalars('lr', {'learning rate': recorder.lr[-1]}, recorder.epoch[-1])
 
 
 class trainer():
@@ -798,12 +870,13 @@ class trainer():
                            skip_channels=model_config.nhid * 8,
                            end_channels=model_config.nhid * 16)
         
+        self.learning_rate = model_config.learning_rate
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), 
-                                    lr=model_config.learning_rate,
+                                    lr=self.learning_rate,
                                     weight_decay=model_config.weight_decay)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        self.optimizer, factor=0.7, patience=3, verbose=False
+        self.optimizer, factor=model_config.scheduler_factor, patience=model_config.scheduler_patience
         )
         self.loss = masked_mse
         self.scaler = scaler
@@ -818,6 +891,7 @@ class trainer():
             logger.info(f"Resuming training from epoch {self.checkp_epoch}")
 
     def train(self, input, real_val):
+        epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
         self.model.train()
         self.optimizer.zero_grad()
         input = nn.functional.pad(input,(1,0,0,0))
@@ -825,9 +899,9 @@ class trainer():
         # output = output.transpose(2,3)
         #output = [batch_size,12,num_nodes,1]
         real = torch.unsqueeze(real_val,dim=1)
-        predict = self.scaler.inverse_transform(output, config.null_value)
+        predict = self.scaler.inverse_transform(output)
 
-        loss = self.loss(predict, real, -1)
+        loss = self.loss(predict, real)
         loss.backward()
         if self.clip is not None:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
@@ -836,22 +910,24 @@ class trainer():
         #for name, param in self.model.named_parameters():
         #    if param.grad is not None:
         #        print("Gradient Stats:", name, param.grad.mean().item(), param.grad.max().item(), param.grad.min().item())
-        mape = masked_mape(predict,real, -1).item()
-        rmse = masked_rmse(predict,real,-1).item()
-        return loss.item(),mape,rmse
+        mape = masked_mape(predict,real).item()
+        rmse = masked_rmse(predict,real).item()
+
+        return loss, mape, rmse
 
     def eval(self, input, real_val):
         self.model.eval()
+       
         input = nn.functional.pad(input,(1,0,0,0))
         output = self.model(input)
         # output = output.transpose(2,3)
         #output = [batch_size,12,num_nodes,1]
         real = torch.unsqueeze(real_val,dim=1)
-        predict = self.scaler.inverse_transform(output, config.null_value)
-        loss = self.loss(predict, real, -1)
-        mape = masked_mape(predict,real,-1).item()
-        rmse = masked_rmse(predict,real,-1).item()
-        return loss.item(),mape,rmse
+        predict = self.scaler.inverse_transform(output)
+        loss = self.loss(predict, real)
+        mape = masked_mape(predict,real).item()
+        rmse = masked_rmse(predict,real).item()
+        return loss, mape, rmse
     
     def test(self, test_loader):
         self.model.eval()
@@ -872,6 +948,11 @@ class trainer():
                 predictions.append(output) #[:,0,:,:].squeeze()
                 targets.append(real)
             return (test_loss / test_loader.num_batch).item(), predictions, targets
+        
+    def schedule_learning_rate(self, mean_loss):
+        self.scheduler.step(mean_loss)
+        new_lr = print_lr_change(self.learning_rate, self.scheduler)
+        self.learning_rate = new_lr
 
 def metric(pred, real):
     mae = masked_mae(pred,real,0.0).item()
@@ -879,44 +960,40 @@ def metric(pred, real):
     rmse = masked_rmse(pred,real,0.0).item()
     return mae,mape,rmse
 
-def build_model(args, config):
-    device = torch.device(config.GWNET.device)
-    adj_mx = load_adj(args.adjdata,args.adjtype)
-    dataloader = load_dataset(args.data, args.batch_size, args.batch_size, args.batch_size)
-    scaler = dataloader['scaler']
-    supports = [torch.tensor(i).to(device) for i in adj_mx]
+def gwnet_train_loop(model_config, engine, train_dl):
+    epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
+    for iter, (x, y) in enumerate(train_dl):
+        trainx = torch.Tensor(x).to(model_config.device)
+        trainx= trainx.transpose(3, 2)
+        trainy = torch.Tensor(y).to(model_config.device)
+        trainy = trainy.transpose(3, 2)
+        loss, mape, rmse = engine.train(trainx, trainy[:, 0,:,:])
+        
+        epoch_records["loss"].append(loss.item())
+        epoch_records["rmse"].append(rmse)
+        epoch_records["mape"].append(mape)
+    return epoch_records
 
-    print(args)
+def gwnet_val_loop(model_config, engine, val_dl):
+    epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
+    for iter, (x, y) in enumerate(val_dl):
+        trainx = torch.Tensor(x).to(model_config.device)
+        trainx= trainx.transpose(2, 3)
+        trainy = torch.Tensor(y).to(model_config.device)
+        trainy = trainy.transpose(2, 3)
+        loss, rmse, mape = engine.eval(trainx, trainy[:, 0,:,:])
 
-    if args.randomadj:
-        adjinit = None
-    else:
-        adjinit = supports[0]
+        epoch_records["loss"].append(loss.item())
+        epoch_records["rmse"].append(rmse)
+        epoch_records["mape"].append(mape)
 
-    if args.aptonly:
-        supports = None
+    ##### Step learning rate
+    mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
+    engine.scheduler.step(mean_loss)
+    engine.learning_rate = engine.scheduler.get_last_lr()[0]
+    epoch_records["lr"].append(engine.learning_rate)
 
-
-    engine = trainer(scaler, config.GWNET.in_dim, config.GWNET.seq_length, args.num_nodes, config.GWNET.nhid, config.GWNET.dropout,
-                         config.GWNET.learning_rate, config.GWNET.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
-                         adjinit)
-    return engine, scaler, dataloader, adj_mx
-
-def gwnet_train_loop(model_config, engine, x, y):
-    trainx = torch.Tensor(x).to(model_config.device)
-    trainx= trainx.transpose(3, 2)
-    trainy = torch.Tensor(y).to(model_config.device)
-    trainy = trainy.transpose(3, 2)
-    metrics = engine.train(trainx, trainy[:,0,:,:])
-    return metrics
-
-def gwnet_val_loop(model_config, engine, x, y):
-    trainx = torch.Tensor(x).to(model_config.device)
-    trainx= trainx.transpose(2, 3)
-    trainy = torch.Tensor(y).to(model_config.device)
-    trainy = trainy.transpose(2, 3)
-    metrics = engine.eval(trainx, trainy[:,0,:,:])
-    return metrics
+    return epoch_records
 
 def generate_adj_dist(df, normalized_k=0.05,):
     coord = df[['lat', 'lon']].values
@@ -962,10 +1039,6 @@ def generate_adj_matrix(args:dict, save_plot:bool=True):
     
         sns.heatmap(adj_dist, mask=mask, cmap="YlGnBu", xticklabels=ax_labels, yticklabels=ax_labels)\
             .get_figure().savefig(os.path.join(img_path, "adj_dist.png"))
-
-
-
-
 
 def old_main(args, config):
     sub_precp, ds, _ =  data_preparation(args, precp_dataset=config.GWNET.precp_product)

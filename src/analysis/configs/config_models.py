@@ -28,13 +28,20 @@ class ConfigConvLSTM:
     patience = 20
     learning_rate = 1e-3
     batch_size= 8
+
     null_value = -1
+    max_value = 1
+
+    scheduler_patience = 10
+    scheduler_factor = 0.7
 
     image_size = (64, 64)
     input_size = (64, 64)
+    
 
     # Parameters specific to ConvLSTM
     dim = 64
+    layers = [32, 32, 32]
 
 
     # (type, activation, in_ch, out_ch, kernel_size, padding, stride)
@@ -72,10 +79,11 @@ class ConfigGWNET():
     epochs = 300
     patience = 20
     learning_rate = 1e-3
-    batch_size= 16
+    batch_size= 4
     dim = 64
 
     null_value = -1
+    max_value = 1
 
     masked_loss = False
 
@@ -87,6 +95,9 @@ class ConfigGWNET():
     nhid = 16
     print_every = 100
 
+    scheduler_patience = 3
+    scheduler_factor = 0.7
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     data_dir = os.path.join(ROOT_DIR,  "..",'data')

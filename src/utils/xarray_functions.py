@@ -70,6 +70,26 @@ def compute_ndvi(xr_df):
     return xr_df.assign(ndvi=(
         xr_df['channel_2'] - xr_df['channel_1']) / (xr_df['channel_2'] + xr_df['channel_1']))
 
+def shift_xarray_overtime(ds:xr.Dataset, diff:str):
+    import re
+    import numpy as np
+    import pandas  as pd
+
+    if "D" in diff:
+        unit = "D"
+    else:
+        err = NotImplementedError(f"Only 'D' day unit is implemented")
+    
+    integer = int(re.search(r'\d+', diff).group())
+    time = ds["time"].values
+    time_min = time.min()
+    time_max = time.max()
+    delta = np.timedelta64(integer, unit)
+    new_range = pd.date_range(time_min + delta, time_max+ delta, freq="1D")
+
+    return ds.assign_coords(time=new_range)    
+
+
 def set_negative_zero(data_array:xr.DataArray):
     return xr.where(data_array < 0, 0, data_array)
 
