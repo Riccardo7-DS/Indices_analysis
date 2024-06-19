@@ -36,18 +36,21 @@ class CustomConvLSTMDataset(Dataset):
             labels: xr.DataArray, 
             save_files:bool=False,
             filename = "dataset"):
+        
+        self.num_timesteps = data.shape[0]
+        self.num_channels = data.shape[1]
+
+        if (len(labels.shape) == 3) and (len(data.shape)==4):
+            labels = np.expand_dims(labels, 1)
 
         self.data = np.swapaxes(data, 1,0)
         self.labels= np.swapaxes(labels, 1,0)
-        # if (len(labels.shape) == 3):
-        #     self.labels = np.expand_dims(labels, 0)
         # else:              
         #     self.labels = labels
         self.lag = config.include_lag
         # self.image_size = config.image_size
         self.input_size = config.input_size if args.model  == "CONVLSTM" else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
-        self.num_timesteps = data.shape[0]
-        self.num_channels = data.shape[1]
+
 
         self.steps_head = args.step_length
         self.learning_window = args.feature_days

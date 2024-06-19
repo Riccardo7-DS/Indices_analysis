@@ -16,7 +16,6 @@ class ConfigConvLSTM:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     masked_loss = True
-    model_name = "checkpoint_epoch_99"
 
     # num_frames_input = 60
     num_frames_output = 1 ### means 1 frame as output
@@ -25,14 +24,14 @@ class ConfigConvLSTM:
     num_samples = 9 #### the number of channels to use
 
     epochs = 300
-    patience = 20
+    patience = 10
     learning_rate = 1e-3
     batch_size= 8
 
     null_value = -1
     max_value = 1
 
-    scheduler_patience = 10
+    scheduler_patience = 4
     scheduler_factor = 0.7
 
     image_size = (64, 64)

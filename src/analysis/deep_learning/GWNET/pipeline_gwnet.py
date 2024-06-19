@@ -48,17 +48,16 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
 
     ################################# Module level logging #############################
     _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
-    init_logging("training_gwnet", verbose=False, log_file=os.path.join(log_path, 
+    logger = init_logging(log_file=os.path.join(log_path, 
                                                       f"gwnet_days_{args.step_length}"
                                                       f"features_{args.feature_days}.log"))
     writer = init_tb(log_path)
-    logger = logging.getLogger("training_gwnet")
 
     train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, 
                                                          args, 
                                                          data, 
                                                          target,
-                                                         config.MODELS.split)
+                                                         config["MODELS"]["split"])
     check_shape_dataloaders(train_dl, valid_dl)
     model = WGCNModel(args, config_gwnet, dataset.data).to(device)
 
@@ -157,11 +156,10 @@ def pipeline_wavenet(args, checkpoint_path):
     from utils.function_clns import init_logging, config
 
     _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
-    init_logging("training_wavenet", verbose=True, log_file=os.path.join(log_path, 
+    logger = init_logging(log_file=os.path.join(log_path, 
                                                       f"wavenet_days_{args.step_length}"
                                                       f"features_{args.feature_days}.log"))
     writer = init_tb(log_path)
-    logger = logging.getLogger("training_wavenet")
 
     logger.info(f"Starting training WaveNet model for {args.step_length}"
                 f" days in the future with {args.feature_days} days of features")

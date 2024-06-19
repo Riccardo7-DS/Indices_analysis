@@ -475,7 +475,7 @@ def get_missing_datarray(datarray, prediction="P1D", output_dataset:bool=False):
     
     dates = [np.datetime64(i) for i in expected_dates]
     missing_dates = [i for i in dates if i not in datarray['time'].values]
-    logger.info("Missing dates are:" , missing_dates)
+    logger.info(f"Missing dates are: {missing_dates}")
 
     if output_dataset is True:
         lat = datarray["lat"]
