@@ -5,6 +5,27 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 
+image_size = 64
+num_frames = 4
+
+# sampling
+
+min_signal_rate = 0.015
+max_signal_rate = 0.95
+
+# architecture
+
+embedding_dims = 64 # 32
+embedding_max_frequency = 1000.0
+#widths = [32, 64, 96, 128]
+widths = [64, 128, 256, 384]
+block_depth = 2
+
+# optimization
+
+batch_size =  2
+ema = 0.999
+
 # Assuming you have a similar setup.py for configurations
 # from setup import *
 
@@ -114,7 +135,7 @@ class UNet(nn.Module):
 class DiffusionModel(nn.Module):
     def __init__(self, image_size, input_frames, output_frames, widths, block_depth):
         super(DiffusionModel, self).__init__()
-        self.normalizer = nn.LayerNorm(image_size)
+        # self.normalizer = nn.LayerNorm(image_size)
         self.network = UNet(image_size, input_frames, output_frames, widths, block_depth)
         self.ema_network = UNet(image_size, input_frames, output_frames, widths, block_depth)  # Assuming a deep copy here
         self.input_frames = input_frames
@@ -162,8 +183,9 @@ class DiffusionModel(nn.Module):
         return torch.clamp(images, 0.0, 1.0)
 
     def train_step(self, images, optimizer, loss_fn, batch_size, image_size, max_signal_rate, min_signal_rate):
-        images = self.normalizer(images)
-        noises = torch.randn((batch_size, image_size, image_size, self.output_frames)).to(images.device)
+        # images = self.normalizer(images)
+        noises = torch.randn((batch_size, image_size, 
+                              image_size, self.output_frames)).to(images.device)
         diffusion_times = torch.rand((batch_size, 1, 1, 1)).to(images.device)
         noise_rates, signal_rates = self.diffusion_schedule(diffusion_times)
         target = images[:,:,:,-self.output_frames:]
@@ -183,7 +205,7 @@ class DiffusionModel(nn.Module):
         return noise_loss.item(), image_loss.item()
 
     def test_step(self, images, batch_size, image_size, loss_fn):
-        images = self.normalizer(images)
+        # images = self.normalizer(images)
         noises = torch.randn((batch_size, image_size, image_size, self.output_frames)).to(images.device)
         diffusion_times = torch.rand((batch_size, 1, 1, 1)).to(images.device)
         noise_rates, signal_rates = self.diffusion_schedule(diffusion_times)

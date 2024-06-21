@@ -17,21 +17,20 @@ class ConfigConvLSTM:
 
     masked_loss = True
 
-    # num_frames_input = 60
     num_frames_output = 1 ### means 1 frame as output
     output_channels = 1
     include_lag = True
     num_samples = 9 #### the number of channels to use
 
     epochs = 300
-    patience = 10
+    patience = 20
     learning_rate = 1e-3
     batch_size= 8
 
     null_value = -1
     max_value = 1
 
-    scheduler_patience = 4
+    scheduler_patience = 3
     scheduler_factor = 0.7
 
     image_size = (64, 64)
@@ -41,7 +40,6 @@ class ConfigConvLSTM:
     # Parameters specific to ConvLSTM
     dim = 64
     layers = [32, 32, 32]
-
 
     # (type, activation, in_ch, out_ch, kernel_size, padding, stride)
     encoder = [('conv', 'leaky', num_samples, 16, 3, 1, 2),

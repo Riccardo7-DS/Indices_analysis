@@ -49,8 +49,7 @@ class CustomConvLSTMDataset(Dataset):
         #     self.labels = labels
         self.lag = config.include_lag
         # self.image_size = config.image_size
-        self.input_size = config.input_size if args.model  == "CONVLSTM" else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
-
+        self.input_size = config.input_size if args.model  == "CONVLSTM" or args.model =="DIME" else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
 
         self.steps_head = args.step_length
         self.learning_window = args.feature_days
@@ -117,76 +116,6 @@ class CustomConvLSTMDataset(Dataset):
         
         
         self.data, self.labels = populate_arrays(args, train_data_processed, label_data_processed)
-    
-    
-    def _generate_traing_data_old(self):
-
-        if self.lag is True:
-            logger.debug("Adding one channel to features to account for lagged data")
-            tot_channels = self.num_channels + 1 
-        else:
-            tot_channels = self.num_channels
-        
-        available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window
-
-        train_data_processed = np.zeros(
-            (available_timesteps, 
-                tot_channels,
-                self.learning_window, *self.input_size), 
-                dtype=np.float32
-            )
-        logger.debug(f"Empty training matrix has shape {train_data_processed.shape}")
-        
-        label_data_processed = np.zeros(
-            (available_timesteps, 
-                self.output_channels, 
-                self.output_window, *self.input_size), 
-                dtype=np.float32
-            )
-        
-        logger.debug(f"Empty instance matrix has shape {train_data_processed.shape}")
-
-        current_idx += self.learning_window
-        
-        if self.num_channels == 1:
-            while current_idx <  self.num_timesteps - self.steps_head - self.output_window:
-                train_data_processed[current_idx, 0, :, :, :] = \
-                    self.data[0, current_idx - self.learning_window : current_idx , :, :]
-                
-                label_data_processed[current_idx, 0, :, :, :] = \
-                    self.labels[current_idx + self.steps_head : \
-                    current_idx + self.steps_head + self.output_window, :, :]
-                
-                current_idx +=1
-        
-        elif (self.num_channels > 1) & (self.lag is False):
-
-            while current_idx <  self.num_timesteps - self.steps_head - self.output_window:
-                for chnl in range(0, self.num_channels):
-                    train_data_processed[current_idx -  self.learning_window, chnl, :, :, :] = \
-                        self.data[chnl, current_idx-self.learning_window: current_idx, :, :]
-                
-                label_data_processed[current_idx -  self.learning_window, 0, :, :, :] = \
-                    self.labels[current_idx + self.steps_head : \
-                    current_idx + self.steps_head + self.output_window, :, :]
-                
-                current_idx +=1
-
-        elif (self.num_channels > 1) & (self.lag is True):
-
-            while current_idx <  self.num_timesteps - self.steps_head - self.output_window:
-                for chnl in range(0, self.num_channels):
-                    train_data_processed[current_idx -  self.learning_window, chnl, :, :, :] = \
-                        self.data[chnl, current_idx-self.learning_window: current_idx, :, :]
-                 
-                train_data_processed[current_idx -  self.learning_window, tot_channels-1, :, :, :] = \
-                        self.labels[current_idx-self.learning_window: current_idx, :, :]
-                
-                label_data_processed[current_idx -  self.learning_window, 0, :, :, :] = \
-                    self.labels[current_idx + self.steps_head : \
-                    current_idx + self.steps_head + self.output_window, :, :]
-                
-                current_idx +=1
 
     def __len__(self):
         return self.data.shape[0] #- self.learning_window - self.steps_head - self.output_window
