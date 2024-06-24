@@ -13,7 +13,6 @@ from torch.utils.data import DataLoader
 import os
 import logging
 from analysis import masked_mape, masked_rmse
-logger = logging.getLogger(__name__)
 parser = argparse.ArgumentParser()
 parser.add_argument('-f')
 
