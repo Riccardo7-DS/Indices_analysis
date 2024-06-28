@@ -53,14 +53,14 @@ class PrecipDataPreparation():
             dump_obj = pickle.dumps(self.ndvi_scaler, protocol=pickle.HIGHEST_PROTOCOL)
             with open(os.path.join(ROOT_DIR,"../data/ndvi_scaler.pickle"), "wb") as handle:
                 handle.write(dump_obj)
-        
-        logger.debug("Cropping datasets...")
-        self.hydro_data = self._crop_area_for_dl(precp_ds)
-        self.ndvi_ds = self._crop_area_for_dl(ndvi_ds)
 
         logger.debug("Filling null values...")
-        self.hydro_data = self.hydro_data.fillna(-1)
-        self.ndvi_ds = self.ndvi_ds.fillna(-1)
+        self.filled_precp = precp_ds.fillna(-1)
+        self.filled_ndvi = ndvi_ds.fillna(-1)
+
+        logger.debug("Cropping datasets...")
+        self.hydro_data = self._crop_area_for_dl(self.filled_precp)
+        self.ndvi_ds = self._crop_area_for_dl(self.filled_ndvi)
 
         ### Check nulls
         self._count_nulls(self.hydro_data)

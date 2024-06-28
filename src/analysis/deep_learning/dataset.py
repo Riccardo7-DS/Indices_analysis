@@ -49,7 +49,7 @@ class CustomConvLSTMDataset(Dataset):
         #     self.labels = labels
         self.lag = config.include_lag
         # self.image_size = config.image_size
-        self.input_size = config.input_size if args.model  == "CONVLSTM" or args.model =="DIME" else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
+        self.input_size = config.input_size if args.model in ["CONVLSTM","DIME","AUTO_DIME"] else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
 
         self.steps_head = args.step_length
         self.learning_window = args.feature_days
@@ -60,9 +60,9 @@ class CustomConvLSTMDataset(Dataset):
         self.save_path = config.output_dir
         self._generate_traing_data(args)
         
-        if save_files is True:
-            self.filename = filename
-            self._save_files(self.data, self.labels)
+        # if save_files is True:
+        #     self.filename = filename
+        #     self._save_files(self.data, self.labels)
 
         #print('Loaded {} samples ({})'.format(self.__len__(), split))
 
@@ -72,11 +72,11 @@ class CustomConvLSTMDataset(Dataset):
         logger.debug("Adding one channel to features to account for lagged data" if self.lag else "No lag channel added")
         tot_channels = self.num_channels + 1 if self.lag else self.num_channels
 
-        available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window
-        shape_train = (available_timesteps, tot_channels, self.learning_window, *self.input_size) if isinstance(self.input_size, tuple) else \
-                      (available_timesteps, tot_channels, self.learning_window, self.input_size)
-        shape_label = (available_timesteps, self.output_channels, self.output_window, *self.input_size) if isinstance(self.input_size, tuple) else \
-                      (available_timesteps, self.output_channels, self.output_window, self.input_size) 
+        self.available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window
+        shape_train = (self.available_timesteps, tot_channels, self.learning_window, *self.input_size) if isinstance(self.input_size, tuple) else \
+                      (self.available_timesteps, tot_channels, self.learning_window, self.input_size)
+        shape_label = (self.available_timesteps, self.output_channels, self.output_window, *self.input_size) if isinstance(self.input_size, tuple) else \
+                      (self.available_timesteps, self.output_channels, self.output_window, self.input_size) 
 
         train_data_processed = np.empty(shape_train, dtype=np.float32)
         label_data_processed = np.empty(shape_label, dtype=np.float32)
@@ -108,7 +108,7 @@ class CustomConvLSTMDataset(Dataset):
 
                 current_idx += 1
             
-            if args.model == "CONVLSTM":
+            if args.model == "CONVLSTM" or args.model=="DIME":
                 train_data_processed = train_data_processed.swapaxes(1,2)
                 label_data_processed = label_data_processed.swapaxes(1,2)
             
@@ -138,6 +138,66 @@ class CustomConvLSTMDataset(Dataset):
             pfilename= os.path.join(dest_path,  f"{idx:06d}"+".pkl")
             with open(pfilename, 'wb') as file:
                 pickle.dump(data_dict, file)
+
+
+class DataGenerator(CustomConvLSTMDataset):
+    def __init__(self, config, args, data, labels, batch_size, autoencoder):
+        super().__init__(config, args, data, labels)
+        self.batch_size = batch_size
+        self.device = config.device
+        x = self._prepare_for_diffusion(config, args, self.data)
+        reduced_data = self._apply_autoencoder(x, autoencoder)
+        output = self._postrocess(config, reduced_data, self.data)
+        self.data = np.concatenate([self.data[:, -1, :-1], output], axis=1)
+
+    def _apply_batched_autoencoder(self, x, autoencoder, batch_size):
+        from torch.utils.data import DataLoader, TensorDataset
+        from tqdm.auto import tqdm
+        # Create DataLoader
+        dataset = TensorDataset(x)
+        dataloader = DataLoader(dataset, batch_size=batch_size, 
+                                shuffle=False)
+
+        # Apply the encoder to each batch
+        encoded_batches = []
+        for batch in tqdm(dataloader):
+            inputs = batch[0]
+            with torch.no_grad():  # Disable gradient computation for inference
+                encoded = autoencoder.encoder(inputs)
+            encoded_batches.append(encoded)
+
+        # Concatenate all encoded batches
+        return torch.cat(encoded_batches)
+
+    def _postrocess(self, config, output, data):
+        return output.view(data.shape[0], config.image_size , 
+                           config.image_size , 20).transpose(1, 3)
+
+    def _prepare_for_diffusion(self, config, args, data):
+        imag_past = data.transpose(0, 2, 1, 3, 4)[:,-1]
+        imag_past  =  imag_past.reshape(data.shape[0] * config.image_size * config.image_size, 
+                              args.feature_days)
+        return np.expand_dims(imag_past, 1) 
+
+    def _apply_autoencoder(self, x, autoencoder):
+        x = torch.from_numpy(x).to(self.device)
+        reduced_data = self._apply_batched_autoencoder(x, autoencoder, 256)\
+            .detach().float().cpu()
+        return reduced_data
+
+    def __getitem__(self, index):
+        data = np.empty((self.batch_size, *self.data.shape[1:]))
+        pred = np.empty((self.batch_size, *self.labels.shape[1:]))
+        for i in range(self.batch_size):
+            random = np.random.randint(0, self.available_timesteps)
+            X = self.data[random]
+            y = self.labels[random]
+            pred[i] = y
+            data[i] = X
+
+        data = torch.from_numpy(data).float().to(self.device)
+        pred = torch.from_numpy(pred).float().to(self.device)
+        return data, pred
 
 class MyDataset(Dataset):
     """

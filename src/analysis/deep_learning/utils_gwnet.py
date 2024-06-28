@@ -39,6 +39,12 @@ def create_runtime_paths(args:dict, spi:bool=False):
     elif args.model == "WNET":
         output_dir = os.path.join(ROOT_DIR, "..", 
                     f"output/wnet/days_{args.step_length}/features_{args.feature_days}")
+    elif args.model == "DIME":
+        output_dir = os.path.join(ROOT_DIR, "..", 
+                    f"output/dime/days_{args.step_length}/features_{args.feature_days}")
+    elif args.model == "AUTO_DIME":
+        output_dir = os.path.join(ROOT_DIR, "..", 
+                    f"output/dime/days_{args.step_length}/features_{args.feature_days}/autoencoder")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
@@ -52,112 +58,6 @@ def create_runtime_paths(args:dict, spi:bool=False):
     
     return output_dir, log_path, img_path, checkp_path
 
-
-def data_preparation(args:dict, 
-                     precp_dataset:str="ERA5", 
-                     ndvi_dataset:str='ndvi_smoothed_w2s.nc'):
-    
-    from utils.function_clns import config, crop_image_left
-    from analysis.configs.config_models import config as model_config
-
-    config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], 
-                          config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
-    config_dir_precp = [config['PRECIP']['IMERG']['path'],config['PRECIP']['GPCC']['path'], config['PRECIP']['CHIRPS']['path'], 
-                        config['PRECIP']['ERA5']['path'],  config['PRECIP']['TAMSTAT']['path'],config['PRECIP']['MSWEP']['path'],
-                        config["PRECIP"]["ERA5_land"]["path"]]
-    
-    list_precp_prods = ["ERA5", "GPCC","CHIRPS","SPI_ERA5", "SPI_GPCC","SPI_CHIRPS","ERA5_land"]
-    
-    if precp_dataset not in list_precp_prods:
-        raise ValueError(f"Precipitation product must be one of {list_precp_prods}")
-    
-    if "SPI" in precp_dataset:
-        precp_dataset = precp_dataset.replace("SPI_","")
-        path = [f for f in config_directories if precp_dataset in f][0]
-        late = args.latency
-        filename = "spi_gamma_{}".format(late)
-        file = [f for f in os.listdir(path) if filename in f][0]
-    else:
-        path = [f for f in config_dir_precp if precp_dataset in f][0]
-        file = f"{precp_dataset}_merged.nc"
-
-    if args.pipeline == "CONVLSTM":
-        from analysis.configs.config_models import config as model_config
-        logger.info(f"Starting NDVI prediction with product {config['CONVLSTM']['precp_product']} with {model_config.num_frames_input} days of features and {args.step_length} in the future...")
-    else:
-        logger.info(f"Starting NDVI prediction with product {config['GWNET']['precp_product']} with {args.forecast} days of features...")
-
-    # Open the precipitation file with xarray
-    precp_ds = prepare(xr.open_dataset(os.path.join(path, file)),countries=args.country, 
-                        regions=args.region )\
-                        .rio.write_crs(4326, inplace=True)
-
-    var_target = [var for var in precp_ds.data_vars][0]
-    precp_ds[var_target] = precp_ds[var_target].astype(np.float32)
-    precp_ds[var_target].rio.write_nodata("nan", inplace=True)
-
-    logger.info("The {p} raster has spatial dimensions: {r}"
-                .format(p = precp_dataset, r= precp_ds.rio.resolution()))
-    time_end = config['PRECIP'][precp_dataset]['date_end']
-    time_start = config['PRECIP'][precp_dataset]['date_start']
-
-    # Open the vegetation file with xarray
-    dataset = prepare(xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], \
-                        ndvi_dataset)),countries=args.country,regions=args.region)
-
-    dataset["ndvi"] = dataset["ndvi"].transpose("time","lat","lon")
-    dataset["ndvi"] = dataset["ndvi"].astype(np.float32)
-    dataset["ndvi"].rio.write_nodata(np.nan, inplace=True)
-    dataset = dataset.sel(time=slice(time_start,time_end))[["time","lat","lon","ndvi"]]
-    
-    logger.info("MSG NDVI dataset resolution: {}", dataset.rio.resolution())
-    logger.info("{p} precipitation dataset resolution: {r}"
-                .format(p=precp_dataset, r=precp_ds.rio.resolution()))
-
-    ##### Normalization
-    if args.normalize is True:
-
-        ndvi_scaler = StandardScaler(mean=np.nanmean(dataset["ndvi"]), 
-                                           std=np.nanstd(dataset["ndvi"]))
-        
-        precp_scaler = StandardScaler(mean=np.nanmean(precp_ds[var_target]), 
-                                           std=np.nanstd(precp_ds[var_target]))
-        
-        dataset["ndvi"] = ndvi_scaler.transform(dataset["ndvi"])
-        
-        precp_ds[var_target] = precp_scaler.transform(precp_ds[var_target])
-    
-    else:
-        ndvi_scaler = None
-        
-    if args.model == "GWNET":
-        print("Selecting data for GCNN WaveNet")
-        try:
-            idx_lat, lat_max, idx_lon, lon_min = get_lat_lon_window(precp_ds, config['GWNET']['dim'])
-            sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
-                .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
-        except IndexError:
-            logger.error("The dataset {} is out of bounds when using a subset, using original product"\
-                         .format(args['GWNET']['precp_product']))
-            sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))
-            args.dim = max(len(sub_precp["lat"]),len(sub_precp["lon"]))
-
-    else:
-        print("Selecting data for ConvLSTM")
-        idx_lat, lat_max, idx_lon, lon_min = crop_image_left(precp_ds, config["CONVLSTM"]["dim"])
-        sub_precp = prepare(precp_ds).sel(time=slice(time_start,time_end))\
-            .sel(lat=slice(lat_max, idx_lat), lon=slice(lon_min, idx_lon))
-
-
-    ds = dataset["ndvi"].rio.reproject_match(sub_precp[var_target]).rename({'x':'lon','y':'lat'})
-
-    if args.pipeline=="CONVLSTM":
-        return sub_precp, ds, ndvi_scaler
-    
-    else:
-        sub_precp, ds = check_timeformat_arrays(sub_precp[var_target], ds)
-        sub_precp = sub_precp.where(ds.notnull())
-        return sub_precp, ds
 
 def get_dataloader(args, dataset:xr.DataArray, 
                    ds:xr.DataArray, check_matrix:bool=False):
@@ -735,6 +635,39 @@ def masked_mape(preds, labels, null_val=np.nan):
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
     return torch.mean(loss)
 
+
+def pearsonr(x, y):
+    mean_x = torch.mean(x)
+    mean_y = torch.mean(y)
+    xm = x.sub(mean_x)
+    ym = y.sub(mean_y)
+    r_num = xm.dot(ym)
+    r_den = torch.norm(xm, 2) * torch.norm(ym, 2)
+    r_val = r_num / r_den
+    return r_val
+
+def corrcoef(x):
+    # calculate covariance matrix of rows
+    mean_x = torch.mean(x, 1)
+    xm = x.sub(mean_x.expand_as(x))
+    c = xm.mm(xm.t())
+    c = c / (x.size(1) - 1)
+
+    # normalize covariance matrix
+    d = torch.diag(c)
+    stddev = torch.pow(d, 0.5)
+    c = c.div(stddev.expand_as(c))
+    c = c.div(stddev.expand_as(c).t())
+
+    # clamp between -1 and 1
+    # probably not necessary but numpy does it
+    c = torch.clamp(c, -1.0, 1.0)
+
+def tensor_corr(prediction, label):
+    x = label.squeeze().reshape(-1)
+    y = prediction.squeeze().reshape(-1)
+    return pearsonr(x, y)
+
 """
 Metrics with custom mask
 """
@@ -1039,42 +972,6 @@ def generate_adj_matrix(args:dict, save_plot:bool=True):
     
         sns.heatmap(adj_dist, mask=mask, cmap="YlGnBu", xticklabels=ax_labels, yticklabels=ax_labels)\
             .get_figure().savefig(os.path.join(img_path, "adj_dist.png"))
-
-def old_main(args, config):
-    sub_precp, ds, _ =  data_preparation(args, precp_dataset=config.GWNET.precp_product)
-    logger.info("Prepared data from {s} to {e}".format(s=sub_precp["time"].values[0], e=sub_precp["time"].values[-1]))
-
-    print("Checking precipitation dataset...")
-    check_xarray_dataset(args, sub_precp, save=True)
-    print("Checking vegetation dataset...")
-    check_xarray_dataset(args, ds, save=True)
-
-    dataloader, num_nodes, x_df = get_dataloader(args, sub_precp, ds, check_matrix=True)
-    epochs = config.GWNET.epochs
-    device = torch.device(args.device)
-    adj_path = os.path.join(os.path.join(args.output_dir,  "adjacency_matrix"), f"{args.precp_product}_{args.dim}_adj_dist.pkl")
-    adj_mx = load_adj(adj_path,  args.adjtype)
-    scaler = dataloader['scaler']
-    supports = [torch.tensor(i).to(device) for i in adj_mx]
-    metrics_recorder = MetricsRecorder()
-
-    dictionary = {'predFile': args.output_dir + '/predicted_data/data/' + "pred_{p}_{f}".format(f=str(args.precp_product), 
-                                                                                          p=str(args.forecast)) + '.pkl',
-                  'targetFile': args.output_dir + '/predicted_data/data/' + "target_{p}_{f}".format(f=str(args.precp_product), 
-                                                                                          p=str(args.forecast)) + '.pkl',}
-
-    if args.spi is True:
-        checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.precp_product}_SPI_{args.latency}")
-    else:
-        checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")
-
-    if args.randomadj:
-        adjinit = None
-    else:
-        adjinit = supports[0]
-
-    if args.aptonly:
-        supports = None
 
     
 

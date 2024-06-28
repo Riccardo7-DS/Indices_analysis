@@ -5,3 +5,5 @@ from .deep_learning.utils_gwnet import *
 from .deep_learning.GWNET.gwnet import *
 from .deep_learning.GWNET.weathergcnet import *
 from .deep_learning.GWNET.pipeline_gwnet import *
+from .deep_learning.DDIM.model import *
+from .deep_learning.DDIM.autoencoder import *
