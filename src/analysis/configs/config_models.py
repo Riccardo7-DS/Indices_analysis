@@ -63,7 +63,7 @@ class ConfigConvLSTM:
     include_lag = True
     num_samples = 9 #### the number of channels to use
 
-    epochs = 300
+    epochs = 400
     patience = 20
     learning_rate = 1e-3
     batch_size= 8

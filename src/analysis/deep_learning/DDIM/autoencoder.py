@@ -83,8 +83,9 @@ class TimeAutoencoder(nn.Module):
         x = self.decoder(x)
         return x
     
+    
 
-def train_autoencoder(args):
+def train_autoencoder(args, checkpoint_path = None):
     data_dir = model_config.data_dir+"/data_convlstm"
     data = np.load(os.path.join(data_dir, "data.npy"))
     target = np.load(os.path.join(data_dir, "target.npy"))
@@ -117,8 +118,6 @@ def train_autoencoder(args):
             )
     early_stopping = EarlyStopping(model_config, logger, verbose=True)
 
-    checkpoint_path = None
-
     if checkpoint_path is not None:
         checkpoint = torch.load(checkpoint_path)
         autoencoder.load_state_dict(checkpoint['state_dict'])
@@ -132,7 +131,9 @@ def train_autoencoder(args):
 
     train_loss_records = []
 
-    for epoch in range(1, n_epochs + 1):
+    start_epoch = 0 if checkpoint_path is None else checkp_epoch 
+
+    for epoch in range(start_epoch, n_epochs + 1):
         # monitor training loss
         ######################################
         epoch_records = {'loss': [], "mape": [], "rmse": [], "corr": []}
@@ -197,7 +198,7 @@ def train_autoencoder(args):
 
         train_loss_records.append(np.mean(epoch_records['loss']))
 
-        plt.plot(range(epoch), train_loss_records, label='train')
+        plt.plot(range(epoch-start_epoch+1), train_loss_records, label='train')
         plt.legend()
         plt.savefig(os.path.join(img_path, f'learning_curve_feat_'
                                      f'{args.step_length}.png'))
@@ -219,4 +220,5 @@ if __name__== "__main__":
 
     args = parser.parse_args()
     os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
-    train_autoencoder(args)
+    path = "output/dime/days_15/features_90/autoencoder/checkpoints/checkpoint_epoch_299.pth.tar"
+    train_autoencoder(args, path)
