@@ -280,12 +280,17 @@ def load_eumetsat_ndvi_max(filepath:str,
                   chunks:dict={'time': 50, "lat": 250, "lon":250},
                   save_file:bool=False):
     from utils.function_clns import subsetting_pipeline
+    import logging
+    logger = logging.getLogger(__name__)
 
-    if os.path.isfile(filepath):
-        max_ndvi = xr.open_dataset(filepath, chunks=chunks)["ndvi"]
+    if filepath is not None:
+        if os.path.isfile(filepath):
+            max_ndvi = xr.open_dataset(filepath, chunks=chunks)["ndvi"]
+        else:
+            logger.info("The file does not exist")
 
     else:
-        path = "/media/BIFROST/N2/Riccardo/MSG/msg_data/NDVI/archive.eumetsat.int/umarf-gwt/onlinedownload/riccardo7/4859700/temp/max//time/*.nc"
+        path = "/media/BIFROST/N2/Riccardo/MSG/msg_data/NDVI/archive.eumetsat.int/umarf-gwt/onlinedownload/riccardo7/4859700/temp/time/ndvi_eumetsat.nc"
         ds_ndvi = xr.open_mfdataset(path, engine="netcdf4", chunks=chunks)
         ds_ndvi = subsetting_pipeline(ds_ndvi).rename({"Band1":"ndvi"})
         ds_ndvi["ndvi"] = xr.where(ds_ndvi["ndvi"]==255, np.NaN, ds_ndvi["ndvi"])

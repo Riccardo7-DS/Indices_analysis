@@ -139,7 +139,7 @@ def clip_file(dataset:Union[xr.DataArray, xr.Dataset],
     return clipped
 
 def subsetting_pipeline(dataset:Union[xr.DataArray, xr.Dataset], 
-                        countries:Union[list, None] = ['Ethiopia','Kenya', 'Somalia'], 
+                        countries:Union[list, None] = ['Ethiopia','Kenya', 'Somalia',"Djibouti"], 
                         regions: Union[list, None] = None,
                         invert=False):
     import geopandas as gpd
@@ -209,7 +209,7 @@ def align_datasets(dataset1:Union[xr.DataArray, xr.Dataset],
 
     def preprocess_dataset(dataset):
         if dataset is not None:
-            dataset['time'] = dataset['time'].drop_duplicates(dim=["time"])
+            dataset = dataset.drop_duplicates(dim=["time"])
             dataset['time'] = pd.to_datetime(dataset['time'].values, format='%Y-%m-%d')
             dataset['time'] = dataset.indexes["time"].normalize()
             dataset = dataset

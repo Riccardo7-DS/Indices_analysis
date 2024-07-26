@@ -37,6 +37,7 @@ def prepare_covermask(dataset:xr.Dataset):
 
 def create_copernicus_covermap(dataset:xr.DataArray, 
                                crop_strategy:Literal["shapefile", "geometry","dataset", None]="shapefile",
+                               countries:Union[list, None] = ['Ethiopia','Kenya', 'Somalia',"Djibouti"],
                                export:bool=True):
     import geemap    
     import ee
@@ -65,7 +66,8 @@ def create_copernicus_covermap(dataset:xr.DataArray,
 
         if crop_strategy =="shapefile":
             gdf = gpd.read_file(shapefile_path)
-            fc_poly = geemap.geopandas_to_ee(gdf)
+            subset = gdf[gdf["ADM0_NAME"].isin(countries)]
+            fc_poly = geemap.geopandas_to_ee(subset)
             poly_geometry = fc_poly.geometry()
 
         elif crop_strategy == "dataset":
@@ -89,7 +91,7 @@ def create_copernicus_covermap(dataset:xr.DataArray,
                 .rio.reproject_match(prepare(dataset)).isel(time=0)
             return prepare(repr_ds)
     
-    shapefile_path = config['SHAPE']['HOA']
+    shapefile_path = config['SHAPE']['africa']
     path_img = config["DEFAULT"]["images"]
     filename = os.path.join(path_img, "temp_cover.tif")
 

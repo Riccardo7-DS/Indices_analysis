@@ -4,48 +4,42 @@ from datetime import datetime
 import xarray as xr
 import numpy as np
 from xarray import Dataset
-from  matplotlib.colors import ListedColormap, BoundaryNorm, LinearSegmentedColormap
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Union
+from typing import Union, Literal
 import logging
 logger = logging.getLogger(__name__)
 """
 In this script can be found all the reading, standard cleaning and plotting helper functions
 """
 
-def ndvi_colormap():
-    # List of upper boundaries for NDVI values (reversed order)
-    vals = [-0.2, -0.1, 0.00, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+def ndvi_colormap(colormap: Literal["diverging","sequential"]):
+    from  matplotlib.colors import ListedColormap, BoundaryNorm, LinearSegmentedColormap
 
-    # List of corresponding colors in hexadecimal format (reversed order)
-    cols = [
-        "#c0c0c0",
-        "#954535",
-        "#FF0000",
-        "#E97451",
-        "#FFA500",
-        "#FFD700",
-        "#DFFF00",
-        "#CCFF00",
-        "#00FF00",
-        "#00BB00",
-        "#008800",
-        "#006600",
-        "#7F00FF"
-    ]
-    # #cmap= ListedColormap(cols,  name='custom_colormap')
-    # cmap = LinearSegmentedColormap.from_list('', list(zip(np.array(vals)/vals[-1], cols)))
-    # bounds = np.array(vals)
-    # norm = plt.Normalize(vals[0], vals[-1])
-    # Normalize the colormap
-    # norm = BoundaryNorm(bounds, cmap.N)
 
-    #fig, ax = plt.subplots(figsize=(12, 1))
-    #fig.subplots_adjust(bottom=0.5)
-    #fig.colorbar(ScalarMappable(norm=norm, cmap=cmap_custom),
-    #             cax=ax, orientation='horizontal', label='Colorbar')
-    #plt.show()
+    if colormap == "diverging":
+
+        # List of corresponding colors in hexadecimal format (reversed order)
+        cols = [
+            "#c0c0c0",
+            "#954535",
+            "#FF0000",
+            "#E97451",
+            "#FFA500",
+            "#FFD700",
+            "#DFFF00",
+            "#CCFF00",
+            "#00FF00",
+            "#00BB00",
+            "#008800",
+            "#006600",
+            "#7F00FF"
+        ]
+
+    elif colormap == "sequential":
+        cols = ["#ffffe5","#f7fcb9","#d9f0a3","#addd8e","#78c679","#41ab5d",
+                "#238443","#006837","#004529"]
+
     cmap_custom = ListedColormap(cols)
     return cmap_custom
 

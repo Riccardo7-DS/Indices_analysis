@@ -8,3 +8,4 @@ __pycache__/
 .notebooks/
 .pytest_cache/
 *.log
+*.sh

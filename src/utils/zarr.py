@@ -69,7 +69,6 @@ def load_zarr_arrays(store:zarr.hierarchy.Group,
         file_time_min = ds["time"].min()
         file_time_max = ds["time"].max()
         time_vector = pd.date_range(file_time_min.values, 
-                                    
                                     file_time_max.values, 
                                     freq="1h")
         time_condition = np.where((time_vector>=pd.to_datetime(min_time))
