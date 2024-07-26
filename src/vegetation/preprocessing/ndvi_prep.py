@@ -20,7 +20,8 @@ from modape.whittaker import ws2doptv, ws2d, ws2doptvp
 from array import array
 from dask.diagnostics import ProgressBar
 from typing import Literal
-
+import logging 
+logger = logging.getLogger(__name__)
 
 def SeviriMVCpipeline():
     import re
@@ -143,7 +144,6 @@ class SeviriProcess():
     
     def _generate_ndvi(self, path:str, outputname:str):
         from utils.xarray_functions import add_time, compute_radiance, compute_ndvi
-        from loguru import logger 
         import zarr
         from utils.function_clns import config
         from dask.diagnostics import ProgressBar
@@ -176,7 +176,9 @@ class SeviriProcess():
         from utils.function_clns import config
         import zarr
         from dask.diagnostics import ProgressBar
-        from loguru import logger
+        import logging 
+        logger = logging.getLogger(__name__)
+
         logger.info("Starting applying Whittaker smoother...")
 
         ws_ds = XarrayWS(ds)
@@ -220,7 +222,6 @@ class SeviriProcess():
 
     def _generate_qflag(self, datarray):
         from utils.function_clns import config
-        from loguru import logger
         logger.info("Starting calculating quality flag...")
         # Apply find_streaks along the time dimension with dask.delayed
         streaks_data, quality_flag = xr.apply_ufunc(
@@ -275,6 +276,45 @@ def load_landsaf_ndvi(path:str, crop_area:bool = True)->xr.Dataset:
     ds["ndvi_10"] = convert_ndvi_tofloat(ds.ndvi_10)
     # ds["ndvi_10"] = ds.ndvi_10/255
     return ds 
+
+
+def generate_max_eumetsat_ndvi(temp_path:str, chunks="auto"):
+    files = [os.path.join(temp_path,f) for f in os.listdir(temp_path) if f.endswith(".nc")]
+
+    import re
+    from datetime import datetime
+    from utils.function_clns import subsetting_pipeline
+
+    def extract_date(filename):
+        filename = filename.split("/")[-1]
+
+        # Use regex to find the date part in the string
+        date_match = re.search(r'(\d{14})', filename)
+
+        if date_match:
+            # Extract the matched date string
+            date_str = date_match.group(1)
+
+            # Parse the date string to a datetime object
+            date_obj = datetime.strptime(date_str, "%Y%m%d%H%M%S")
+
+            return date_obj
+        else:
+            return None
+
+    def preprocess(ds):
+        path = ds.encoding["source"]
+        date = extract_date(path)
+        return ds.expand_dims(time=[date])
+
+    ds_max_temp = xr.open_mfdataset(files, chunks=chunks, preprocess=preprocess)
+    ds_ndvi_max = subsetting_pipeline(ds_max_temp).rename({"Band1":"ndvi"})
+    ds_ndvi_max["ndvi"] = xr.where(ds_ndvi_max["ndvi"]==255, np.NaN, ds_ndvi_max["ndvi"])
+    ds_ndvi_max = ds_ndvi_max["ndvi"]/100
+    ds_ndvi_max = NDVIPreprocess(ds_ndvi_max).get_processed_data()
+    ds_ndvi_max["time"] = ds_ndvi_max["time"] - pd.Timedelta(hours=12)
+    return ds_ndvi_max
+
 
 def load_eumetsat_ndvi_max(filepath:str, 
                   chunks:dict={'time': 50, "lat": 250, "lon":250},
