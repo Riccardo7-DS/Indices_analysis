@@ -18,6 +18,7 @@ class PrecipDataPreparation():
                  variables:list,
                  precipitation_data:str="ERA5", 
                  ndvi_data:str="seviri_full_image_smoothed.zarr",
+                 load_zarr_features:bool = False,
                  load_local_precp:bool = False,
                  interpolate:bool = False) -> None:
         
@@ -29,41 +30,44 @@ class PrecipDataPreparation():
         self.precp_product = precipitation_data
         self.ndvi_filename = ndvi_data
 
-        precp_ds = self.process_input_vars(variables, 
+        if load_zarr_features is False:
+            self.precp_ds = self.process_input_vars(variables, 
                                 load_local_precp, 
                                 interpolate=interpolate, 
                                 save=True)
+        else:
+            path = os.path.join(config["PRECIP"]["ERA5_land"]["path"],
+                                            "final_vars_filled.zarr")
+            self.precp_ds = xr.open_zarr(path)\
+                .sel(time=slice(self.time_start, self.time_end))
         
         ndvi_ds = self._load_processed_ndvi(self.basepath, 
                                             self.ndvi_filename)
         ndvi_ds = self._preprocess_array(ndvi_ds)
-        ndvi_ds = self._reproject_odc(ndvi_ds, precp_ds)
+        ndvi_ds = self._reproject_odc(ndvi_ds, self.precp_ds)
 
         logger.debug("Proceeding with interpolation of instance over time")
         from utils.xarray_functions import extend_dataset_over_time 
-        ndvi_ds = extend_dataset_over_time(ndvi_ds)
+        self.ndvi_ds = extend_dataset_over_time(ndvi_ds)
         
         logger.debug("Normalizing datasets...")
         if args.normalize is True:
             datasets, scalers = \
-                self._normalize_datasets(ndvi_ds, precp_ds)
-            ndvi_ds, precp_ds, self.ndvi_scaler = datasets[0], datasets[1], scalers[0]
+                self._normalize_datasets(self.ndvi_ds, self.precp_ds)
+            self.ndvi_ds, self.precp_ds, self.ndvi_scaler = datasets[0], datasets[1], scalers[0]
+
+        if args.fillna is True:
+            logger.debug("Filling null values...")
+            self.precp_ds = self.precp_ds.fillna(-1)
+            self.ndvi_ds = self.ndvi_ds.fillna(-1)
             
-            logger.debug("Saving NDVI scaler to file...")
-            dump_obj = pickle.dumps(self.ndvi_scaler, protocol=pickle.HIGHEST_PROTOCOL)
-            with open(os.path.join(ROOT_DIR,"../data/ndvi_scaler.pickle"), "wb") as handle:
-                handle.write(dump_obj)
-
-        logger.debug("Filling null values...")
-        self.filled_precp = precp_ds.fillna(-1)
-        self.filled_ndvi = ndvi_ds.fillna(-1)
-
-        logger.debug("Cropping datasets...")
-        self.hydro_data = self._crop_area_for_dl(self.filled_precp)
-        self.ndvi_ds = self._crop_area_for_dl(self.filled_ndvi)
+        if args.crop_area is True:
+            logger.debug("Cropping datasets...")
+            self.precp_ds = self._crop_area_for_dl(self.precp_ds)
+            self.ndvi_ds = self._crop_area_for_dl(self.ndvi_ds)
 
         ### Check nulls
-        self._count_nulls(self.hydro_data)
+        self._count_nulls(self.precp_ds)
         self._count_nulls(self.ndvi_ds)
 
     def _estimate_gigs(self, dataset:xr.Dataset, description:str):
@@ -72,6 +76,7 @@ class PrecipDataPreparation():
 
     def process_input_vars(self, variables:list, load_local_precp:bool, 
                            interpolate:bool, save:bool=False):
+
         if load_local_precp is True:
             self._load_local_precipitation(self.precp_product)
             precp_ds = self._preprocess_array(path = self.precp_path,
@@ -83,8 +88,8 @@ class PrecipDataPreparation():
                 precp_ds = self._transform_ancillary(precp_ds, temporal_resolution="daily")
                 self._estimate_gigs(precp_ds, "Hydro variables")
                 logging.info(precp_ds)
-
         else:
+            # File for ERA5 res 0.25
             dest_path = os.path.join(self.basepath, "hydro_vars.zarr")
 
             if os.path.exists(dest_path):
@@ -106,11 +111,11 @@ class PrecipDataPreparation():
                     self._estimate_gigs(precp_ds, "Hydro variables")
                     logging.info(precp_ds)
 
-                if save is True:
-                    logger.debug("Starting exporting processed data to zarr...")
-                    out = precp_ds.to_zarr(dest_path, mode="w", compute=False)
-                    res = out.compute()
-                    logger.debug("Successfully saved preprocessed variables")
+        if save is True:
+            logger.debug("Starting exporting processed data to zarr...")
+            out = precp_ds.to_zarr(dest_path, mode="w", compute=False)
+            res = out.compute()
+            logger.debug("Successfully saved preprocessed variables")
 
         return precp_ds
     

@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import xarray as xr
 from typing import Union
 import torch.nn.functional as F
@@ -25,7 +25,27 @@ class CustomDataset(Dataset):
         y = self.targets[index]
         return x, y
 
+class NumpyBatchDataLoader(Dataset):
+    def __init__(self, batches_dir, shuffle:bool=False):
+        self.shuffle = shuffle
+        self.batches_dir = batches_dir
+        self.batch_files = sorted([f for f in os.listdir(batches_dir) if f.endswith('.npy')])
+        
+        if shuffle:
+            np.random.shuffle(self.batch_files)
 
+    def __len__(self):
+        return len(self.batch_files)
+
+    def __getitem__(self, idx):
+        batch_file = os.path.join(self.batches_dir, self.batch_files[idx])
+        batch_dict = np.load(batch_file, allow_pickle=True).item()
+        
+        data_batch = batch_dict['data']
+        label_batch = batch_dict['label']
+        
+        tensor_data = torch.tensor(data_batch, dtype=torch.float32), torch.tensor(label_batch, dtype=torch.long)
+        return DataLoader(tensor_data, batch_size=1)
 
 class CustomConvLSTMDataset(Dataset):
     """
@@ -37,45 +57,41 @@ class CustomConvLSTMDataset(Dataset):
             save_files:bool=False,
             filename = "dataset"):
         
+        self.batch_size = config.batch_size
         self.num_timesteps = data.shape[0]
         self.num_channels = data.shape[1]
+        self.foldername = filename
 
         if (len(labels.shape) == 3) and (len(data.shape)==4):
             labels = np.expand_dims(labels, 1)
 
         self.data = np.swapaxes(data, 1,0)
-        self.labels= np.swapaxes(labels, 1,0)
-        # else:              
-        #     self.labels = labels
+        self.labels = np.swapaxes(labels, 1,0)
+
         self.lag = config.include_lag
-        # self.image_size = config.image_size
-        self.input_size = config.input_size if args.model in ["CONVLSTM","DIME","AUTO_DIME"] else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
+        self.input_size = config.input_size if args.model in ["CONVLSTM","DIME","AUTO_DIME"] \
+            else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
 
         self.steps_head = args.step_length
         self.learning_window = args.feature_days
         
         self.output_channels = config.output_channels
         self.output_window = config.num_frames_output
-        # self.num_frames = config.num_frames_input + config.num_frames_output
         self.save_path = config.output_dir
         self._generate_traing_data(args)
-        
-        # if save_files is True:
-        #     self.filename = filename
-        #     self._save_files(self.data, self.labels)
 
-        #print('Loaded {} samples ({})'.format(self.__len__(), split))
+        if save_files is True:
+            self._save_files(self.data, self.labels)
 
-    
     def _generate_traing_data(self, args):
 
         logger.debug("Adding one channel to features to account for lagged data" if self.lag else "No lag channel added")
         tot_channels = self.num_channels + 1 if self.lag else self.num_channels
 
         self.available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window
-        shape_train = (self.available_timesteps, tot_channels, self.learning_window, *self.input_size) if isinstance(self.input_size, tuple) else \
+        shape_train = (self.available_timesteps, tot_channels, self.learning_window, self.data.shape[2], self.data.shape[3]) if isinstance(self.input_size, tuple) else \
                       (self.available_timesteps, tot_channels, self.learning_window, self.input_size)
-        shape_label = (self.available_timesteps, self.output_channels, self.output_window, *self.input_size) if isinstance(self.input_size, tuple) else \
+        shape_label = (self.available_timesteps, self.output_channels, self.output_window, self.labels.shape[2], self.labels.shape[3]) if isinstance(self.input_size, tuple) else \
                       (self.available_timesteps, self.output_channels, self.output_window, self.input_size) 
 
         train_data_processed = np.empty(shape_train, dtype=np.float32)
@@ -126,19 +142,22 @@ class CustomConvLSTMDataset(Dataset):
         return X, y
 
     def _save_files(self, data, labels):
-        import pickle
-        for idx in range(data.shape[0]):
-            img_x = data[idx] 
-            img_y = labels[idx]
-            data_dict = {"data": img_x, "label": img_y}
+        dest_path = self.save_path + "/data_convlstm" + f"/{self.foldername}"
+        if not os.path.exists(dest_path):
+            os.makedirs(dest_path)
 
-            dest_path = self.save_path + "/data_convlstm" + f"/{self.filename}"
-            if not os.path.exists(dest_path):
-                os.makedirs(dest_path)
-            pfilename= os.path.join(dest_path,  f"{idx:06d}"+".pkl")
-            with open(pfilename, 'wb') as file:
-                pickle.dump(data_dict, file)
-
+        num_batches = self.data.shape[0] // self.batch_size
+        for idx in range(num_batches):
+            data_batch = data[idx*self.batch_size:(idx+1)*self.batch_size]
+            label_batch = labels[idx*self.batch_size:(idx+1)*self.batch_size]
+            batch_dict = {'data': data_batch, 'label': label_batch}
+            np.save(os.path.join(dest_path, f'batch_{idx}.npy'), batch_dict)
+        
+        if self.data.shape[0] % self.batch_size != 0:
+            data_batch = data[num_batches*self.batch_size:]
+            label_batch = labels[num_batches*self.batch_size:]
+            batch_dict = {'data': data_batch, 'label': label_batch}
+            np.save(os.path.join(dest_path, f'batch_{num_batches}.npy'), batch_dict)
 
 class DataGenerator(CustomConvLSTMDataset):
     def __init__(self, config, args, data, labels, batch_size, autoencoder):

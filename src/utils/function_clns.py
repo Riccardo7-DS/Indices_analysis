@@ -11,6 +11,30 @@ logger = logging.getLogger(__name__)
 General utility functions
 """
 
+def get_tensor_memory(tensor):
+    memory_size = tensor.element_size() * tensor.nelement()
+    return memory_size
+
+def get_vram():
+    import torch
+    free = torch.cuda.mem_get_info()[0] / 1024 ** 3
+    total = torch.cuda.mem_get_info()[1] / 1024 ** 3
+    total_cubes = 24
+    free_cubes = int(total_cubes * free / total)
+    return f'VRAM: {total - free:.2f}/{total:.2f}GB\t VRAM:[' + (
+            total_cubes - free_cubes) * '▮' + free_cubes * '▯' + ']'
+
+def get_ram():
+    import psutil
+    mem = psutil.virtual_memory()
+    free = mem.available / 1024 ** 3
+    total = mem.total / 1024 ** 3
+    total_cubes = 24
+    free_cubes = int(total_cubes * free / total)
+    return f'RAM: {total - free:.2f}/{total:.2f}GB\t RAM:[' + (total_cubes - free_cubes) * '▮' + free_cubes * '▯' + ']'
+
+
+
 def create_xarray_datarray(var_name:str, data, time, lat, lon):
     return xr.DataArray(
                 data, 

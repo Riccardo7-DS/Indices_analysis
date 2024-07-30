@@ -54,7 +54,7 @@ class ConfigDDIM:
 class ConfigConvLSTM:
 
     gpus = [0, ]
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = "cpu"#torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     masked_loss = True
 
@@ -66,7 +66,7 @@ class ConfigConvLSTM:
     epochs = 400
     patience = 20
     learning_rate = 1e-3
-    batch_size= 8
+    batch_size= 16
 
     null_value = -1
     max_value = 1
@@ -79,7 +79,7 @@ class ConfigConvLSTM:
     
 
     # Parameters specific to ConvLSTM
-    dim = 64
+    # dim = 64
     layers = [32, 32, 32]
 
     # (type, activation, in_ch, out_ch, kernel_size, padding, stride)

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from analysis import CustomConvLSTMDataset, create_runtime_paths
+from analysis import CustomConvLSTMDataset, create_runtime_paths, plot_first_n_images
 # from analysis.deep_learning.DDIM.model import DiffusionModel
 from analysis.configs.config_models import config_convlstm_1 as model_config
 from torch.nn import MSELoss
@@ -90,7 +90,7 @@ def train_autoencoder(args, checkpoint_path = None):
     data = np.load(os.path.join(data_dir, "data.npy"))
     target = np.load(os.path.join(data_dir, "target.npy"))
     _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
-    logger = init_logging()
+    logger = init_logging(os.path.join(log_path, "autoencoder.log"))
 
 
     ################################# Initialize datasets #############################
@@ -151,6 +151,8 @@ def train_autoencoder(args, checkpoint_path = None):
             outputs = outputs.view(images.size(0), 64, 64, args.feature_days).transpose(1, 3)
             # calculate the loss
             loss = criterion(outputs, images)
+            plot_first_n_images(outputs, 10, True, "predicted_img", img_path)
+            plot_first_n_images(images, 10, True, "true_img", img_path)
             mape = masked_mape(outputs, images).item()
             rmse = masked_rmse(outputs, images).item()
             corr = tensor_corr(outputs, images).item()

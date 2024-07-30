@@ -1,4 +1,4 @@
-from utils.function_clns import config, prepare, get_lat_lon_window, check_xarray_dataset, check_timeformat_arrays
+from utils.function_clns import config, get_tensor_memory, get_vram, get_ram
 import xarray as xr
 import os
 import numpy as np
@@ -57,6 +57,52 @@ def create_runtime_paths(args:dict, spi:bool=False):
             os.makedirs(sub_path)
     
     return output_dir, log_path, img_path, checkp_path
+
+
+def plot_first_n_images(tensor, n:int, save:bool=False, name:str=None, img_path=None):
+    from utils.xarray_functions import ndvi_colormap
+    from utils.function_clns import config
+    cmap = ndvi_colormap("diverging")
+
+    if img_path is None:
+        img_path = os.path.join(config["DEFAULT"]["image_path"])
+    if name is None:
+        name = "temp_img.png"
+    else:
+        name = name + ".png"
+
+    # Ensure n does not exceed the time dimension
+    
+    tensor = tensor.cpu().detach().numpy()
+
+    n = min(n, tensor.shape[1])
+    
+    # Calculate the grid size for subplots
+    rows = int(np.ceil(n / 5))  # 5 images per row as an example, you can adjust this
+    cols = min(n, 5)  # up to 5 columns
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(15, 3 * rows))
+    
+    # Flatten axes for easy iteration if rows and cols are more than 1
+    if rows > 1:
+        axes = axes.flatten()
+    
+    for i in range(n):
+        ax = axes[i] if rows > 1 else axes[i % cols]
+        ax.imshow(tensor[0, i, :, :], cmap=cmap)
+        ax.axis('off')
+        ax.set_title(f"Time {i}")
+    
+    # Hide any remaining subplots if n < rows * cols
+    for i in range(n, rows * cols):
+        fig.delaxes(axes[i] if rows > 1 else axes[i % cols])
+    
+    plt.tight_layout()
+    if save is True:
+        plt.savefig(os.path.join(img_path, name))
+    else:
+        plt.pause(10)
+    plt.close()
 
 
 def get_dataloader(args, dataset:xr.DataArray, 
@@ -206,7 +252,6 @@ def print_lr_change(old_lr, scheduler):
 
 def train_loop(config, args, model, train_loader, criterion, 
                optimizer, scaler=None, mask=None, draw_scatter:bool=False):
-    from analysis.deep_learning.utils_gwnet import masked_mse_loss, masked_rmse, masked_mape, mask_mape, mask_rmse, MetricsRecorder, create_runtime_paths
 
     _, _, img_path, _ = create_runtime_paths(args)
     
@@ -222,8 +267,12 @@ def train_loop(config, args, model, train_loader, criterion,
 
     for batch_idx, (inputs, targets) in enumerate(train_loader):
 
-        inputs = inputs.float().to(config.device)
+        inputs = inputs.squeeze(0).float().to(config.device)
+        logger.info("Feature tensor GPU memory: {:.4f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
         targets = torch.squeeze(targets.float().to(config.device))
+        logger.info("Label tensor GPU memory: {:.4f} GB".format(get_tensor_memory(targets)/ (1024**3)))
+        logger.info(get_ram())
+        logger.info(get_vram())
         outputs = torch.squeeze(model(inputs))
 
         if draw_scatter is True:
@@ -266,7 +315,6 @@ def train_loop(config, args, model, train_loader, criterion,
 def valid_loop(config, args, model, valid_loader, criterion, scheduler,
                scaler=None, mask=None, draw_scatter:bool=False):
     
-    from analysis.deep_learning.utils_gwnet import masked_mse_loss, masked_mape, masked_rmse, mask_mape, mask_rmse, masked_mse, MetricsRecorder, create_runtime_paths
     _, _, img_path, _ = create_runtime_paths(args)
 
     model.eval()
@@ -280,9 +328,10 @@ def valid_loop(config, args, model, valid_loader, criterion, scheduler,
     num_batchs = len(valid_loader)
     for batch_idx, (inputs, targets) in enumerate(valid_loader):
         with torch.no_grad():
-            inputs = inputs.float().to(config.device)
-            #print(inputs.shape)
+            inputs = inputs.squeeze(0).float().to(config.device)
+            logger.info("Feature tensor GPU memory: {:.2f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
             targets = torch.squeeze(targets.float().to(config.device))
+            logger.info("Label tensor GPU memory: {:.2f} GB".format(get_tensor_memory(targets)/ (1024**3)))
             outputs = torch.squeeze(model(inputs))
 
             if draw_scatter is True:
@@ -387,31 +436,6 @@ def get_train_valid_loader(model_config, args, data, labels, train_split:float=0
                                   batch_size=model_config.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, 
                                 batch_size=model_config.batch_size, shuffle=False)
-
-    # dataset = CustomConvLSTMDataset(model_config, args, data, labels)
-
-    # x = torch.tensor(dataset.data) #N, C, T, V (vertices e.g. lat-lon)
-    # y = torch.tensor(dataset.labels)
-
-    # train_val_dataset = TensorDataset(x, y)
-
-    # num_train = len(train_val_dataset)
-    # indices = list(range(num_train))
-    # split = int(np.floor(0.1 * num_train))
-
-    # np.random.seed(123)
-    # np.random.shuffle(indices)
-
-    # train_idx, valid_idx = indices[split:], indices[:split]
-    # train_sampler = SubsetRandomSampler(train_idx)
-    # valid_sampler = SubsetRandomSampler(valid_idx)
-
-    # train_loader = DataLoader(train_val_dataset, 
-    #                           batch_size=model_config.batch_size, 
-    #                           sampler=train_sampler)
-    # valid_loader = DataLoader(train_val_dataset, 
-    #                           batch_size=model_config.batch_size, 
-    #                           sampler=valid_sampler)
 
     return train_dataloader, val_dataloader, train_dataset
 
@@ -973,7 +997,7 @@ def generate_adj_matrix(args:dict, save_plot:bool=True):
         sns.heatmap(adj_dist, mask=mask, cmap="YlGnBu", xticklabels=ax_labels, yticklabels=ax_labels)\
             .get_figure().savefig(os.path.join(img_path, "adj_dist.png"))
 
-    
+
 
 if __name__=="__main__":
     # import time
