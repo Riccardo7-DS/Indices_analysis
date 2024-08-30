@@ -34,7 +34,7 @@ class PrecipDataPreparation():
             self.precp_ds = self.process_input_vars(variables, 
                                 load_local_precp, 
                                 interpolate=interpolate, 
-                                save=True)
+                                save=False)
         else:
             path = os.path.join(config["PRECIP"]["ERA5_land"]["path"],
                                             "final_vars_filled.zarr")
@@ -76,6 +76,12 @@ class PrecipDataPreparation():
 
     def process_input_vars(self, variables:list, load_local_precp:bool, 
                            interpolate:bool, save:bool=False):
+        
+        def save_dataset_tozarr(dataset, dest_path):
+            logger.debug("Starting exporting processed data to zarr...")
+            out = dataset.to_zarr(dest_path, mode="w", compute=False)
+            res = out.compute()
+            logger.debug("Successfully saved preprocessed variables")
 
         if load_local_precp is True:
             self._load_local_precipitation(self.precp_product)
@@ -87,41 +93,45 @@ class PrecipDataPreparation():
                 logger.debug(f"Adding soil moisture to variables {variables}")
                 precp_ds = self._transform_ancillary(precp_ds, temporal_resolution="daily")
                 self._estimate_gigs(precp_ds, "Hydro variables")
-                logging.info(precp_ds)
+                logger.info(precp_ds)
         else:
             # File for ERA5 res 0.25
-            dest_path = os.path.join(self.basepath, "hydro_vars.zarr")
+            era5_dest_path = os.path.join(self.basepath, "hydro_vars.zarr")
 
-            if os.path.exists(dest_path):
+            if os.path.exists(era5_dest_path):
                 logger.debug("Found zarr file in destination path. Proceeding with loading...")
-                precp_ds = xr.open_zarr(dest_path)
-
-                self._estimate_gigs(precp_ds, "Precipitation only")
-                logging.info(precp_ds)
+                precp_ds = xr.open_zarr(era5_dest_path)
             else:
                 precp_ds, era5_data = self._load_arco_precipitation(variables)
-                precp_ds = self._preprocess_array(precp_ds, 
-                                                  interpolate=interpolate)
-                self._estimate_gigs(precp_ds, "Precipitation only")
-                logging.info(precp_ds)
 
-                if len(variables) > 1:
-                    logger.debug(f"Processing ancillary variables {variables}")
-                    precp_ds = self._transform_ancillary(precp_ds, era5_data, interpolate=False)
-                    self._estimate_gigs(precp_ds, "Hydro variables")
-                    logging.info(precp_ds)
+            temp_resolution_hours = self._get_temporal_resolution(precp_ds)
+            precp_ds = self._preprocess_array(precp_ds, 
+                                              interpolate=interpolate)
 
-        if save is True:
-            logger.debug("Starting exporting processed data to zarr...")
-            out = precp_ds.to_zarr(dest_path, mode="w", compute=False)
-            res = out.compute()
-            logger.debug("Successfully saved preprocessed variables")
+            if (len(variables) > 1) and (temp_resolution_hours==1):
+                logger.debug(f"Processing ancillary variables {variables} from hourly to"
+                             f"daily temporal resolution")
+                precp_ds = self._transform_ancillary(precp_ds, era5_data, 
+                                                     temporal_resolution="hourly")
+            elif temp_resolution_hours==24:
+                precp_ds = self._transform_ancillary(precp_ds, temporal_resolution="daily")
+            
+            self._estimate_gigs(precp_ds, "Hydro variables")
+            logger.info(precp_ds)
+
+            if save is True:
+                logger.info("Saving final processed features with soil moisture and ERA5 to zarr")
+                save_dataset_tozarr(precp_ds, os.path.join(self.basepath),"all_hydro.zarr")
+            
 
         return precp_ds
     
     
     def _impute_values(self, dataset:Union[xr.Dataset, xr.DataArray], value:float):
         return dataset.fillna(value)
+    
+    def _get_temporal_resolution(self, dataset:Union[xr.Dataset, xr.DataArray]):
+        return int((dataset["time"].diff(dim='time')[0].dt.total_seconds()/60/60).values)
 
     def _local_precipitation_cleaning(self, dataset, precp_dataset):
         from utils.xarray_functions import shift_xarray_overtime
@@ -239,15 +249,10 @@ class PrecipDataPreparation():
             precp_data = precp_data.assing(evap = evap, potential_evap= pot_evap, 
                                     temp_max= ds_temp_max, temp_min = ds_temp_min)
 
-        sm_data = self._process_soil_moisture(precp_data)
-        precp_data = precp_data.assign(sm_1 = sm_data["var40"], 
-                                        sm_2 = sm_data["var41"],
-                                        sm_3 = sm_data["var42"], 
-                                        sm_4 = sm_data["var43"])
-        
-        precp_data = precp_data.chunk(chunks={"time":-1, "lat":"auto", "lon":"auto"})
+        hydro_data = self._process_soil_moisture(precp_data)\
+            .chunk(chunks={"time":-1, "lat":"auto", "lon":"auto"})
 
-        return precp_data
+        return hydro_data
     
     def _load_processed_ndvi(self, 
                              path:str, 
@@ -519,33 +524,12 @@ class PrecipDataPreparation():
         ds_reprojected = self._set_nulls(ds_reprojected, np.nan)
         
         logger.info(f"The cropped soil moisture dataset has {ds_reprojected.sizes}")
-        return ds_reprojected
+        if isinstance(target_ds, xr.DataArray):
+            target_ds = target_ds.to_dataset()
+        target_ds = target_ds.assign(sm_1 = ds_reprojected["var40"], 
+                                        sm_2 = ds_reprojected["var41"],
+                                        sm_3 = ds_reprojected["var42"], 
+                                        sm_4 = ds_reprojected["var43"])
+        return target_ds
 
 
-def shift_time(ds:xr.Dataset, 
-               time_shift:Union[None, timedelta]=None, 
-               add_last_day:bool=False):
-    import pandas as pd
-    from datetime import timedelta
-
-    if time_shift is None:
-        time_shift = timedelta(days=1)
-
-    start_date = pd.to_datetime(ds["time"].min().values) - time_shift
-    end_date = pd.to_datetime(ds["time"].max().values) - time_shift
-    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-    ds["time"] = date_range
-
-    if add_last_day is True:
-        # Step 1: Select the last time step
-        last_time_step = ds.isel(time=-1)
-        # Step 2: Create a new time coordinate
-        # Assuming the time coordinate is a datetime64 type, and adding one day to the last time step
-        new_time = pd.to_datetime(ds.time.values[-1]) + pd.Timedelta(days=1)
-        # Step 3: Create a new DataArray with the new time step
-        new_data = last_time_step.expand_dims(time=[new_time])
-        # Step 4: Concatenate the new DataArray to the original Dataset along the time dimension
-        return xr.concat([ds, new_data], dim='time')
-
-    else:
-        return ds

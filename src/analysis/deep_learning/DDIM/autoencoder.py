@@ -140,19 +140,19 @@ def train_autoencoder(args, checkpoint_path = None):
 
         for batch_idx, (data, target) in enumerate(train_dataloader):
             # _ stands in for labels, here
-            images = data[:, -1, :, :, :].to(model_config.device) 
+            images = data[:, -1, :, :, :].to(model_config.device)
+            b, t, h, w = images.size() 
             imag = images.permute(0, 2, 3, 1)
-            imag  =  imag.reshape(images.size(0) * 64 * 64, args.feature_days)
+            imag  =  imag.reshape(b*h*w, t)
             imag = torch.unsqueeze(imag, 1) 
             # clear the gradients of all optimized variables
             optimizer.zero_grad()
             # forward pass: compute predicted outputs by passing inputs to the model
             outputs = autoencoder(imag)
-            outputs = outputs.view(images.size(0), 64, 64, args.feature_days).transpose(1, 3)
+            outputs = outputs.view(b, h, w, t).permute(0, 3, 1, 2)
             # calculate the loss
             loss = criterion(outputs, images)
-            plot_first_n_images(outputs, 10, True, "predicted_img", img_path)
-            plot_first_n_images(images, 10, True, "true_img", img_path)
+            
             mape = masked_mape(outputs, images).item()
             rmse = masked_rmse(outputs, images).item()
             corr = tensor_corr(outputs, images).item()
@@ -201,6 +201,8 @@ def train_autoencoder(args, checkpoint_path = None):
         train_loss_records.append(np.mean(epoch_records['loss']))
 
         plt.plot(range(epoch-start_epoch+1), train_loss_records, label='train')
+        plot_first_n_images(outputs, 10, True, "predicted_img", img_path)
+        plot_first_n_images(images, 10, True, "true_img", img_path)
         plt.legend()
         plt.savefig(os.path.join(img_path, f'learning_curve_feat_'
                                      f'{args.step_length}.png'))
@@ -212,15 +214,15 @@ if __name__== "__main__":
     
     ### Convlstm parameters
     parser.add_argument('--model',type=str,default="AUTO_DIME",help='DL model training')
-    parser.add_argument('--step_length',type=int,default=15)
+    parser.add_argument('--step_length',type=int,default=1)
     parser.add_argument('--feature_days',type=int,default=90)
     
-    parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
+    parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia","Djibouti"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
     parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
 
     args = parser.parse_args()
     os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
-    path = "output/dime/days_15/features_90/autoencoder/checkpoints/checkpoint_epoch_299.pth.tar"
-    train_autoencoder(args, path)
+    # path = "output/dime/days_15/features_90/autoencoder/checkpoints/checkpoint_epoch_299.pth.tar"
+    train_autoencoder(args)

@@ -58,6 +58,16 @@ def create_runtime_paths(args:dict, spi:bool=False):
     
     return output_dir, log_path, img_path, checkp_path
 
+def load_autoencoder(checkpoint_path,feature_days=90, output_shape=20):
+    from analysis.configs.config_models import config_convlstm_1 as model_config
+    import torch
+    from analysis import TimeEncoder, TimeDecoder, TimeAutoencoder 
+    encoder = TimeEncoder(output_shape).to(model_config.device)
+    decoder = TimeDecoder(feature_days, output_shape).to(model_config.device)
+    autoencoder = TimeAutoencoder(encoder, decoder).to(model_config.device)
+    checkpoint = torch.load(checkpoint_path)
+    autoencoder.load_state_dict(checkpoint['state_dict'])
+    return autoencoder
 
 def plot_first_n_images(tensor, n:int, save:bool=False, name:str=None, img_path=None):
     from utils.xarray_functions import ndvi_colormap
@@ -229,6 +239,37 @@ def check_shape_dataloaders(train_dataloader, val_dataloader):
             inputs.max().item(), inputs.min().item(),
             targets.max().item(), targets.min().item())
 
+
+def date_to_sinusoidal_embedding(date_string, h, w):
+    from datetime import datetime
+    # Parsing the date string
+    date_time_obj = datetime.strptime(date_string, '%Y-%m-%d')
+    
+    # Extracting components
+    month = (date_time_obj.month - 1) / 11
+    day = (date_time_obj.day - 1) / 30
+    
+    # Creating sinusoidal embeddings
+    embedding = []
+    for value in [month, day]:
+        embedding.append(np.sin(2 * np.pi * value))
+        embedding.append(np.cos(2 * np.pi * value))
+        
+    result = np.array(embedding)
+    
+    # Reshape the result to be compatible with tiling
+    result = result.reshape((1, 4))
+    
+    # Calculate the number of times to tile to get the final shape of (83, 77)
+    num_tiles = (h, w // 4 + (w % 4 != 0))  # Add one more tile if there's a remainder
+
+    tiled_result = np.tile(result, num_tiles)
+    
+    # Trim the result to the exact shape (83, 77)
+    final_result = tiled_result[:, :w]
+    
+    return final_result
+
 def prepare_array_wgcnet(data):
     
     if len(data.shape)==3:
@@ -268,11 +309,11 @@ def train_loop(config, args, model, train_loader, criterion,
     for batch_idx, (inputs, targets) in enumerate(train_loader):
 
         inputs = inputs.squeeze(0).float().to(config.device)
-        logger.info("Feature tensor GPU memory: {:.4f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
+        # logger.info("Feature tensor GPU memory: {:.4f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
         targets = torch.squeeze(targets.float().to(config.device))
-        logger.info("Label tensor GPU memory: {:.4f} GB".format(get_tensor_memory(targets)/ (1024**3)))
-        logger.info(get_ram())
-        logger.info(get_vram())
+        # logger.info("Label tensor GPU memory: {:.4f} GB".format(get_tensor_memory(targets)/ (1024**3)))
+        # logger.info(get_ram())
+        # logger.info(get_vram())
         outputs = torch.squeeze(model(inputs))
 
         if draw_scatter is True:
@@ -329,9 +370,9 @@ def valid_loop(config, args, model, valid_loader, criterion, scheduler,
     for batch_idx, (inputs, targets) in enumerate(valid_loader):
         with torch.no_grad():
             inputs = inputs.squeeze(0).float().to(config.device)
-            logger.info("Feature tensor GPU memory: {:.2f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
+            # logger.info("Feature tensor GPU memory: {:.2f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
             targets = torch.squeeze(targets.float().to(config.device))
-            logger.info("Label tensor GPU memory: {:.2f} GB".format(get_tensor_memory(targets)/ (1024**3)))
+            # logger.info("Label tensor GPU memory: {:.2f} GB".format(get_tensor_memory(targets)/ (1024**3)))
             outputs = torch.squeeze(model(inputs))
 
             if draw_scatter is True:

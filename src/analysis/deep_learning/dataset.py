@@ -44,7 +44,7 @@ class NumpyBatchDataLoader(Dataset):
         data_batch = batch_dict['data']
         label_batch = batch_dict['label']
         
-        tensor_data = torch.tensor(data_batch, dtype=torch.float32), torch.tensor(label_batch, dtype=torch.long)
+        tensor_data = torch.tensor(data_batch, dtype=torch.float32), torch.tensor(label_batch, dtype=torch.float32)
         return DataLoader(tensor_data, batch_size=1)
 
 class CustomConvLSTMDataset(Dataset):
@@ -77,7 +77,7 @@ class CustomConvLSTMDataset(Dataset):
         
         self.output_channels = config.output_channels
         self.output_window = config.num_frames_output
-        self.save_path = config.output_dir
+        self.save_path = config.data_dir
         self._generate_traing_data(args)
 
         if save_files is True:
@@ -142,12 +142,13 @@ class CustomConvLSTMDataset(Dataset):
         return X, y
 
     def _save_files(self, data, labels):
+        from tqdm.auto import tqdm
         dest_path = self.save_path + "/data_convlstm" + f"/{self.foldername}"
         if not os.path.exists(dest_path):
             os.makedirs(dest_path)
 
         num_batches = self.data.shape[0] // self.batch_size
-        for idx in range(num_batches):
+        for idx in tqdm(range(num_batches)):
             data_batch = data[idx*self.batch_size:(idx+1)*self.batch_size]
             label_batch = labels[idx*self.batch_size:(idx+1)*self.batch_size]
             batch_dict = {'data': data_batch, 'label': label_batch}
@@ -160,14 +161,30 @@ class CustomConvLSTMDataset(Dataset):
             np.save(os.path.join(dest_path, f'batch_{num_batches}.npy'), batch_dict)
 
 class DataGenerator(CustomConvLSTMDataset):
-    def __init__(self, config, args, data, labels, batch_size, autoencoder):
+    def __init__(self, config, args, data, labels, autoencoder):
         super().__init__(config, args, data, labels)
-        self.batch_size = batch_size
         self.device = config.device
-        x = self._prepare_for_diffusion(config, args, self.data)
-        reduced_data = self._apply_autoencoder(x, autoencoder)
-        output = self._postrocess(config, reduced_data, self.data)
-        self.data = np.concatenate([self.data[:, -1, :-1], output], axis=1)
+        self.time_list = self._add_time_list(data)
+        vae_output = self._reduce_data_vae(config, autoencoder)
+        extra_features = self.data[:, -1, :-1]
+        self.data = np.concatenate([extra_features, vae_output], axis=1)
+
+    def _add_time_list(self, data):
+        from analysis import date_to_sinusoidal_embedding
+        from utils.function_clns import config
+        import pandas as pd
+        from utils.xarray_functions import _output_dates
+        from datetime import datetime, timedelta
+        num_steps = data.shape[0]
+        min_date = config["DEFAULT"]["date_start"]
+        max_date = datetime.strftime(pd.to_datetime(min_date) + timedelta(days = num_steps -1), "%Y-%m-%d")
+        expected_dates = _output_dates("P1D", min_date, max_date)
+        dates = [datetime.strftime(i,"%Y-%m-%d") for i in expected_dates]
+        
+        if len(dates) != num_steps:
+            logger.info(f"The tensor input has missing dates")
+            logger.info(f"Dates should be {len(dates)} instead of {num_steps}")
+        return dates
 
     def _apply_batched_autoencoder(self, x, autoencoder, batch_size):
         from torch.utils.data import DataLoader, TensorDataset
@@ -188,35 +205,48 @@ class DataGenerator(CustomConvLSTMDataset):
         # Concatenate all encoded batches
         return torch.cat(encoded_batches)
 
-    def _postrocess(self, config, output, data):
-        return output.view(data.shape[0], config.image_size , 
-                           config.image_size , 20).transpose(1, 3)
-
-    def _prepare_for_diffusion(self, config, args, data):
-        imag_past = data.transpose(0, 2, 1, 3, 4)[:,-1]
-        imag_past  =  imag_past.reshape(data.shape[0] * config.image_size * config.image_size, 
-                              args.feature_days)
-        return np.expand_dims(imag_past, 1) 
+    def _reduce_data_vae(self, config, autoencoder):
+        imag_past = torch.from_numpy(self.data[:,:,-1]).to(config.device)
+        b, t, h, w = imag_past.size()
+        imag_past = imag_past.permute(0, 2, 3, 1)
+        imag  =  imag_past.reshape(b*h*w, t)
+        x = torch.unsqueeze(imag, 1)
+        reduced_data = self._apply_autoencoder(x, autoencoder)
+        return reduced_data.view(b, h, w, 20).permute(0, 3, 1, 2) + 1 
 
     def _apply_autoencoder(self, x, autoencoder):
-        x = torch.from_numpy(x).to(self.device)
         reduced_data = self._apply_batched_autoencoder(x, autoencoder, 256)\
             .detach().float().cpu()
         return reduced_data
 
-    def __getitem__(self, index):
+    def old__getitem__(self, index):
+        from analysis import date_to_sinusoidal_embedding
         data = np.empty((self.batch_size, *self.data.shape[1:]))
         pred = np.empty((self.batch_size, *self.labels.shape[1:]))
+        time_array = np.empty((self.batch_size, *self.data.shape[2:]))
+
         for i in range(self.batch_size):
             random = np.random.randint(0, self.available_timesteps)
             X = self.data[random]
             y = self.labels[random]
+            time = self.time_list[random]
+            time_embeddings = date_to_sinusoidal_embedding(time, *self.data.shape[2:])
             pred[i] = y
             data[i] = X
+            time_array[i] = (time_embeddings + 1)/2
+
+        time_array = np.expand_dims(time_array, 1)
+        data = np.concatenate([time_array, data], axis = 1)
 
         data = torch.from_numpy(data).float().to(self.device)
         pred = torch.from_numpy(pred).float().to(self.device)
         return data, pred
+    
+    def __getitem__(self, index):
+        X = self.data[index]
+        y = self.labels[index]
+        return X, y
+
 
 class MyDataset(Dataset):
     """

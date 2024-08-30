@@ -13,10 +13,13 @@ from definitions import ROOT_DIR
 class ConfigDDIM:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     image_size = 64
-    input_size = (64, 64)
+    input_size = (83, 77)
     num_frames = 1
     output_channels = 1
     num_frames_output = 1
+
+    scheduler_patience = 10
+    scheduler_factor = 0.1
 
     # sampling
 
@@ -27,16 +30,17 @@ class ConfigDDIM:
 
     embedding_dims = 64 # 32
     embedding_max_frequency = 1000.0
-    #widths = [32, 64, 96, 128]
-    widths = [64, 128, 256, 384]
+    widths = [32, 64, 96, 128]
+    # widths = [64, 128, 256, 384]
     block_depth = 2
 
     # optimization
 
-    batch_size =  8
+    batch_size =  128
     ema = 0.999
-    learning_rate = 10e-3
-    epochs = 50
+    learning_rate = 1e-3
+    epochs = 500
+    patience = 100
 
     include_lag = True
     
@@ -45,7 +49,8 @@ class ConfigDDIM:
     log_dir = os.path.join(output_dir, 'log')
     model_dir = os.path.join(output_dir, 'model')
 
-    autoencoder_path = output_dir + "/dime/days_15/features_90/autoencoder/checkpoints/checkpoint_epoch_129.pth.tar"
+    autoencoder_path = output_dir + "/dime/days_15/features_90/autoencoder/checkpoints/checkpoint_epoch_63.pth.tar"
+    
 
     for path in [data_dir, output_dir, log_dir, model_dir]:
         if not os.path.exists(path):
@@ -54,7 +59,7 @@ class ConfigDDIM:
 class ConfigConvLSTM:
 
     gpus = [0, ]
-    device = "cpu"#torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     masked_loss = True
 
@@ -63,10 +68,10 @@ class ConfigConvLSTM:
     include_lag = True
     num_samples = 9 #### the number of channels to use
 
-    epochs = 400
+    epochs = 100
     patience = 20
     learning_rate = 1e-3
-    batch_size= 16
+    batch_size= 8
 
     null_value = -1
     max_value = 1

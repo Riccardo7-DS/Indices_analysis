@@ -90,13 +90,134 @@ def pipeline_era5_collection_cds(config_path):
     ds.to_netcdf(os.path.join(config["SPI"]["ERA5"]["path"],"era5_land_merged.nc"))
 
 def process_era5_precp(ds: xr.Dataset, var:str = "tp"):
-    if "latitude" in ds.dims:
-        ds = ds.rename({"longitude":'lon', "latitude": "lat"})
-    attrs = ds[var].attrs
+    if isinstance(ds, xr.Dataset):
+        if "latitude" in ds.dims:
+            ds = ds.rename({"longitude":'lon', "latitude": "lat"})
+        datarray = ds[var]
+    elif isinstance(ds, xr.DataArray):
+        datarray = ds
+    attrs = datarray.attrs
     attrs['units']='mm'
-    ds[var] = ds[var]*1000
-    ds[var].attrs = attrs
-    return ds
+    datarray = datarray*1000
+    datarray.attrs = attrs
+    return datarray
+
+
+def load_arco_precipitation(time_start:str, time_end:str, 
+                            variables:Union[list, str]):
+    """
+    Function to query and process ERA5 ARCO data for a time frame
+    """
+    from ancillary.hydro_data import query_arco_era5
+    from datetime import datetime, timedelta
+    from utils.function_clns import hoa_bbox, prepare
+    from utils.xarray_functions import dataset_set_nulls
+    
+    logger.debug(f"Querying ARCO data from Google Cloud Storage"\
+                 f" for dates {time_start} to {time_end}")
+    
+    bbox = hoa_bbox()
+    
+    input_data = query_arco_era5(variables, 
+                                 bounding_box=bbox,
+                                 date_min=time_start,
+                                 date_max=(datetime.strptime(time_end, "%Y-%m-%d") + \
+                                    timedelta(days=1)).strftime("%Y-%m-%d"))
+    
+    input_data = input_data.shift(time=1)\
+        .sel(time=slice(time_start, time_end))
+    
+    input_data = prepare(input_data)
+    
+    logger.debug("Processing input data...")
+    precp_ds = None
+    ds_temp_max, ds_temp_min, evap, pot_evap = None, None, None, None
+
+    if "total_precipitation" or "tp" in variables:
+        precp_ds = process_era5_precp(input_data, var="total_precipitation")
+        precp_ds = precp_ds.resample(time="1D")\
+            .sum()
+    
+        logger.debug("Setting precipitation values inferior than 0 to 0")
+        precp_ds = precp_ds.where(precp_ds>0, 0)
+    if "2m_temperature" in variables:
+        logging.debug("Processing temperature data")
+        temp = input_data["2m_temperature"].resample(time='D')
+        ds_temp_max = temp.max(dim='time')
+        ds_temp_min = temp.min(dim='time')
+    if "evaporation" in variables:
+        logging.debug("Processing evaporation data")
+        evap = input_data["evaporation"].resample(time="D").sum()
+    
+    if "potential_evaporation" in variables:
+        pot_evap = input_data["potential_evaporation"].resample(time="D").sum()
+    for da in [precp_ds, ds_temp_max, ds_temp_min, evap, pot_evap]:
+        da = dataset_set_nulls(da, np.nan)
+    assign_dict = {}
+    if evap is not None:
+        assign_dict['evap'] = evap
+    if pot_evap is not None:
+        assign_dict['potential_evap'] = pot_evap
+    if ds_temp_max is not None:
+        assign_dict['temp_max'] = ds_temp_max
+    if ds_temp_min is not None:
+        assign_dict['temp_min'] = ds_temp_min
+    if precp_ds is not None:
+        final_ds = precp_ds.to_dataset().assign(**assign_dict)
+    elif pot_evap is not None:
+        final_ds = pot_evap.to_dataset().assign(**assign_dict)
+    elif ds_temp_min is not None:
+        final_ds = ds_temp_min.to_dataset().assign(**assign_dict)
+    elif evap is not None:
+        final_ds = evap.to_dataset().assign(**assign_dict)
+    else:
+        err = ValueError("None of the pre-defined ERA5 variables has been specified")
+        logger.error(err)
+        raise err
+    return final_ds
+
+def build_era5_series(start_date:str, end_date:str, variables:list=None, dest_path:str=None):
+    """
+    Pipeline to create ERA5 ARCO time series
+    """
+    import os
+    import numpy as np
+    from analysis.configs.config_models import config_convlstm_1 as model_config
+    from utils.function_clns import config, init_logging
+    import xarray as xr
+    import pandas as pd
+    from tqdm.auto import tqdm
+    from precipitation.data_collection.era5_daily_data import load_arco_precipitation
+    logger = init_logging()
+    if variables is None:
+        variables = ["potential_evaporation", "evaporation",
+                             "2m_temperature","total_precipitation"]
+
+    if dest_path is None:
+        dest_path = os.path.join(config["PRECIP"]["ERA5"]["path"], "batch_final")
+    if not os.path.exists(dest_path):
+        os.makedirs(dest_path) 
+
+    # Convert to datetime for easier manipulation
+    start_date_dt = pd.to_datetime(start_date)
+    end_date_dt = pd.to_datetime(end_date)
+
+    # Loop through each year
+    for year in tqdm(range(start_date_dt.year, end_date_dt.year + 1)):
+        batch_start_date = f"{year}-01-01"
+        batch_end_date = f"{year}-12-31"
+
+        # Ensure the end date does not go beyond the final end date
+        if pd.to_datetime(batch_end_date) > end_date_dt:
+            batch_end_date = end_date
+
+        # Load the data for the current batch
+        ds = load_arco_precipitation(batch_start_date, batch_end_date, variables)
+
+        # Save the data to a NetCDF file
+        output_file = f"era5_variables_{year}.nc"
+        ds.to_netcdf(os.path.join(dest_path, output_file))
+        logger.info(f"Data for {batch_start_date} to {batch_end_date} saved to {output_file}")
 
 """
 Functions to collect ERA5 ARCO data with google cloud storage

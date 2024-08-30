@@ -49,6 +49,7 @@ xagg = "^0.3.2.1"
 rtree = "^1.3.0"
 regionmask = "^0.12.1"
 cf-xarray = "^0.9.4"
+einops = "^0.8.0"
 
 
 [build-system]

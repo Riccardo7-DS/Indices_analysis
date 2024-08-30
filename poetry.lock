@@ -1345,6 +1345,17 @@ earthengine-api = "*"
 dev = ["black", "hatch", "ipykernel", "isort", "jupyterlab", "pytest", "pytest-cov"]
 
 [[package]]
+name = "einops"
+version = "0.8.0"
+description = "A new flavour of deep learning operations"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "einops-0.8.0-py3-none-any.whl", hash = "sha256:9572fb63046264a862693b0a87088af3bdc8c068fde03de63453cbbde245465f"},
+    {file = "einops-0.8.0.tar.gz", hash = "sha256:63486517fed345712a8385c100cb279108d9d47e6ae59099b07657e983deae85"},
+]
+
+[[package]]
 name = "eumdac"
 version = "2.2.2"
 description = "EUMETSAT Data Access Client"
@@ -6343,4 +6354,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9.2"
-content-hash = "6b5a88db66ec75e2578f484215b1d1978c0ba10fb4b4a7bf868c38da0fdcc06c"
+content-hash = "47d7e4074496d3a62c916158e16a7305d03ab362e61d2c195f7b574d7d8c8d0d"

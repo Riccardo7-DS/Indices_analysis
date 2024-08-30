@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import xarray as xr
 import numpy as np
 from xarray import Dataset
@@ -43,6 +43,19 @@ def ndvi_colormap(colormap: Literal["diverging","sequential"]):
     cmap_custom = ListedColormap(cols)
     return cmap_custom
 
+def dataset_set_nulls(dataset:Union[xr.Dataset, xr.DataArray], value=np.nan):
+    if isinstance(dataset, xr.Dataset):
+        for var in dataset.data_vars:
+            dataset[var].rio.write_nodata(value, inplace=True)
+    elif isinstance(dataset, xr.DataArray):
+        dataset.rio.write_nodata(value, inplace=True)
+    else:
+        error = ValueError("The provided dataset must be in xarray format")
+        logging.error(error)
+        raise error
+    # data = data.rio.write_nodata("nan", inplace=True)
+    return dataset
+
 def downsample(ds, time='5D'):
     monthly = ds.resample(time=time, skipna=True).mean() #### Change here to change the timeframe over which to make the data imputation
     return monthly
@@ -82,6 +95,34 @@ def shift_xarray_overtime(ds:xr.Dataset, diff:str):
     new_range = pd.date_range(time_min + delta, time_max+ delta, freq="1D")
 
     return ds.assign_coords(time=new_range)    
+
+def shift_time(ds:xr.Dataset, 
+               time_shift:Union[None, timedelta]=None, 
+               add_last_day:bool=False):
+    import pandas as pd
+    from datetime import timedelta
+
+    if time_shift is None:
+        time_shift = timedelta(days=1)
+
+    start_date = pd.to_datetime(ds["time"].min().values) - time_shift
+    end_date = pd.to_datetime(ds["time"].max().values) - time_shift
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+    ds["time"] = date_range
+
+    if add_last_day is True:
+        # Step 1: Select the last time step
+        last_time_step = ds.isel(time=-1)
+        # Step 2: Create a new time coordinate
+        # Assuming the time coordinate is a datetime64 type, and adding one day to the last time step
+        new_time = pd.to_datetime(ds.time.values[-1]) + pd.Timedelta(days=1)
+        # Step 3: Create a new DataArray with the new time step
+        new_data = last_time_step.expand_dims(time=[new_time])
+        # Step 4: Concatenate the new DataArray to the original Dataset along the time dimension
+        return xr.concat([ds, new_data], dim='time')
+
+    else:
+        return ds
 
 
 def set_negative_zero(data_array:xr.DataArray):
@@ -461,7 +502,6 @@ def drop_water_bodies_esa(
     return dataset
 
 def get_missing_datarray(datarray, prediction="P1D", output_dataset:bool=False):
-    from utils.xarray_functions import _extract_dates, _output_dates
     datarray['time'] = datarray.indexes['time'].normalize()
     datarray = datarray.assign_coords(time = datarray.indexes['time'].normalize())
     dates = _extract_dates(datarray)
