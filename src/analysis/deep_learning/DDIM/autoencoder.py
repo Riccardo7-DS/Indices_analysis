@@ -166,18 +166,6 @@ def train_autoencoder(args, checkpoint_path = None):
             epoch_records["mape"].append(mape)
             epoch_records["corr"].append(corr)
 
-            # # Print metrics every 100 steps
-            # if (batch_idx + 1) % 500 == 0:
-            #     log = 'Epoch: {:03d}, Step: {:04d}, Loss: {:.4f}, MAPE: {:.4f}, RMSE: {:.4f}, CORR: {:.4f}'
-            #     logger.info(log.format(epoch, batch_idx + 1,
-            #                            np.mean(epoch_records['loss']),
-            #                            np.mean(epoch_records['mape']),
-            #                            np.mean(epoch_records['rmse']),
-            #                            np.mean(epoch_records['corr'])))
-
-            #     # Clear epoch_records for the next set of 100 steps
-            #     epoch_records = {'loss': [], "mape": [], "rmse": [], "corr": []}
-
         # Log metrics for the entire epoch
         model_dict = {
                 'epoch': epoch,

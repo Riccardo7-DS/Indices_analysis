@@ -28,9 +28,6 @@ args = parser.parse_args()
 
 
 
-
-
-
 def training_ddim(args):
     from analysis.configs.config_models import config_ddim as model_config
     from torch.nn import L1Loss, MSELoss

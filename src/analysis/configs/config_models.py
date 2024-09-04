@@ -26,6 +26,9 @@ class ConfigDDIM:
     min_signal_rate = 0.015
     max_signal_rate = 0.95
 
+    beta_start = 0.0001
+    beta_end = 0.02
+
     # architecture
 
     embedding_dims = 64 # 32

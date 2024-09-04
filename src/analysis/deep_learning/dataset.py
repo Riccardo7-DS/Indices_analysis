@@ -163,11 +163,34 @@ class CustomConvLSTMDataset(Dataset):
 class DataGenerator(CustomConvLSTMDataset):
     def __init__(self, config, args, data, labels, autoencoder):
         super().__init__(config, args, data, labels)
+
         self.device = config.device
         self.time_list = self._add_time_list(data)
-        vae_output = self._reduce_data_vae(config, autoencoder)
-        extra_features = self.data[:, -1, :-1]
-        self.data = np.concatenate([extra_features, vae_output], axis=1)
+
+        filepath = os.path.join(config.data_dir, "autoencoder_output")
+        if not os.path.exists(filepath):
+            os.makedirs(filepath)
+        file = os.path.join(filepath, "vae_features.npy")
+
+        if os.path.exists(file):
+            self.data = self._load_auto_output(file)
+        else:
+            vae_output = self._reduce_data_vae(autoencoder.to(self.device))
+            extra_features = self.data[:, -1, :-1]
+            data = np.concatenate([extra_features, vae_output], axis=1)
+            self._export_auto_output(data, file)
+            self.data = data
+
+    def _load_auto_output(self, data_dir):
+        logger.info("Loading stored VAE output...")
+        with open(data_dir, "rb") as f:
+            return np.load(f)
+
+    def _export_auto_output(self, data, data_dir):
+        logger.info("Saving VAE output...")
+        with open(data_dir, "wb") as f:
+            np.save(f, data)
+
 
     def _add_time_list(self, data):
         from analysis import date_to_sinusoidal_embedding
@@ -205,8 +228,8 @@ class DataGenerator(CustomConvLSTMDataset):
         # Concatenate all encoded batches
         return torch.cat(encoded_batches)
 
-    def _reduce_data_vae(self, config, autoencoder):
-        imag_past = torch.from_numpy(self.data[:,:,-1]).to(config.device)
+    def _reduce_data_vae(self, autoencoder):
+        imag_past = torch.from_numpy(self.data[:,:,-1]).to(self.device)
         b, t, h, w = imag_past.size()
         imag_past = imag_past.permute(0, 2, 3, 1)
         imag  =  imag_past.reshape(b*h*w, t)

@@ -411,13 +411,15 @@ class TrainDiffusion:
 
 
 class Forward_diffussion_process():
-    def __init__(self, args, config, beta_start=0.0001, beta_end=0.02, timesteps=500):
-        self.start = beta_start
-        self.end = beta_end
-        self.steps = timesteps
+    def __init__(self, args, config, model, timesteps=500, eta=0):
+        self.start = config.beta_start
+        self.end = config.beta_end
+        self.timesteps = timesteps
         self.device = config.device
+        self.eta = 0.
         self._set_alphas_betas(args)
         self._set_post_variance()
+        self.model = model
 
     def _set_schedule(self, args, timesteps):
         if args.diff_schedule == "linear":
@@ -427,9 +429,9 @@ class Forward_diffussion_process():
         elif args.diff_schedule == "sigmoid":
             return self.sigmoid_beta_schedule(timesteps)
     
-    def _extract(self,a, t, x_shape):
+    def _extract(self, a, t, x_shape):
         batch_size = t.shape[0]
-        out = a.gather(-1, t)
+        out = torch.gather(a, index=t, dim=0)
         return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).float()
     # pre calculate values of beta, underroot alpha_bar and 1-alpha_bar for all timesteps
 
@@ -459,26 +461,34 @@ class Forward_diffussion_process():
         return torch.clip(betas, 0, 0.999)
 
     def _set_alphas_betas(self, args):
-        self.betas = self._set_schedule(args, timesteps=self.steps).to(self.device) #diffusion rates
+        self.betas = self._set_schedule(args, timesteps=self.timesteps).to(self.device) #diffusion rates
         self.alphas = 1. - self.betas
-        self.alpha_bars = torch.cumprod(self.alphas, axis=0).to(self.device)   # alpha_bar  = alpha1 * alpha2 * ... * alphat
-        self.sqrt_alpha_bars = torch.sqrt(self.alpha_bars).to(self.device) 
-        self.sqrt_one_minus_alpha_bars = torch.sqrt(1 - self.alpha_bars).to(self.device)
+        self.alpha_bars = torch.cumprod(self.alphas, dim=0).to(self.device)   # alpha_bar  = alpha1 * alpha2 * ... * alphat
+        self.signal_rate = torch.sqrt(self.alpha_bars).to(self.device) 
+        self.noise_rate = torch.sqrt(1 - self.alpha_bars).to(self.device)
 
     # forward diffusion (using the nice property)
     def forward_process(self, x_start, t, noise=None):
-
+        r""" Adds noise to a batch of original images at time-step t.
+        
+        :param x_start: Input Image Tensor
+        :param noise: Random Noise Tensor sampled from Normal Dist N(0, 1)
+        :param t: timestep of the forward process of shape -> (B, )
+        
+        Note: time-step t may differ for each image inside the batch.
+        
+        """
         if noise is None:
             noise = torch.randn_like(x_start, dtype=torch.float32).to(self.device)
 
-        sqrt_alphas_cumprod_t = self._extract(self.sqrt_alpha_bars, t,
+        sqrt_alphas_cumprod_t = self._extract(self.signal_rate, t,
                                         x_start.shape).to(self.device)  # Read as, extract values at index t from sqrt_alpha_bars and reshape it to match x_start.shape
         sqrt_one_minus_alphas_cumprod_t = self._extract(
-            self.sqrt_one_minus_alpha_bars, t, x_start.shape
+            self.noise_rate, t, x_start.shape
         ).to(self.device)
 
-        new_noise = sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
-        return new_noise.float()
+        x_t = sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
+        return x_t.float().to(self.device)
 
 
     def get_noisy_image(self, x_start, t):
@@ -492,65 +502,120 @@ class Forward_diffussion_process():
         return x_noisy
     
     def _set_post_variance(self):
-        self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
-        self.alphas_cumprod_prev = F.pad(self.alpha_bars[:-1], (1, 0), value=1.0)
-        self.posterior_variance = self.betas * (1. - self.alphas_cumprod_prev) / (1. - self.alpha_bars) #equation 7
-
+        self.coeff_1 = torch.sqrt(1.0 / self.alphas).to(self.device).to(self.device)
+        self.alphas_cumprod_prev = F.pad(self.alpha_bars[:-1], (1, 0), value=1.0).to(self.device)
+        self.coeff_2 = (self.coeff_1 * (1.0 - self.alphas) / torch.sqrt(1.0 - self.alpha_bars)).to(self.device)
+        self.posterior_variance = (self.betas * (1. - self.alphas_cumprod_prev) / (1. - self.alpha_bars)).to(self.device) #equation 7
+    
     @torch.no_grad()
-    def p_sample(self, model, x, t:int, x_cond=None):
+    def p_sample_ddpm(self, model, x_t, t:int, x_cond=None, clip=True):
 
-        
-        b = x.shape[0]
+        r""" Sample x_(t-1) given x_t and noise predicted
+             by model.
+             
+             :param xt: Image tensor at timestep t of shape -> B x C x H x W
+             :param noise_pred: Noise Predicted by model of shape -> B x C x H x W
+             :param t: Current time step
+
+        """
+        b = x_t.shape[0]
+
         batched_times = torch.full((b,), t, device=self.device, dtype=torch.long)
-        
-        betas_t = self._extract(self.betas, batched_times, x.shape)
-        sqrt_one_minus_alphas_cumprod_t = self._extract(
-            self.sqrt_one_minus_alpha_bars, batched_times, x.shape
-        )
-        sqrt_recip_alphas_t = self._extract(self.sqrt_recip_alphas, batched_times, x.shape)
-        
-        pred_noise = model(x, batched_times, x_cond)
 
-        # Equation 11 in the paper
-        # Use our model (noise predictor) to predict the mean
-        model_mean = sqrt_recip_alphas_t * (
-                 x - betas_t * pred_noise / sqrt_one_minus_alphas_cumprod_t
-        )
+        epsilon_theta = model(x_t, batched_times, x_cond)
+        
+        mean = self._extract(self.coeff_1, batched_times, x_t.shape) * x_t - self._extract(self.coeff_2, batched_times, x_t.shape) * epsilon_theta
 
-        z_noise = torch.randn_like(x, dtype=torch.float32) if t > 0 else 0.
-        posterior_variance_t = self._extract(self.posterior_variance, batched_times, x.shape)
-            
-        # Algorithm 2 line 4:
-        x_start = model_mean + torch.sqrt(posterior_variance_t) * z_noise
-        return pred_noise.float(), x_start.float()
+        # var is a constant
+        var = self._extract(self.posterior_variance, batched_times, x_t.shape)
+
+        z = torch.randn_like(x_t) if t > 0 else 0
+        x_t_minus_one = mean + torch.sqrt(var) * z
+
+        if clip is True:
+            x_t_minus_one = torch.clip(x_t_minus_one, -1, 1)
+        return x_t_minus_one
+    
+    @torch.no_grad()
+    def p_sample_ddim(self, model, x_t, t:int, x_cond=None, clip=True):
+
+        r""" Sample x_(t-1) given x_t and noise predicted
+             by model.
+             
+             :param xt: Image tensor at timestep t of shape -> B x C x H x W
+             :param noise_pred: Noise Predicted by model of shape -> B x C x H x W
+             :param t: Current time step
+
+        """
+        epsilon_t = torch.randn_like(x_t)
+
+        b = x_t.shape[0]
+        prev_time_step = (t-1)
+
+        batched_times = torch.full((b,), t, device=self.device, dtype=torch.long)
+        batched_prev_t =  torch.full((b,), prev_time_step, device=self.device, dtype=torch.long)
+
+        # get current and previous alpha_cumprod
+        alpha_t = self._extract(self.alpha_bars, batched_times, x_t.shape)
+        alpha_t_prev = self._extract(self.alpha_bars, batched_prev_t, x_t.shape)
+
+        epsilon_theta_t = model(x_t, batched_times, x_cond)
+        sigma_t = self.eta * torch.sqrt((1 - alpha_t_prev) / (1 - alpha_t) * (1 - alpha_t / alpha_t_prev))
+        
+        # Original Image Prediction at timestep t
+        x_t_minus_one = (
+                torch.sqrt(alpha_t_prev / alpha_t) * x_t +
+                (torch.sqrt(1 - alpha_t_prev - sigma_t ** 2) - torch.sqrt(
+                    (alpha_t_prev * (1 - alpha_t)) / alpha_t)) * epsilon_theta_t +
+                sigma_t * epsilon_t
+        )
+        if clip is True:
+            x_t_minus_one = torch.clip(x_t_minus_one, -1, 1)
+        return x_t_minus_one
 
         # Algorithm 2 (including returning all images)
+    @torch.no_grad()
+    def p_sample(self, args, model, x_start, time_steps, x_cond):
+        if args.diff_sample == "ddpm":
+            return self.p_sample_ddpm( model, x_start, time_steps, x_cond)
+        elif args.diff_sample =="ddim":
+            return self.p_sample_ddim( model, x_start, time_steps, x_cond)
 
     @torch.no_grad()
-    def p_sample_loop(self, model, dataloader, shape, timesteps):
+    def p_sample_loop(self, args, model, dataloader, shape, timesteps):
         import random
-        device = next(model.parameters()).device
-
-        b = shape[0]
-        # start from pure noise (for each example in the batch)
-        img = torch.randn(shape, device=device)
+        if args.diff_sample == "ddim":
+            a = self.timesteps // timesteps
+            time_steps = np.asarray(list(range(0, self.timesteps, a))) + 1
+            time_steps_prev = np.concatenate([[0], time_steps[:-1]])
+        
+        elif args.diff_sample == "ddpm":
+            timesteps = self.timesteps
+            time_steps = np.asarray(list(range(0, self.timesteps, 1)))
 
         idx = random.randint(0, len(dataloader.data)-1)
         x_cond = torch.from_numpy(dataloader.data[idx]).unsqueeze(0).to(self.device)
+        y_true = torch.from_numpy(dataloader.labels[idx]).unsqueeze(0).to(self.device)
+
+         # generate Gaussian noise
+        z_t = torch.randn(shape, device=self.device, dtype=torch.float32)
         
-        imgs = []
+        imgs = [z_t]
         x_start = None
-        for t in tqdm(reversed(range(0, timesteps)), desc='sampling loop time step', total=timesteps):
-            img, x_start = self.p_sample(model, img, t, x_cond)
-            imgs.append(img.cpu().numpy())
-        return imgs
+
+
+        with tqdm(reversed(range(0, timesteps)), desc='sampling loop time step', total=timesteps) as sampling_steps:
+            for t in sampling_steps:
+                x_start = z_t if x_start is None else x_start
+                x_start = self.p_sample(args, model, x_start, time_steps[t], x_cond)
+                imgs.append(x_start)
+        
+        return imgs[-1], y_true
 
     @torch.no_grad()
-    def sample(self, model, dataloader, shape, timesteps=300):
-        return self.p_sample_loop(model, dataloader, shape, timesteps)
+    def sample(self, args, model, dataloader, shape, timesteps=300):
+        return self.p_sample_loop(args, model, dataloader, shape, timesteps)
 
-
-# This is just a u-net
 
 '''
 
@@ -835,7 +900,6 @@ class UNET(nn.Module):
     def forward(self, x, time, x_self_cond = None):
 
         if x_self_cond is not None:
-            # x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
             x = torch.cat((x_self_cond, x), dim = 1)
 
         x = self.init_conv(x)
