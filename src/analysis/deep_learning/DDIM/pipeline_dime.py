@@ -21,12 +21,9 @@ parser.add_argument('--step_length',type=int,default=1)
 parser.add_argument('--feature_days',type=int,default=90)
 parser.add_argument('--auto_ep',type=int,default=100)
 
-
 parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
 args = parser.parse_args()
-
-
 
 def training_ddim(args):
     from analysis.configs.config_models import config_ddim as model_config
@@ -76,7 +73,7 @@ def training_ddim(args):
         optimizer, 'min', factor=model_config.scheduler_factor, 
         patience=model_config.scheduler_patience, 
     )
-    loss = L1Loss()
+    loss = MSELoss()
     trainer = TrainDiffusion(model, optimizer, loss)
     
     start_epoch  = 0

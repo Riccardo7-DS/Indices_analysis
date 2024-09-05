@@ -18,8 +18,12 @@ class ConfigDDIM:
     output_channels = 1
     num_frames_output = 1
 
-    scheduler_patience = 10
-    scheduler_factor = 0.1
+    save_and_sample_every = 10
+
+    scheduler_patience = 3
+    scheduler_factor = 0.7
+
+    timesteps = 1000
 
     # sampling
 
@@ -33,17 +37,17 @@ class ConfigDDIM:
 
     embedding_dims = 64 # 32
     embedding_max_frequency = 1000.0
-    widths = [32, 64, 96, 128]
-    # widths = [64, 128, 256, 384]
+    # widths = [32, 64, 96, 128]
+    widths = [64, 128, 256, 384]
     block_depth = 2
 
     # optimization
 
-    batch_size =  128
+    batch_size =  64
     ema = 0.999
     learning_rate = 1e-3
     epochs = 500
-    patience = 100
+    patience = 40
 
     include_lag = True
     

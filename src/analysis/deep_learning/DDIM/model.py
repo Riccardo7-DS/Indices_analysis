@@ -10,412 +10,229 @@ from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
 
-# Assuming you have a similar setup.py for configurations
-# from setup import *
-
-class SinusoidalEmbedding(nn.Module):
-    def __init__(self, embedding_dims, embedding_max_frequency):
-        super(SinusoidalEmbedding, self).__init__()
-        self.embedding_dims = embedding_dims
-        self.embedding_max_frequency = embedding_max_frequency
-        self.embedding_min_frequency = 1.0
-
-    def forward(self, x):
-        frequencies = torch.exp(
-            torch.linspace(
-                math.log(self.embedding_min_frequency),
-                math.log(self.embedding_max_frequency),
-                self.embedding_dims // 2,
-            )
-        ).to(x.device)
-
-        angular_speeds = 2.0 * math.pi * frequencies
-        embeddings = torch.cat([torch.sin(angular_speeds * x), 
-                                torch.cos(angular_speeds * x)], dim=3)
-        return embeddings.permute(0, 3, 1, 2)
-
-class ResidualBlock(nn.Module):
-    def __init__(self, width):
-        super(ResidualBlock, self).__init__()
-        self.width = width
-
-    def forward(self, x):
-        input_width = x.shape[1]  ### Channels
-        if input_width == self.width:
-            residual = x
-        else:
-            residual = nn.Conv2d(input_width, self.width, kernel_size=1).to(x.device)(x)
-
-        x = nn.LayerNorm(x.size()[1:], elementwise_affine=True).to(x.device)(x)
-        x = nn.Conv2d(input_width, self.width, kernel_size=3, padding="same").to(x.device)(x)
-        x = nn.SiLU()(x)
-        x = nn.Conv2d(self.width, self.width, kernel_size=3, padding="same").to(x.device)(x)
-        x = x + residual
-        return x
-
-class DownBlock(nn.Module):
-    def __init__(self, width, block_depth):
-        super(DownBlock, self).__init__()
-        self.width = width
-        self.block_depth = block_depth
-
-    def forward(self, x, skips):
-        for _ in range(self.block_depth):
-            x = ResidualBlock(self.width)(x)
-            skips.append(x)
-        x = nn.AvgPool2d(kernel_size=2)(x)
-        return x, skips
-
-class UpBlock(nn.Module):
-    def __init__(self, width, block_depth):
-        super(UpBlock, self).__init__()
-        self.width = width
-        self.block_depth = block_depth
-
-    def forward(self, x, skips):
-        x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
-        skip = skips.pop()
-        
-        # Ensuring the spatial dimensions match
-        if x.shape[2:] != skip.shape[2:]:
-            # Cropping the skip connection if necessary
-            height_diff = skip.shape[2] - x.shape[2]
-            width_diff = skip.shape[3] - x.shape[3]
-
-            if height_diff != 0:
-                skip = skip[:, :, :-height_diff, :] if height_diff > 0 else F.pad(skip, (0, 0, 0, -height_diff))
-            if width_diff != 0:
-                skip = skip[:, :, :, :-width_diff] if width_diff > 0 else F.pad(skip, (0, -width_diff, 0, 0))
-
-        x = torch.cat([x, skip], dim=1)
-        for _ in range(self.block_depth):
-            x = ResidualBlock(self.width)(x)
-        return x
-
-class UNet(nn.Module):
-    def __init__(self, config, input_frames, output_frames, widths, block_depth):
-        super(UNet, self).__init__()
-
-        self.noisy_images_conv = nn.Conv2d(input_frames+output_frames, config.widths[0], kernel_size=1)
-
-        self.down_blocks = nn.ModuleList()
-        for width in widths[:-1]:
-            self.down_blocks.append(DownBlock(width, block_depth))
-
-        self.mid_blocks = nn.ModuleList([ResidualBlock(widths[-1]) for _ in range(block_depth)])
-
-        self.up_blocks = nn.ModuleList()
-        for width in reversed(widths[:-1]):
-            self.up_blocks.append(UpBlock(width, block_depth))
-
-        self.upsample = nn.Upsample(size=config.input_size, mode='bilinear', align_corners=True)
-
-        self.final_conv = nn.Conv2d(widths[0], output_frames, kernel_size=1)
-        nn.init.zeros_(self.final_conv.weight)
-
-    def forward(self, images, embedded_variance):
-        x = self.noisy_images_conv(images)
-        x = torch.cat([x, embedded_variance], dim=1)
-
-        skips = []
-        for down_block in self.down_blocks:
-            x, skips = down_block(x, skips)
-
-        for mid_block in self.mid_blocks:
-            x = mid_block(x)
-
-        for up_block in self.up_blocks:
-            x = up_block(x, skips)
-
-        x = self.upsample(x)
-
-        x = self.final_conv(x)
-        return x
-        
 
 
-class Section(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size):
-        super(Section, self).__init__()
-        self.process = nn.Sequential(
-            nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=1, padding='same'),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=kernel_size, stride=1, padding='same'),
-            nn.ReLU(inplace=True)
+class ConvNextBlock(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        mult=2,
+        time_embedding_dim=None,
+        norm=True,
+        group=8,
+    ):
+        super().__init__()
+        self.mlp = (
+            nn.Sequential(nn.GELU(), nn.Linear(time_embedding_dim, in_channels))
+            if time_embedding_dim
+            else None
         )
-        
+
+        self.in_conv = nn.Conv2d(
+            in_channels, in_channels, 7, padding=3, groups=in_channels
+        )
+
+        self.block = nn.Sequential(
+            nn.GroupNorm(1, in_channels) if norm else nn.Identity(),
+            nn.Conv2d(in_channels, out_channels * mult, 3, padding=1),
+            nn.GELU(),
+            nn.GroupNorm(1, out_channels * mult),
+            nn.Conv2d(out_channels * mult, out_channels, 3, padding=1),
+        )
+
+        self.residual_conv = (
+            nn.Conv2d(in_channels, out_channels, 1)
+            if in_channels != out_channels
+            else nn.Identity()
+        )
+
+    def forward(self, x, time_embedding=None):
+        h = self.in_conv(x)
+        if self.mlp is not None and time_embedding is not None:
+            assert self.mlp is not None, "MLP is None"
+            h = h + rearrange(self.mlp(time_embedding), "b c -> b c 1 1")
+        h = self.block(h)
+        return h + self.residual_conv(x)
+    
+
+class DownSample(nn.Module):
+    def __init__(self, dim, dim_out=None):
+        super().__init__()
+        self.net = nn.Sequential(
+            Rearrange("b c (h p1) (w p2) -> b (c p1 p2) h w", p1=2, p2=2),
+            nn.Conv2d(dim * 4, default(dim_out, dim), 1),
+        )
+
     def forward(self, x):
-        return self.process(x)
+        return self.net(x)
+
+
+class UpsampleC(nn.Module):
+    def __init__(self, dim, dim_out=None):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv2d(dim, dim_out or dim, kernel_size=3, padding=1),
+        )
+
+    def forward(self, x):
+        return self.net(x)
     
-class UNET_rect(nn.Module):
-    def __init__(self, input_frames, output_frames, config):
-        super(UNET_rect, self).__init__()
-        # Contraction
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.down1 = Section(in_channels=input_frames+output_frames+config.widths[0], out_channels=64, kernel_size=3) #config.widths[0]
-        self.down2 = Section(in_channels=64, out_channels=128, kernel_size=3)
-        self.down3 = Section(in_channels=128, out_channels=256, kernel_size=3)
-        self.down4 = Section(in_channels=256, out_channels=512, kernel_size=3)
-        self.down5 = Section(in_channels=512, out_channels=1024, kernel_size=3)
-        # Expansion
-        self.up_conv1 = nn.ConvTranspose2d(in_channels=1024, out_channels=512, kernel_size=2, stride=2)
-        self.up_conv2 = nn.ConvTranspose2d(in_channels=512, out_channels=256, kernel_size=2, stride=2)
-        self.up_conv3 = nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=2, stride=2)
-        self.up_conv4 = nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=2, stride=2)
-        self.up1 = Section(in_channels=1024, out_channels=512, kernel_size=3)
-        self.up2 = Section(in_channels=512, out_channels=256, kernel_size=3)
-        self.up3 = Section(in_channels=256, out_channels=128, kernel_size=3)
-        self.up4 = Section(in_channels=128, out_channels=64, kernel_size=3)
-        self.output = self.final_conv = nn.Conv2d(64, output_frames, kernel_size=1, padding='same')
-        
-    def forward(self, x, embedded_variance):
-        x = torch.cat([x, embedded_variance], dim=1)
+class TwoResUNet(nn.Module):
+    def __init__(
+        self,
+        dim,
+        init_dim=None,
+        out_dim=None,
+        dim_mults=(1, 2, 4, 8),
+        channels=3,
+        sinusoidal_pos_emb_theta=10000,
+        convnext_block_groups=8,
+    ):
+        super().__init__()
+        self.channels = channels
+        input_channels = channels
+        self.init_dim = default(init_dim, dim)
+        self.init_conv = nn.Conv2d(input_channels, self.init_dim, 7, padding=3)
 
-        skip_connections = []
-        # CONTRACTION
-        # down 1
-        x = self.down1(x)
-        skip_connections.append(x)
-        x = self.pool(x)
-        
-        # down 2
-        x = self.down2(x)
-        skip_connections.append(x)
-        x = self.pool(x)
-        # down 3
-        x = self.down3(x)
-        skip_connections.append(x)
-        x = self.pool(x)
-        # down 4
-        x = self.down4(x)
-        skip_connections.append(x)
-        x = self.pool(x)
-        # down 5
-        x = self.down5(x)
-        
-        # EXPANSION
-        # up1
-        x = self.up_conv1(x)
-        y = skip_connections[3]
-        x = TF.resize(x, y.shape[2:])
-        y_new = torch.cat((y, x), dim=1)
-        x = self.up1(y_new)
-        # up2
-        x = self.up_conv2(x)
-        y = skip_connections[2]
-        # resize skip commention
-        x = TF.resize(x, y.shape[2:])
-        y_new = torch.cat((y, x), dim=1)
-        x = self.up2(y_new)
-        # up3
-        x = self.up_conv3(x)
-        y = skip_connections[1]
-        x = TF.resize(x, y.shape[2:])
-        y_new = torch.cat((y, x), dim=1)
-        x = self.up3(y_new)
-        # up4 
-        x = self.up_conv4(x)
-        y = skip_connections[0]
-        x = TF.resize(x, y.shape[2:])
-        y_new = torch.cat((y, x), dim=1)
-        x = self.up4(y_new)
-        
-        x = self.output(x)
-        return x
+        dims = [self.init_dim, *map(lambda m: dim * m, dim_mults)]
+        in_out = list(zip(dims[:-1], dims[1:]))
 
-class DiffusionModel(nn.Module):
-    def __init__(self, config, input_frames):
-        super(DiffusionModel, self).__init__()
-        self.image_size = config.input_size
-        self.input_frames = input_frames
-        self.output_frames = config.num_frames_output
-        self.normalizer = nn.LayerNorm([*self.image_size])
-        # self.network = UNet(config, self.input_frames, 
-        #                     self.output_frames, config.widths, config.block_depth)
-        self.network = UNET_rect(self.input_frames, self.output_frames, config)
-        self.ema_network = UNet(config, self.input_frames, self.output_frames, 
-                                config.widths, config.block_depth)  # Assuming a deep copy here
-        
-        self.ema = 0.999
-        self.max_signal_rate = config.max_signal_rate
-        self.min_signal_rate = config.min_signal_rate
-        self.batch_size = config.batch_size
-        self.device = config.device
-        
-        self.embedding = SinusoidalEmbedding(embedding_dims=config.widths[0], embedding_max_frequency=config.embedding_max_frequency) 
-        self.upsample = nn.Upsample(size=config.input_size, mode='nearest')
-        
-    def diffusion_schedule(self, diffusion_times):
-        import torch.nn.functional as F
-        start_angle = torch.acos(torch.tensor(self.max_signal_rate))
-        end_angle = torch.acos(torch.tensor(self.min_signal_rate))
-        diffusion_angles = start_angle + diffusion_times * (end_angle - start_angle)
-        signal_rates = torch.cos(diffusion_angles)
-        noise_rates = torch.sin(diffusion_angles)
-        return noise_rates, signal_rates
-    
-    def _embed_variance(self, noise_rates):
-        return self.upsample(self.embedding(noise_rates**2))
+        sinu_pos_emb = SinusoidalPosEmb(dim, theta=sinusoidal_pos_emb_theta)
 
-    def denoise(self, noisy_images, noise_rates, signal_rates, training):
-        embedded_variance = self._embed_variance(noise_rates)
-    
-        network = self.network if training else self.ema_network
-        pred_noises = network(noisy_images, embedded_variance)
-        pred_images = (noisy_images[:,-self.output_frames:,:,:] - noise_rates * pred_noises) / signal_rates
-        return pred_noises, pred_images
+        time_dim = dim * 4
 
-    def reverse_diffusion(self, initial_noise, diffusion_steps):
-        num_images = initial_noise.shape[0]
-        step_size = 1.0 / diffusion_steps
-        past = initial_noise[:,:-self.output_frames,:,:]
-        next_noisy_images = initial_noise
-        for step in range(diffusion_steps):
-            noisy_images = next_noisy_images
-            diffusion_times = torch.ones((num_images, 1, 1, 1)).to(initial_noise.device) - step * step_size
-            noise_rates, signal_rates = self.diffusion_schedule(diffusion_times)
-            pred_noises, pred_images = self.denoise(noisy_images, noise_rates, signal_rates, training=False)
-            next_diffusion_times = diffusion_times - step_size
-            next_noise_rates, next_signal_rates = self.diffusion_schedule(next_diffusion_times)
-            next_noisy_frames = next_signal_rates * pred_images + next_noise_rates * pred_noises
-            next_noisy_images = torch.cat([past, next_noisy_frames], dim=-1)
-        return pred_images
+        self.time_mlp = nn.Sequential(
+            sinu_pos_emb,
+            nn.Linear(dim, time_dim),
+            nn.GELU(),
+            nn.Linear(time_dim, time_dim),
+        )
 
-    def generate(self, images, diffusion_steps, normalize=False):
-        initial_noise = torch.randn((images.shape[0], images.shape[1], 
-                                     images.shape[2], self.output_frames)).to(images.device)
-        images[:,:,:,-self.output_frames:] = initial_noise
-        generated_images = self.reverse_diffusion(images, diffusion_steps)
-        cat_images = torch.cat([images[:,:,:,:-self.output_frames], generated_images], dim=-1)
-        if normalize is True:
-            return self.denormalize(cat_images)
-        else:
-            return cat_images
+        self.downs = nn.ModuleList([])
+        self.ups = nn.ModuleList([])
+        num_resolutions = len(in_out)
 
-    def denormalize(self, images):
-        images = self.normalizer.mean + images * self.normalizer.variance**0.5
-        return torch.clamp(images, 0.0, 1.0)
-    
+        for ind, (dim_in, dim_out) in enumerate(in_out):
+            is_last = ind >= (num_resolutions - 1)
 
-class TrainDiffusion:
-    def __init__(self, model:DiffusionModel, optimizer, loss_fn):
-        self.optimizer = optimizer
-        self.loss = loss_fn
-        self.model = model
+            self.downs.append(
+                nn.ModuleList(
+                    [
+                        ConvNextBlock(
+                            in_channels=dim_in,
+                            out_channels=dim_in,
+                            time_embedding_dim=time_dim,
+                            group=convnext_block_groups,
+                        ),
+                        ConvNextBlock(
+                            in_channels=dim_in,
+                            out_channels=dim_in,
+                            time_embedding_dim=time_dim,
+                            group=convnext_block_groups,
+                        ),
+                        DownSample(dim_in, dim_out)
+                        if not is_last
+                        else nn.Conv2d(dim_in, dim_out, 3, padding=1),
+                    ]
+                )
+            )
 
-    def train_step(self, train_loader, epoch, writer, plot:bool=False):
-        
-        for batch_idx, (images, targets) in enumerate(train_loader):
+        mid_dim = dims[-1]
+        self.mid_block1 = ConvNextBlock(mid_dim, mid_dim, time_embedding_dim=time_dim)
+        self.mid_block2 = ConvNextBlock(mid_dim, mid_dim, time_embedding_dim=time_dim)
+
+        for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
+            is_last = ind == (len(in_out) - 1)
+            is_first = ind == 0
+
+            self.ups.append(
+                nn.ModuleList(
+                    [
+                        ConvNextBlock(
+                            in_channels=dim_out + dim_in,
+                            out_channels=dim_out,
+                            time_embedding_dim=time_dim,
+                            group=convnext_block_groups,
+                        ),
+                        ConvNextBlock(
+                            in_channels=dim_out + dim_in,
+                            out_channels=dim_out,
+                            time_embedding_dim=time_dim,
+                            group=convnext_block_groups,
+                        ),
+                        UpsampleC(dim_out, dim_in)
+                        if not is_last
+                        else nn.Conv2d(dim_out, dim_in, 3, padding=1)
+                    ]
+                )
+            )
+
+        default_out_dim = channels
+        self.out_dim = default(out_dim, default_out_dim)
+
+        self.final_res_block = ConvNextBlock(dim * 2, dim, time_embedding_dim=time_dim)
+        self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
+
+    def forward(self, x, time,  x_self_cond = None):
+        # b, _, h, w = x.shape
+
+        if x_self_cond is not None:
+            x = torch.cat((x_self_cond, x), dim = 1)
             
-            noises = torch.randn((self.model.batch_size, self.model.output_frames, 
-                                  images.shape[2], images.shape[3]))\
-                                .to(self.model.device)
-            diffusion_times = torch.rand((self.model.batch_size, 1, 1, 1))\
-                                .to(self.model.device)
-            noise_rates, signal_rates = self.model.diffusion_schedule(diffusion_times)
-            
-            target = targets.squeeze(2)
+        x = self.init_conv(x)
+        r = x.clone()
 
-            if plot is True:
-                logger.info("Plotting target data")
-                self.plot_data(target.squeeze(), 0, 1)
+        t = self.time_mlp(time)
 
-            if plot is True:
-                logger.info("Plotting input data")
-                self.plot_data(images, 0, images.shape[1])
-            
-            noisy_images = signal_rates * target + noise_rates * noises
-            noise_two = torch.cat([images, noisy_images], dim=1)
+        unet_stack = []
+        for down1, down2, downsample in self.downs:
+            x = down1(x, t)
+            unet_stack.append(x)
+            x = down2(x, t)
+            unet_stack.append(x)
+            x = downsample(x)
 
-            self.optimizer.zero_grad()
-            
-            pred_noises, pred_images = self.model.denoise(noise_two, noise_rates, 
-                                                    signal_rates, training=True)
-            
-            noise_loss = self.loss(noises, pred_noises)
-            image_loss = self.loss(target, pred_images)
+        x = self.mid_block1(x, t)
+        x = self.mid_block2(x, t)
 
-            
-            noise_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        for up1, up2, upsample in self.ups:
+            x = torch.cat((x, unet_stack.pop()), dim=1)
+            x = up1(x, t)
+            x = torch.cat((x, unet_stack.pop()), dim=1)
+            x = up2(x, t)
+            x = upsample(x)
 
-            for name, param in self.model.named_parameters():
-                if param.grad is not None:
-                    writer.add_scalar(f'Gradient/{name}', param.grad.norm(), epoch * len(train_loader) + batch_idx)
-                    writer.add_scalar(f'Parameter/{name}', param.norm(), epoch * len(train_loader) + batch_idx)
+        x = torch.cat((x, r), dim=1)
+        x = self.final_res_block(x, t)
 
-            self.optimizer.step()
-            # for ema_param, param in zip(self.model.ema_network.parameters(), 
-            #                             self.model.network.parameters()):
-            #     ema_param.data = self.model.ema * ema_param.data + (1.0 - self.model.ema) * param.data
-            return noise_loss.item(), image_loss.item()
-        
-    def test_step(self, test_loader):
-        for idx, (images, targets) in enumerate(test_loader):
-            with torch.no_grad():
-                # images = self.normalizer(inputs)
-                target = targets.squeeze(2)
-                noises = torch.randn((self.model.batch_size, self.model.output_frames, 
-                                      images.shape[2], images.shape[3]))\
-                                    .to(self.model.device)
-                diffusion_times = torch.rand((self.model.batch_size, 1, 1, 1))\
-                                    .to(self.model.device)
-                noise_rates, signal_rates = self.model.diffusion_schedule(diffusion_times)
+        return self.final_conv(x)
 
-                noisy_images = signal_rates * target + noise_rates * noises
-                noise_two = torch.cat([images, noisy_images], dim=1)
-                pred_noises, pred_images = self.model.denoise(noise_two, noise_rates, 
-                                                        signal_rates, training=False)
+class BlockAttention(nn.Module):
+    def __init__(self, gate_in_channel, residual_in_channel, scale_factor):
+        super().__init__()
+        self.gate_conv = nn.Conv2d(gate_in_channel, gate_in_channel, kernel_size=1, stride=1)
+        self.residual_conv = nn.Conv2d(residual_in_channel, gate_in_channel, kernel_size=1, stride=1)
+        self.in_conv = nn.Conv2d(gate_in_channel, 1, kernel_size=1, stride=1)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
 
-
-                noise_loss = self.loss(noises, pred_noises)
-                image_loss = self.loss(target, pred_images)
-
-            return noise_loss.item(), image_loss.item()
-        
-    def plot_data(self, tensor, idx:int, range_images:int, seconds:int=10):
-        import matplotlib.pyplot as plt
-        import numpy as np
-
-
-        # Select a specific slice of the first dimension to plot
-        # For example, we select the first slice (tensor[0, :, :, :])
-        tensor_slice = tensor[idx].cpu().detach().float()
-
-        # Create a figure
-        fig, axes = plt.subplots(5, 7, figsize=(20, 15))  # 5 rows and 7 columns of subplots
-        axes = axes.flatten()  # Flatten the 2D array of axes to 1D
-
-        if range_images > 1:
-            for i in range(range_images):
-                ax = axes[i]
-                cax = ax.imshow(tensor_slice[i], aspect='auto')
-                ax.set_title(f'Slice {i}')
-                fig.colorbar(cax, ax=ax)
-        else:
-            for i in range(range_images):
-                ax = axes[i]
-                cax = ax.imshow(tensor_slice, aspect='auto')
-                ax.set_title(f'Slice {i}')
-                fig.colorbar(cax, ax=ax)
-
-
-        # Remove any unused subplots (if there are any)
-        for j in range(range_images, len(axes)):
-            fig.delaxes(axes[j])
-
-        plt.tight_layout()
-        plt.pause(seconds)
-        plt.close()
-
-
+    def forward(self, x: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
+        in_attention = self.relu(self.gate_conv(g) + self.residual_conv(x))
+        in_attention = self.in_conv(in_attention)
+        in_attention = self.sigmoid(in_attention)
+        return in_attention * x
 
 class Forward_diffussion_process():
-    def __init__(self, args, config, model, timesteps=500, eta=0):
+    def __init__(self, args, config, model,  optimizer, scheduler, loss, eta=0):
         self.start = config.beta_start
         self.end = config.beta_end
-        self.timesteps = timesteps
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.timesteps = config.timesteps
         self.device = config.device
+        self.loss_fn = loss
         self.eta = 0.
         self._set_alphas_betas(args)
         self._set_post_variance()
@@ -428,6 +245,8 @@ class Forward_diffussion_process():
             return self.quadratic_beta_schedule(timesteps)
         elif args.diff_schedule == "sigmoid":
             return self.sigmoid_beta_schedule(timesteps)
+        elif args.diff_schedule == "cosine":
+            return self.cosine_beta_schedule(timesteps)
     
     def _extract(self, a, t, x_shape):
         batch_size = t.shape[0]
@@ -456,8 +275,20 @@ class Forward_diffussion_process():
         v_start = torch.tensor(start / tau).sigmoid()
         v_end = torch.tensor(end / tau).sigmoid()
         alpha_bars = (-((t * (end - start) + start) / tau).sigmoid() + v_end) / (v_end - v_start)
-        self.alpha_bars = alpha_bars / alpha_bars[0]
-        betas = 1 - (self.alpha_bars[1:] / self.alpha_bars[:-1])
+        alpha_bars = alpha_bars / alpha_bars[0]
+        betas = 1 - (alpha_bars[1:] / alpha_bars[:-1])
+        return torch.clip(betas, 0, 0.999)
+    
+    def cosine_beta_schedule(self, timesteps, s = 0.008):
+        """
+        cosine schedule
+        as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
+        """
+        steps = timesteps + 1
+        t = torch.linspace(0, timesteps, steps, dtype = torch.float64) / timesteps
+        alphas_cumprod = torch.cos((t + s) / (1 + s) * math.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
         return torch.clip(betas, 0, 0.999)
 
     def _set_alphas_betas(self, args):
@@ -521,11 +352,9 @@ class Forward_diffussion_process():
         b = x_t.shape[0]
 
         batched_times = torch.full((b,), t, device=self.device, dtype=torch.long)
-
         epsilon_theta = model(x_t, batched_times, x_cond)
-        
-        mean = self._extract(self.coeff_1, batched_times, x_t.shape) * x_t - self._extract(self.coeff_2, batched_times, x_t.shape) * epsilon_theta
 
+        mean = self._extract(self.coeff_1, batched_times, x_t.shape) * x_t - self._extract(self.coeff_2, batched_times, x_t.shape) * epsilon_theta
         # var is a constant
         var = self._extract(self.posterior_variance, batched_times, x_t.shape)
 
@@ -580,41 +409,48 @@ class Forward_diffussion_process():
             return self.p_sample_ddpm( model, x_start, time_steps, x_cond)
         elif args.diff_sample =="ddim":
             return self.p_sample_ddim( model, x_start, time_steps, x_cond)
+        
+    @torch.no_grad()
+    def reverse_diffusion(self, args, model, dataloader, shape, timesteps, time_steps_list):
+        import random
+        idx = random.randint(0, len(dataloader.data)-1)
+        x_cond = torch.from_numpy(dataloader.data[idx]).unsqueeze(0).to(self.device)
+        y_true = torch.from_numpy(dataloader.labels[idx]).unsqueeze(0).to(self.device)
+         # generate Gaussian noise
+        z_t = torch.randn(shape, device=self.device, dtype=torch.float32)
+        imgs = [z_t]
+        x_start = None
+        with tqdm(reversed(range(0, timesteps)), desc='sampling loop time step', total=timesteps) as sampling_steps:
+            for t in sampling_steps:
+                x_start = z_t if x_start is None else x_start
+                x_start = self.p_sample(args, model, x_start, time_steps_list[t], x_cond)
+                imgs.append(x_start)
+    
+        return imgs[-1], y_true
 
     @torch.no_grad()
-    def p_sample_loop(self, args, model, dataloader, shape, timesteps):
-        import random
+    def p_sample_loop(self, args, model, dataloader, shape, timesteps, samples):
+        
         if args.diff_sample == "ddim":
             a = self.timesteps // timesteps
             time_steps = np.asarray(list(range(0, self.timesteps, a))) + 1
-            time_steps_prev = np.concatenate([[0], time_steps[:-1]])
         
         elif args.diff_sample == "ddpm":
             timesteps = self.timesteps
             time_steps = np.asarray(list(range(0, self.timesteps, 1)))
 
-        idx = random.randint(0, len(dataloader.data)-1)
-        x_cond = torch.from_numpy(dataloader.data[idx]).unsqueeze(0).to(self.device)
-        y_true = torch.from_numpy(dataloader.labels[idx]).unsqueeze(0).to(self.device)
-
-         # generate Gaussian noise
-        z_t = torch.randn(shape, device=self.device, dtype=torch.float32)
-        
-        imgs = [z_t]
-        x_start = None
-
-
-        with tqdm(reversed(range(0, timesteps)), desc='sampling loop time step', total=timesteps) as sampling_steps:
-            for t in sampling_steps:
-                x_start = z_t if x_start is None else x_start
-                x_start = self.p_sample(args, model, x_start, time_steps[t], x_cond)
-                imgs.append(x_start)
-        
-        return imgs[-1], y_true
+        imgs = torch.empty(shape)
+        y = torch.empty(shape)
+        img_shape = (1, *shape[1:])
+        for s in range(samples):
+            img,  y_true = self.reverse_diffusion(args, model, dataloader, img_shape, timesteps, time_steps)
+            imgs[s] = img.squeeze()
+            y[s] = y_true.squeeze()
+        return imgs, y 
 
     @torch.no_grad()
-    def sample(self, args, model, dataloader, shape, timesteps=300):
-        return self.p_sample_loop(args, model, dataloader, shape, timesteps)
+    def sample(self, args, model, dataloader, shape, timesteps=300, samples=1):
+        return self.p_sample_loop(args, model, dataloader, shape, timesteps, samples)
 
 
 '''
