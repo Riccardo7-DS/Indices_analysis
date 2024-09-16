@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import numpy as np
 from analysis import CustomConvLSTMDataset, create_runtime_paths, plot_first_n_images
 # from analysis.deep_learning.DDIM.model import DiffusionModel
-from analysis.configs.config_models import config_convlstm_1 as model_config
 from torch.nn import MSELoss
 from utils.function_clns import CNN_split, config, init_logging
 import matplotlib.pyplot as plt
@@ -21,25 +20,33 @@ class TimeEncoder(nn.Module):
     def __init__(self, enc_shape):
         super(TimeEncoder, self).__init__()
         self.sequence = nn.Sequential(
-            nn.Conv1d(1, 64, kernel_size = 9, padding=1, stride=1), ## N, C, L --> N, C, L_out
-            nn.MaxPool1d(kernel_size=2, stride=2), 
+            nn.Conv1d(1, 64, kernel_size=11, padding=1, stride=1),  # Adjust kernel size based on input size
+            nn.MaxPool1d(kernel_size=2, stride=2),
             nn.BatchNorm1d(64),
             nn.ELU(),
-            nn.Conv1d(64, 128, kernel_size= 7, stride=1, padding=0), ## N, C, L --> N, C, L_out
-            nn.MaxPool1d(kernel_size=2, stride=2), 
+            nn.Conv1d(64, 128, kernel_size=9, stride=1, padding=0),
+            nn.MaxPool1d(kernel_size=2, stride=2),
             nn.BatchNorm1d(128),
             nn.ELU(),
-            nn.Conv1d(128, 256, kernel_size=5, stride=1, padding=0), ## N, C, L --> N, C, L_out
+            nn.Conv1d(128, 256, kernel_size=7, stride=1, padding=0),
             nn.MaxPool1d(kernel_size=2, stride=2),
             nn.BatchNorm1d(256),
             nn.ELU(),
-            nn.Conv1d(256, 512, kernel_size=3, stride=1, padding=0), ## N, C, L --> N, C, L_out
+            nn.Conv1d(256, 512, kernel_size=5, stride=1, padding=0),
             nn.MaxPool1d(kernel_size=2, stride=2),
             nn.BatchNorm1d(512),
-            nn.ELU(),
-            nn.Conv1d(512, 1024, kernel_size=2, stride=1, padding=0),
+            nn.ELU(),          
+            nn.Conv1d(512, 1024, kernel_size=3, stride=1, padding=0),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+            nn.BatchNorm1d(1024),
+            nn.ELU(),         
+            nn.Conv1d(1024, 2048, kernel_size=1, stride=1, padding=0),
+            nn.MaxPool1d(kernel_size=2, stride=2),
+            nn.BatchNorm1d(2048),
             nn.ELU(),
             Flatten(),
+            nn.Linear(2048, 1024),
+            nn.ELU(),
             nn.Linear(1024, 512),
             nn.ELU(),
             nn.Linear(512, 256),
@@ -51,7 +58,8 @@ class TimeEncoder(nn.Module):
             nn.Linear(64, 32),
             nn.ELU(),
             nn.Linear(32, enc_shape),
-            nn.ELU())
+            nn.ELU()
+        )
     def forward(self, x):
         return self.sequence.forward(x)
 
@@ -85,17 +93,24 @@ class TimeAutoencoder(nn.Module):
     
     
 
-def train_autoencoder(args, checkpoint_path = None):
-    data_dir = model_config.data_dir+"/data_convlstm"
-    data = np.load(os.path.join(data_dir, "data.npy"))
-    target = np.load(os.path.join(data_dir, "target.npy"))
+def train_autoencoder(args, data=None, target=None, checkpoint_path = None,
+                      output_shape:int = 20):
+    from analysis.configs.config_models import config_convlstm_1 as model_config
+
+    if data is None:
+        data_dir = model_config.data_dir+"/data_convlstm"
+        data = np.load(os.path.join(data_dir, "data.npy"))
+        target = np.load(os.path.join(data_dir, "target.npy"))
+
     _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
     logger = init_logging(os.path.join(log_path, "autoencoder.log"))
 
+    logger.info(f"Generating new autoencoder output with {args.feature_days} days of features")
 
     ################################# Initialize datasets #############################
     train_data, val_data, train_label, val_label, \
-        test_valid, test_label = CNN_split(data, target, split_percentage=config["MODELS"]["split"])
+        test_valid, test_label = CNN_split(data, target, 
+                                           split_percentage=config["MODELS"]["split"])
     # create a CustomDataset object using the reshaped input data
     train_dataset = CustomConvLSTMDataset(model_config, args, 
                                           train_data, train_label)
@@ -104,19 +119,20 @@ def train_autoencoder(args, checkpoint_path = None):
                                         val_data, val_label)
 
     train_dataloader = DataLoader(train_dataset, 
-                                      batch_size=model_config.batch_size, shuffle=True)
-    output_shape = 20
+                                    batch_size=model_config.batch_size, shuffle=True)
+    
     encoder = TimeEncoder(output_shape).to(model_config.device)
     decoder = TimeDecoder(args.feature_days, output_shape).to(model_config.device)
     autoencoder = TimeAutoencoder(encoder, decoder).to(model_config.device)
     criterion = MSELoss()
-    optimizer = torch.optim.AdamW(autoencoder.parameters(), lr=model_config.learning_rate,
+    optimizer = torch.optim.AdamW(autoencoder.parameters(), 
+                                  lr=model_config.learning_rate,
                                   weight_decay=1e-3,  betas=(0.5, 0.9))
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, patience=3, factor=0.25
             )
-    early_stopping = EarlyStopping(model_config, logger, verbose=True)
+    early_stopping = EarlyStopping(model_config, verbose=True)
 
     if checkpoint_path is not None:
         checkpoint = torch.load(checkpoint_path)
@@ -183,6 +199,11 @@ def train_autoencoder(args, checkpoint_path = None):
 
         early_stopping(np.mean(epoch_records['loss']), 
                            model_dict, epoch, checkpoint_dir)
+        
+        if early_stopping.early_stop:
+            logger.info("Early stopping")
+            return epoch
+        
         mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
         scheduler.step(mean_loss)
 
@@ -194,6 +215,8 @@ def train_autoencoder(args, checkpoint_path = None):
         plt.legend()
         plt.savefig(os.path.join(img_path, f'learning_curve_feat_'
                                      f'{args.step_length}.png'))
+        
+    return epoch
 
 if __name__== "__main__":
     import pyproj

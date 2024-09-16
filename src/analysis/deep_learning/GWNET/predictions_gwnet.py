@@ -31,37 +31,34 @@ if __name__=="__main__":
     import time
     product = "ERA5_land"
     start = time.time()
-    config = load_config(CONFIG_PATH)
+    from analysis.configs.config_models import config_gwnet as model_config
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
-    parser.add_argument('--device',type=str,default='cuda',help='')
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
     parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
     parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
-    parser.add_argument('--nhid',type=int,default=32,help='')
-    parser.add_argument('--in_dim',type=int,default=1,help='inputs dimension')
-    parser.add_argument('--batch_size',type=int,default=config["GWNET"]["batch_size"],help='batch size')
-    parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
-    parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
-    parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
-    parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
-    parser.add_argument('--expid',type=int,default=1,help='experiment id')
+
+    # parser.add_argument('--expid',type=int,default=1,help='experiment id')
     parser.add_argument('--latency',type=int,default=90,help='days used to accumulate precipitation for SPI')
-    parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
+    # parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
     parser.add_argument('--precp_product',type=str,default=product,help='precipitation product')
+
     parser.add_argument('--forecast',type=int,default=12,help='days used to perform forecast')
     parser.add_argument('--seq_length',type=int,default=12,help='')
-    parser.add_argument("--country", type=list, default=["Kenya", "Ethiopia","Somalia"], help="Location for dataset")
+    parser.add_argument("--country", type=list, default=["Kenya", "Ethiopia","Somalia", "Djibouti"], help="Location for dataset")
     parser.add_argument("--region",type=list, default=None, help="region location for dataset") #"Oromia","SNNPR","Gambela" 
-    parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
-    parser.add_argument("--convlstm", type=bool, default= False, help="")
+    # parser.add_argument("--dim", type=int, default= config["GWNET"]["pixels"], help="")
+    parser.add_argument("--model", type=bool, default="GWNET", help="")
 
     args = parser.parse_args()
 
-    from analysis.deep_learning.GWNET.utils_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
+    from utils.function_clns import config
+    from analysis.deep_learning.utils_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
     path = config["PRECIP"]["ERA5_land"]["path"]
+    
     args.output_dir = os.path.join(path,  "graph_net")
     checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")
     model_path = [os.path.join(checkp_path, f) for f in os.listdir(checkp_path) if "best" in f][0]
@@ -100,7 +97,7 @@ if __name__=="__main__":
     if args.aptonly:
         supports = None
 
-    engine = trainer(scaler, args.in_dim, args.seq_length, num_nodes, args.nhid, args.dropout,
+    engine = trainer(model_config, scaler, args.seq_length, num_nodes, args.nhid, args.dropout,
                          args.learning_rate, args.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
                          adjinit)
 

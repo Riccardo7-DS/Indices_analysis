@@ -67,6 +67,7 @@ def load_autoencoder(checkpoint_path,feature_days=90, output_shape=20):
     autoencoder = TimeAutoencoder(encoder, decoder).to(model_config.device)
     checkpoint = torch.load(checkpoint_path)
     autoencoder.load_state_dict(checkpoint['state_dict'])
+    logger.info(f"Loading autoencoder trained up to epoch {checkpoint['epoch']}")
     return autoencoder
 
 def plot_first_n_images(tensor, n:int, save:bool=False, name:str=None, img_path=None):

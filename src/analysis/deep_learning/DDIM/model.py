@@ -10,8 +10,6 @@ from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
 
-
-
 class ConvNextBlock(nn.Module):
     def __init__(
         self,

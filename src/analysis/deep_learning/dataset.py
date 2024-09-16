@@ -172,10 +172,11 @@ class DataGenerator(CustomConvLSTMDataset):
             os.makedirs(filepath)
         file = os.path.join(filepath, "vae_features.npy")
 
-        if os.path.exists(file):
+        if (os.path.exists(file)) and (args.auto_train is False):
             self.data = self._load_auto_output(file)
         else:
-            vae_output = self._reduce_data_vae(autoencoder.to(self.device))
+            vae_output = self._reduce_data_vae(autoencoder.to(self.device), 
+                                               args.feature_days//2)
             extra_features = self.data[:, -1, :-1]
             data = np.concatenate([extra_features, vae_output], axis=1)
             self._export_auto_output(data, file)
@@ -228,14 +229,14 @@ class DataGenerator(CustomConvLSTMDataset):
         # Concatenate all encoded batches
         return torch.cat(encoded_batches)
 
-    def _reduce_data_vae(self, autoencoder):
+    def _reduce_data_vae(self, autoencoder, output_shape):
         imag_past = torch.from_numpy(self.data[:,:,-1]).to(self.device)
         b, t, h, w = imag_past.size()
         imag_past = imag_past.permute(0, 2, 3, 1)
         imag  =  imag_past.reshape(b*h*w, t)
         x = torch.unsqueeze(imag, 1)
         reduced_data = self._apply_autoencoder(x, autoencoder)
-        return reduced_data.view(b, h, w, 20).permute(0, 3, 1, 2) + 1 
+        return reduced_data.view(b, h, w, output_shape).permute(0, 3, 1, 2) + 1 
 
     def _apply_autoencoder(self, x, autoencoder):
         reduced_data = self._apply_batched_autoencoder(x, autoencoder, 256)\

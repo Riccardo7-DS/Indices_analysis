@@ -43,9 +43,9 @@ class ConfigDDIM:
 
     # optimization
 
-    batch_size =  64
+    batch_size =  32
     ema = 0.999
-    learning_rate = 1e-3
+    learning_rate = 1e-4
     epochs = 500
     patience = 40
 
@@ -75,10 +75,10 @@ class ConfigConvLSTM:
     include_lag = True
     num_samples = 9 #### the number of channels to use
 
-    epochs = 100
-    patience = 20
+    epochs = 300
+    patience = 10
     learning_rate = 1e-3
-    batch_size= 8
+    batch_size= 4
 
     null_value = -1
     max_value = 1
