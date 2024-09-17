@@ -358,7 +358,7 @@ class PrecipDataPreparation():
             log(dataset)
 
     def _normalize_datasets(self, *datasets):
-        from analysis.deep_learning.utils_gwnet import StandardNormalizer
+        from analysis.deep_learning.utils_models import StandardNormalizer
 
         normalized_datasets = []
         scalers = []

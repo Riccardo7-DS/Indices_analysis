@@ -5,7 +5,7 @@ import torch
 import time
 import matplotlib.pyplot as plt
 import pickle
-from analysis import EarlyStopping, save_figures, create_runtime_paths, print_lr_change, MetricsRecorder, gwnet_train_loop, gwnet_val_loop, trainer, generate_adj_matrix, load_adj, get_train_valid_loader
+from analysis import EarlyStopping, save_figures, create_runtime_paths, print_lr_change, MetricsRecorder, gwnet_train_loop, gwnet_val_loop, generate_adj_matrix, load_adj, get_train_valid_loader
 
 class StandardNormalizer():
     """
@@ -27,8 +27,9 @@ class StandardNormalizer():
             return transf
         else:
             return transf
-
-def pipeline_weatherGCNet(args, checkpoint_path=None):
+        
+  
+def training_weatherGCNet(args, checkpoint_path=None):
     import torch.nn.functional as F
     import numpy as np
     from definitions import ROOT_DIR
@@ -36,10 +37,10 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
     from utils.function_clns import init_logging, config
     from analysis import check_shape_dataloaders, init_tb
     import torch
-    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-    import os
     from analysis.configs.config_models import config_gwnet 
-
+    import os
+    
+    device = config_gwnet.device
     data_dir = config_gwnet.data_dir+"/data_convlstm"
     data = np.load(os.path.join(data_dir, "data.npy"))
     target = np.load(os.path.join(data_dir, "target.npy"))
@@ -146,40 +147,51 @@ def pipeline_weatherGCNet(args, checkpoint_path=None):
 
 # # # # # # # # # #
 
-def pipeline_wavenet(args, checkpoint_path):
+def training_wavenet(args,
+                    dataname:str="data_gnn", 
+                    data=None, 
+                    target=None, 
+                    ndvi_scaler=None,
+                    mask=None,
+                    checkpoint_path=None):
     import pickle
-    from analysis.configs.config_models import config_gwnet
-    from analysis import check_shape_dataloaders
-    from definitions import ROOT_DIR
+    from analysis.configs.config_models import config_gwnet as model_config
+    from analysis import check_shape_dataloaders, GWNETtrainer
     from analysis import init_tb, update_tensorboard_scalars
     import sys
     from utils.function_clns import init_logging, config
 
     _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
-    logger = init_logging(log_file=os.path.join(log_path, 
-                                                      f"wavenet_days_{args.step_length}"
-                                                      f"features_{args.feature_days}.log"))
-    writer = init_tb(log_path)
+    data_dir = os.path.join(model_config.data_dir, dataname)
+    device = model_config.device
 
-    logger.info(f"Starting training WaveNet model for {args.step_length}"
-                f" days in the future with {args.feature_days} days of features")
+    if data is None:
+        logger = init_logging(log_file=os.path.join(log_path, 
+                            f"pipeline_{(args.model).lower()}_"
+                            f"features_{args.feature_days}.log"), verbose=False)
+        writer = init_tb(log_path)
 
-    device = config_gwnet.device
-    data_dir = config_gwnet.data_dir+"/data_convlstm"
-    data = np.load(os.path.join(data_dir, "data.npy"))
-    target = np.load(os.path.join(data_dir, "target.npy"))
-    adj_mx_path = os.path.join(config_gwnet.adj_path, "adj_dist.pkl")
-    with open(os.path.join(config_gwnet.data_dir, "ndvi_scaler.pickle"), "rb") as handle:
+        logger.info(f"Starting training WaveNet model for {args.step_length}"
+                    f" days in the future with {args.feature_days} days of features")
+
+        data = np.load(os.path.join(data_dir, "data.npy"))
+        target = np.load(os.path.join(data_dir, "target.npy"))
+    
+    if ndvi_scaler is None:
+        with open(os.path.join(data_dir, "ndvi_scaler.pickle"), "rb") as handle:
             scaler = pickle.loads(handle.read())
+    else:
+        scaler = ndvi_scaler
 
     ################################  Adjacency matrix  ################################ 
-
+    
+    adj_mx_path = os.path.join(model_config.adj_path, "adj_dist.pkl")
     if not os.path.exists(adj_mx_path):
         generate_adj_matrix(args)
 
     adj_mx = load_adj(adj_mx_path, args.adjtype)
 
-    train_dl, valid_dl, dataset = get_train_valid_loader(config_gwnet, 
+    train_dl, valid_dl, dataset = get_train_valid_loader(model_config, 
                                                          args, 
                                                          data, 
                                                          target,
@@ -197,9 +209,15 @@ def pipeline_wavenet(args, checkpoint_path):
     if args.aptonly:
         supports = None
 
-    engine = trainer(config_gwnet, scaler, args, num_nodes, supports, checkpoint_path)
+    engine = GWNETtrainer(args, 
+                     model_config, 
+                     scaler,  
+                     num_nodes, 
+                     supports, 
+                     checkpoint_path)
+    
     start_epoch = 0 if checkpoint_path is None else engine.checkp_epoch
-    early_stopping = EarlyStopping(config_gwnet, logger, verbose=True)
+    early_stopping = EarlyStopping(model_config, logger, verbose=True)
 
     ################################  Training  ################################ 
 
@@ -208,12 +226,12 @@ def pipeline_wavenet(args, checkpoint_path):
     his_loss, val_time, train_time = [],[],[]
 
 
-    for epoch in range(start_epoch+1, config_gwnet.epochs+1):
+    for epoch in range(start_epoch+1, model_config.epochs+1):
 
         train_loss, train_mape, train_rmse = [],[],[]
         valid_loss, valid_mape, valid_rmse = [],[],[]
 
-        epoch_records = gwnet_train_loop(config_gwnet, engine, train_dl)
+        epoch_records = gwnet_train_loop(model_config, engine, train_dl)
         train_loss.append(epoch_records["loss"])
         train_mape.append(epoch_records["mape"])
         train_rmse.append(epoch_records["rmse"])
@@ -221,7 +239,7 @@ def pipeline_wavenet(args, checkpoint_path):
         
     ################################  Validation ###############################
         
-        epoch_records = gwnet_val_loop(config_gwnet, engine, valid_dl)
+        epoch_records = gwnet_val_loop(model_config, engine, valid_dl)
         valid_loss.append(epoch_records["loss"])
         valid_mape.append(epoch_records["mape"])
         valid_rmse.append(epoch_records["rmse"])
@@ -303,3 +321,67 @@ def pipeline_wavenet(args, checkpoint_path):
   
 
 
+def pipeline_wavenet(args:dict,
+                      use_water_mask:bool = True,
+                      precipitation_only: bool = True,
+                      load_zarr_features:bool = False,
+                      load_local_precipitation:bool=True,
+                      interpolate:bool =False,
+                      checkpoint_path:str=None):
+    
+    from analysis import pipeline_hydro_vars
+    from analysis.configs.config_models import config_gwnet as model_config
+
+    rawdata_name = "data_gnn"
+
+    data, target, mask, ndvi_scaler = pipeline_hydro_vars(args,
+                    model_config,
+                    rawdata_name,
+                    use_water_mask,
+                    precipitation_only,
+                    load_zarr_features,
+                    load_local_precipitation,
+                    interpolate)
+    
+    training_wavenet(args,
+                    data, 
+                    target, 
+                    mask=mask, 
+                    ndvi_scaler = ndvi_scaler,
+                    checkpoint_path=checkpoint_path
+    )
+
+
+if __name__=="__main__":
+    import argparse
+    import pyproj
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-f')
+
+    parser.add_argument("--model", type=str, default="GWNET", help="")
+
+    parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
+    parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
+    parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
+    parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
+    parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
+
+    parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia", "Djibouti"], help="Location for dataset")
+    parser.add_argument("--region", type=list, default=None, help="Location for dataset")
+
+    parser.add_argument('--step_length',type=int,default=15,help='days in the future')
+    parser.add_argument('--feature_days',type=int,default=90)
+
+    parser.add_argument('--fillna',type=bool,default=False)
+    parser.add_argument("--interpolate", type=bool, default=False, help="Input data interpolation over time")
+    parser.add_argument("--normalize", type=bool, default=True, help="normalization")
+    parser.add_argument("--scatterplot", type=bool, default=False, help="scatterplot")
+    parser.add_argument('--crop_area',type=bool,default=False)
+
+    args = parser.parse_args()
+    os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
+
+    pipeline_wavenet(args,
+                    use_water_mask=True,
+                    load_local_precipitation=True,
+                    precipitation_only=False)

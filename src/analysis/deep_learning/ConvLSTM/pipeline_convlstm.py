@@ -172,10 +172,6 @@ def training_convlstm(
                                  f'{args.step_length}.png'))
         plt.close()
 
-
-
-   
-
 def pipeline_convlstm(args:dict,
                       use_water_mask:bool = True,
                       precipitation_only: bool = True,
@@ -184,110 +180,24 @@ def pipeline_convlstm(args:dict,
                       interpolate:bool =False,
                       checkpoint_path:str=None):
     
-    from ancillary.esa_landuse import drop_water_bodies_copernicus
+    from analysis import pipeline_hydro_vars
     from analysis.configs.config_models import config_convlstm_1 as model_config
-    from precipitation.preprocessing.preprocess_data import PrecipDataPreparation
-    from utils.function_clns import config, interpolate_prepare
-    import numpy as np
-    import pickle
-    from definitions import ROOT_DIR
 
-    def save_prepare_data(HydroData, save:bool=False):
-        ndvi_scaler = HydroData.ndvi_scaler
-        if use_water_mask is True:
-            logger.info("Loading water bodies mask...")
-            waterMask = drop_water_bodies_copernicus(HydroData.ndvi_ds).isel(time=0)
-            # HydroData.hydro_data = HydroData.hydro_data.where(HydroData.ndvi_ds.notnull())
-            mask = torch.tensor(np.array(xr.where(waterMask.notnull(), 1, 0)))
-        else:
-            mask = None
-
-        logger.info("Checking dataset before imputation...")
-        data, target = interpolate_prepare(
-            HydroData.precp_ds, 
-            HydroData.ndvi_ds, 
-            interpolate=False,
-            convert_to_float=False,
-        )
-        if save is True:
-            for d, name in zip([data, target, mask],  ['data', 'target', 'mask']):
-                np.save(os.path.join(data_dir, f"{name}.npy"), d)
-
-            logger.debug("Saving NDVI scaler to file...")
-            dump_obj = pickle.dumps(HydroData.ndvi_scaler, protocol=pickle.HIGHEST_PROTOCOL)
-            with open(os.path.join(ROOT_DIR,"../data/ndvi_scaler.pickle"), "wb") as handle:
-                handle.write(dump_obj)
-        return data, target, ndvi_scaler, mask
-
-    logger = init_logging(log_file=os.path.join(model_config.log_dir, 
-                        "pipeline_convlstm.log"), verbose=False)
-    
-    data_dir = model_config.data_dir+"/data_convlstm"
-
-    logger.info(f"Starting training CONVLSTM model for {args.step_length} days in the future"
-                f" with {args.feature_days} days of features")
-
-    if os.path.exists(data_dir) is False:
-        logger.info("Created new path for data")
-        os.makedirs(data_dir)
-
-    if (len(os.listdir(data_dir)) == 0) & (load_zarr_features is False):
-        #### Case 1: data existent but explicitly no load zarr
-        logger.info(f"No numpy raw data found, proceeding with the creation"
-                    f" of the training dataset.")
-
-        if precipitation_only is False:
-            import warnings
-            warnings.filterwarnings('ignore')
-            Era5variables = ["potential_evaporation", "evaporation",
-                         "2m_temperature","total_precipitation"]
-            HydroData = PrecipDataPreparation(
-                args,
-                variables=Era5variables,
-                precipitation_data="ERA5_land",
-                load_local_precp = load_local_precipitation,
-                interpolate = interpolate
-            )
-        else:
-            Era5variables = ["total_precipitation"]
-            HydroData = PrecipDataPreparation(
-                args, 
-                precp_dataset=config["CONVLSTM"]['precp_product'],
-                variables=Era5variables,
-                load_local_precp=load_local_precipitation,
-                interpolate = interpolate
-            )
-        data, target, ndvi_scaler, mask = save_prepare_data(HydroData, save=True)
-
-    elif load_zarr_features is True:
-        #### Case 2: explicitly load zarr
-        HydroData = PrecipDataPreparation(
-                args,
-                variables=None,
-                precipitation_data="ERA5_land",
-                load_local_precp = False,
-                load_zarr_features=load_zarr_features,
-                interpolate = args.interpolate
-            )
-        data, target, ndvi_scaler, mask = save_prepare_data(HydroData, save=True)
-
-    else:
-        #### Case 3: explicitly no load zarr and data identified
-        from definitions import ROOT_DIR
-        logger.info("Training data found. Proceeding with loading...")
-        data = np.load(os.path.join(data_dir, "data.npy"))
-        target = np.load(os.path.join(data_dir, "target.npy"))
-        mask = torch.tensor(np.load(os.path.join(data_dir, "mask.npy")))
-        with open(os.path.join(ROOT_DIR,"../data/ndvi_scaler.pickle"), "rb") as handle:
-            ndvi_scaler = pickle.loads(handle.read())
+    data, target, mask, ndvi_scaler = pipeline_hydro_vars(args,
+                    model_config,
+                    use_water_mask,
+                    precipitation_only,
+                    load_zarr_features,
+                    load_local_precipitation,
+                    interpolate)
     
     training_convlstm(args,
-                      data, 
-                      target, 
-                      mask=mask, 
-                      ndvi_scaler = ndvi_scaler,
-                      checkpoint_path=checkpoint_path,
-                      dump_batches=True
+                    data, 
+                    target, 
+                    mask=mask, 
+                    ndvi_scaler = ndvi_scaler,
+                    checkpoint_path=checkpoint_path,
+                    dump_batches=True
     )
 
 if __name__=="__main__":
@@ -317,7 +227,8 @@ if __name__=="__main__":
     args = parser.parse_args()
     os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
     # path = "output/convlstm/days_30/features_90/checkpoints/checkpoint_epoch_3.pth.tar"
-    pipeline_convlstm(args, load_zarr_features=False, 
+    pipeline_convlstm(args, 
+                      load_zarr_features=False, 
                       load_local_precipitation=False, 
                       precipitation_only=False)
     

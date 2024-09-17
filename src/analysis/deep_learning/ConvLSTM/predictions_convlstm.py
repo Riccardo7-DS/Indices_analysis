@@ -1,5 +1,5 @@
 if __name__=="__main__":
-    from analysis.deep_learning.GWNET.utils_gwnet import data_preparation, create_paths
+    from analysis.deep_learning.utils_models import data_preparation, create_paths
     import pickle
     import os
     import matplotlib.pyplot as plt
@@ -28,16 +28,9 @@ if __name__=="__main__":
     parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
     parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
-    parser.add_argument('--nhid',type=int,default=32,help='')
-    parser.add_argument('--in_dim',type=int,default=1,help='inputs dimension')
-    parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
-    parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
-    parser.add_argument('--print_every',type=int,default=50,help='Steps before printing')
-    parser.add_argument('--expid',type=int,default=1,help='experiment id')
-    parser.add_argument('--spi',type=bool,default=False,help='if dataset is SPI')
 
     #parser.add_argument("--location", type=list, default=["Amhara"], help="Location for dataset")
-    parser.add_argument("--pipeline", type=str, default="CONVLSTM", help="")
+    parser.add_argument("--model", type=str, default="CONVLSTM", help="")
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
     parser.add_argument("--normalize", type=bool, default=False, help="normalization")
@@ -50,19 +43,15 @@ if __name__=="__main__":
     output_dir, log_path, img_path, checkpoint_dir = create_paths(args)
 
     sub_precp, ds, ndvi_scaler = data_preparation(args, 
-                                                  precp_dataset=config_file[args.pipeline]['precp_product'],
-                                                  ndvi_dataset="ndvi_smoothed_w2s.nc")
+        precp_dataset=config_file[args.pipeline]['precp_product'],
+        ndvi_dataset="ndvi_smoothed_w2s.nc")
     
     mask = torch.tensor(np.array(xr.where(ds.isel(time=0).notnull(), 1, 0)))
     
     logger.info("Starting interpolation...")
     #sub_precp = sub_precp.to_dataset()
     data, target = interpolate_prepare(args, sub_precp, ds)
-    
-
-    #model = ConvLSTM(config).to(config.device)
-
-    
+       
     model = ConvLSTM(model_config.num_samples, 
                      [32, 32, 32],  
                      (3,3), 3, True, True, False).to(model_config.device)
@@ -124,7 +113,7 @@ if __name__=="__main__":
 
     if evaluate is True:
         from analysis.deep_learning.ConvLSTM.clstm_unet import valid_loop
-        from analysis.deep_learning.GWNET.utils_gwnet import MetricsRecorder
+        from analysis.deep_learning.utils_models import MetricsRecorder
 
         metrics_recorder = MetricsRecorder()
 

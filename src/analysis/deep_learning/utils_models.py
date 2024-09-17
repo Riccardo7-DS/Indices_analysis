@@ -292,8 +292,128 @@ def print_lr_change(old_lr, scheduler):
         logger.info(f"Learning rate changed: {old_lr} --> {lr}")
     return lr
 
-def train_loop(config, args, model, train_loader, criterion, 
-               optimizer, scaler=None, mask=None, draw_scatter:bool=False):
+
+def pipeline_hydro_vars(args:dict,
+                        model_config,
+                        rawdata_name:str="data_convlstm",
+                        use_water_mask:bool = True,
+                        precipitation_only: bool = True,
+                        load_zarr_features:bool = False,
+                        load_local_precipitation:bool=True,
+                        interpolate:bool =False,
+                        checkpoint_path:str=None):
+    
+    from ancillary.esa_landuse import drop_water_bodies_copernicus
+    from precipitation.preprocessing.preprocess_data import PrecipDataPreparation
+    from utils.function_clns import config, interpolate_prepare, init_logging
+    import numpy as np
+    import pickle
+    from definitions import ROOT_DIR
+
+    def save_prepare_data(HydroData, save:bool=False):
+        ndvi_scaler = HydroData.ndvi_scaler
+        if use_water_mask is True:
+            logger.info("Loading water bodies mask...")
+            waterMask = drop_water_bodies_copernicus(HydroData.ndvi_ds).isel(time=0)
+            # HydroData.hydro_data = HydroData.hydro_data.where(HydroData.ndvi_ds.notnull())
+            mask = torch.tensor(np.array(xr.where(waterMask.notnull(), 1, 0)))
+        else:
+            mask = None
+
+        logger.info("Checking dataset before imputation...")
+        data, target = interpolate_prepare(
+            HydroData.precp_ds, 
+            HydroData.ndvi_ds, 
+            interpolate=False,
+            convert_to_float=False,
+        )
+        if save is True:
+            for d, name in zip([data, target, mask],  ['data', 'target', 'mask']):
+                np.save(os.path.join(data_dir, f"{name}.npy"), d)
+
+            logger.debug("Saving NDVI scaler to file...")
+            dump_obj = pickle.dumps(HydroData.ndvi_scaler, protocol=pickle.HIGHEST_PROTOCOL)
+            with open(os.path.join(data_dir,"ndvi_scaler.pickle"), "wb") as handle:
+                handle.write(dump_obj)
+        return data, target, ndvi_scaler, mask
+
+    
+    _, log_path, _, _ = create_runtime_paths(args)
+
+    logger = init_logging(log_file=os.path.join(log_path, 
+                        f"pipeline_{(args.model).lower()}_"
+                        f"features_{args.feature_days}.log"), verbose=False)
+    
+    data_dir = os.path.join(model_config.data_dir, rawdata_name)
+
+    logger.info(f"Starting training {args.model} model for {args.step_length}" \
+                f"days in the future" \
+                f" with {args.feature_days} days of features")
+
+    if os.path.exists(data_dir) is False:
+        logger.info("Created new path for data")
+        os.makedirs(data_dir)
+
+    if (len(os.listdir(data_dir)) == 0) & (load_zarr_features is False):
+        #### Case 1: data existent but explicitly no load zarr
+        logger.info(f"No numpy raw data found, proceeding with the creation"
+                    f" of the training dataset.")
+
+        if precipitation_only is False:
+            import warnings
+            warnings.filterwarnings('ignore')
+            Era5variables = ["potential_evaporation", "evaporation",
+                         "2m_temperature","total_precipitation"]
+            HydroData = PrecipDataPreparation(
+                args,
+                variables=Era5variables,
+                precipitation_data="ERA5_land",
+                load_local_precp = load_local_precipitation,
+                interpolate = interpolate
+            )
+        else:
+            Era5variables = ["total_precipitation"]
+            HydroData = PrecipDataPreparation(
+                args, 
+                precp_dataset=config["CONVLSTM"]['precp_product'],
+                variables=Era5variables,
+                load_local_precp=load_local_precipitation,
+                interpolate = interpolate
+            )
+        data, target, ndvi_scaler, mask = save_prepare_data(HydroData, save=True)
+
+    elif load_zarr_features is True:
+        #### Case 2: explicitly load zarr with filled data
+        HydroData = PrecipDataPreparation(
+                args,
+                variables=None,
+                precipitation_data="ERA5_land",
+                load_local_precp = False,
+                load_zarr_features=load_zarr_features,
+                interpolate = args.interpolate
+            )
+        data, target, ndvi_scaler, mask = save_prepare_data(HydroData, save=True)
+
+    else:
+        #### Case 3: explicitly no load zarr and data identified
+        logger.info("Training data found. Proceeding with loading...")
+        data = np.load(os.path.join(data_dir, "data.npy"))
+        target = np.load(os.path.join(data_dir, "target.npy"))
+        mask = torch.tensor(np.load(os.path.join(data_dir, "mask.npy")))
+        with open(os.path.join(data_dir,"ndvi_scaler.pickle"), "rb") as handle:
+            ndvi_scaler = pickle.loads(handle.read())
+
+    return data, target, mask, ndvi_scaler
+
+def train_loop(config, 
+               args, 
+               model, 
+               train_loader, 
+               criterion, 
+               optimizer, 
+               scaler=None, 
+               mask=None, 
+               draw_scatter:bool=False):
 
     _, _, img_path, _ = create_runtime_paths(args)
     
@@ -853,9 +973,14 @@ def update_tensorboard_scalars(writer, recorder:MetricsRecorder):
     writer.add_scalars('lr', {'learning rate': recorder.lr[-1]}, recorder.epoch[-1])
 
 
-class trainer():
-    def __init__(self, model_config, scaler, args,
-                 num_nodes:int, supports, checkpoint_path=None):
+class GWNETtrainer():
+    def __init__(self, 
+                 args, 
+                 model_config, 
+                 scaler, 
+                 num_nodes:int, 
+                 supports, 
+                 checkpoint_path=None):
         
         from analysis import gwnet
 
