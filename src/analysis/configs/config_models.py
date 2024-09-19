@@ -143,6 +143,8 @@ class ConfigGWNET():
     out_dim = 1
     dropout = 0.3
     nhid = 16
+    blocks = 6
+    layers = 4
     print_every = 100
 
     scheduler_patience = 3
@@ -153,10 +155,9 @@ class ConfigGWNET():
     data_dir = os.path.join(ROOT_DIR,  "..",'data')
     output_dir = os.path.join(ROOT_DIR, "..", 'output')
     model_dir = os.path.join(output_dir, 'model')
-    adj_path = os.path.join(output_dir,  "adjacency_matrix")
     log_dir = os.path.join(output_dir, 'log')
 
-    for path in [data_dir, output_dir, adj_path, log_dir, model_dir]:
+    for path in [data_dir, output_dir, log_dir, model_dir]:
         if not os.path.exists(path):
             os.makedirs(path)
 

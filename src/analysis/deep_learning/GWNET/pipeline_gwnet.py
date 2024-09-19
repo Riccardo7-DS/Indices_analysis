@@ -5,7 +5,7 @@ import torch
 import time
 import matplotlib.pyplot as plt
 import pickle
-from analysis import EarlyStopping, save_figures, create_runtime_paths, print_lr_change, MetricsRecorder, gwnet_train_loop, gwnet_val_loop, generate_adj_matrix, load_adj, get_train_valid_loader
+from analysis import EarlyStopping, save_figures, create_runtime_paths, print_lr_change, MetricsRecorder, generate_adj_matrix, load_adj, get_train_valid_loader
 
 class StandardNormalizer():
     """
@@ -156,8 +156,7 @@ def training_wavenet(args,
                     checkpoint_path=None):
     import pickle
     from analysis.configs.config_models import config_gwnet as model_config
-    from analysis import check_shape_dataloaders, GWNETtrainer
-    from analysis import init_tb, update_tensorboard_scalars
+    from analysis import check_shape_dataloaders, mask_gnn_pixels, GWNETtrainer, init_tb, update_tensorboard_scalars
     import sys
     from utils.function_clns import init_logging, config
 
@@ -165,15 +164,15 @@ def training_wavenet(args,
     data_dir = os.path.join(model_config.data_dir, dataname)
     device = model_config.device
 
-    if data is None:
-        logger = init_logging(log_file=os.path.join(log_path, 
+    logger = init_logging(log_file=os.path.join(log_path, 
                             f"pipeline_{(args.model).lower()}_"
                             f"features_{args.feature_days}.log"), verbose=False)
-        writer = init_tb(log_path)
+    writer = init_tb(log_path)
 
+    if data is None:
+        
         logger.info(f"Starting training WaveNet model for {args.step_length}"
                     f" days in the future with {args.feature_days} days of features")
-
         data = np.load(os.path.join(data_dir, "data.npy"))
         target = np.load(os.path.join(data_dir, "target.npy"))
     
@@ -183,19 +182,27 @@ def training_wavenet(args,
     else:
         scaler = ndvi_scaler
 
+    data, target, combined_mask = mask_gnn_pixels(data, target, mask)
+
     ################################  Adjacency matrix  ################################ 
     
-    adj_mx_path = os.path.join(model_config.adj_path, "adj_dist.pkl")
+    adj_mx_path = os.path.join(data_dir, "adj_dist.pkl")
+
     if not os.path.exists(adj_mx_path):
-        generate_adj_matrix(args)
+        generate_adj_matrix(data, 
+        combined_mask, 
+        save_dir=data_dir, 
+        save_plot=False)
 
     adj_mx = load_adj(adj_mx_path, args.adjtype)
 
     train_dl, valid_dl, dataset = get_train_valid_loader(model_config, 
-                                                         args, 
-                                                         data, 
-                                                         target,
-                                                         config["MODELS"]["split"])
+        args, 
+        data, 
+        target,
+        combined_mask,
+        config["MODELS"]["split"])
+    
     check_shape_dataloaders(train_dl, valid_dl)
 
     num_nodes = dataset.data.shape[-1]                         
@@ -206,55 +213,52 @@ def training_wavenet(args,
         adjinit = None
     else:
         adjinit = supports[0]
+
     if args.aptonly:
         supports = None
 
+    loss = torch.nn.MSELoss()
+
     engine = GWNETtrainer(args, 
                      model_config, 
-                     scaler,  
+                     scaler,
+                     loss,  
                      num_nodes, 
                      supports, 
+                     adjinit,
                      checkpoint_path)
     
     start_epoch = 0 if checkpoint_path is None else engine.checkp_epoch
-    early_stopping = EarlyStopping(model_config, logger, verbose=True)
+    early_stopping = EarlyStopping(model_config, verbose=True)
 
     ################################  Training  ################################ 
 
     logger.info("Starting training...")
     
-    his_loss, val_time, train_time = [],[],[]
+    # his_loss, val_time, train_time = [],[],[]
 
 
     for epoch in range(start_epoch+1, model_config.epochs+1):
 
-        train_loss, train_mape, train_rmse = [],[],[]
-        valid_loss, valid_mape, valid_rmse = [],[],[]
-
-        epoch_records = gwnet_train_loop(model_config, engine, train_dl)
-        train_loss.append(epoch_records["loss"])
-        train_mape.append(epoch_records["mape"])
-        train_rmse.append(epoch_records["rmse"])
-        metrics_recorder.add_train_metrics(epoch_records, epoch)
+        train_records = engine.gwnet_train_loop(model_config, engine, train_dl)
+        metrics_recorder.add_train_metrics(train_records, epoch)
         
     ################################  Validation ###############################
         
-        epoch_records = gwnet_val_loop(model_config, engine, valid_dl)
-        valid_loss.append(epoch_records["loss"])
-        valid_mape.append(epoch_records["mape"])
-        valid_rmse.append(epoch_records["rmse"])
-        metrics_recorder.add_val_metrics(epoch_records)
+        val_records = engine.gwnet_val_loop(model_config, engine, valid_dl)
+        metrics_recorder.add_val_metrics(val_records)
         
-        mtrain_loss = np.mean(train_loss)
-        mtrain_rmse = np.mean(train_rmse)  
-        mvalid_loss = np.mean(valid_loss)
-        mvalid_rmse = np.mean(valid_rmse)
-        # his_loss.append(mvalid_loss)
+        mtrain_loss = np.mean(train_records["loss"])
+        mtrain_rmse = np.mean(train_records["rmse"])  
+        mvalid_loss = np.mean(val_records["loss"])
+        mvalid_rmse = np.mean(val_records["rmse"])
 
-        save_figures(args=args, epoch=epoch-start_epoch, 
-                     path=img_path, metrics_recorder=metrics_recorder)
+        save_figures(epoch=epoch-start_epoch, 
+                     path=img_path, 
+                     metrics_recorder=metrics_recorder)
 
-        log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train RMSE: {:.4f}, Valid Loss: {:.4f}, Valid RMSE: {:.4f}'
+        log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train RMSE: {:.4f}, ' \
+              'Valid Loss: {:.4f}, Valid RMSE: {:.4f}'
         logger.info(log.format(epoch, mtrain_loss, mtrain_rmse, mvalid_loss, mvalid_rmse))
         
         model_dict = {
@@ -270,9 +274,6 @@ def training_wavenet(args,
         if early_stopping.early_stop:
             logger.info("Early stopping")
             break
-
-    logger.info("Average Training Time: {:.4f} secs/epoch".format(np.mean(train_time)))
-    logger.info("Average Inference Time: {:.4f} secs".format(np.mean(val_time)))
 
     #testing
     sys.exit(0)
@@ -322,12 +323,12 @@ def training_wavenet(args,
 
 
 def pipeline_wavenet(args:dict,
-                      use_water_mask:bool = True,
-                      precipitation_only: bool = True,
-                      load_zarr_features:bool = False,
-                      load_local_precipitation:bool=True,
-                      interpolate:bool =False,
-                      checkpoint_path:str=None):
+                    use_water_mask:bool = True,
+                    precipitation_only: bool = True,
+                    load_zarr_features:bool = False,
+                    load_local_precipitation:bool=True,
+                    interpolate:bool =False,
+                    checkpoint_path:str=None):
     
     from analysis import pipeline_hydro_vars
     from analysis.configs.config_models import config_gwnet as model_config
@@ -335,20 +336,22 @@ def pipeline_wavenet(args:dict,
     rawdata_name = "data_gnn"
 
     data, target, mask, ndvi_scaler = pipeline_hydro_vars(args,
-                    model_config,
-                    rawdata_name,
-                    use_water_mask,
-                    precipitation_only,
-                    load_zarr_features,
-                    load_local_precipitation,
-                    interpolate)
+        model_config,
+        rawdata_name,
+        use_water_mask,
+        precipitation_only,
+        load_zarr_features,
+        load_local_precipitation,
+        interpolate
+    )
     
     training_wavenet(args,
-                    data, 
-                    target, 
-                    mask=mask, 
-                    ndvi_scaler = ndvi_scaler,
-                    checkpoint_path=checkpoint_path
+        dataname=rawdata_name,
+        data=data, 
+        target=target, 
+        mask=mask, 
+        ndvi_scaler = ndvi_scaler,
+        checkpoint_path=checkpoint_path
     )
 
 
@@ -361,9 +364,9 @@ if __name__=="__main__":
     parser.add_argument("--model", type=str, default="GWNET", help="")
 
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
-    parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
+    parser.add_argument('--gcn_bool',default=True,help='whether to add graph convolution layer')
     parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
-    parser.add_argument('--addaptadj',action='store_true',help='whether add adaptive adj')
+    parser.add_argument('--addaptadj', default=True, help='whether add adaptive adj')
     parser.add_argument('--randomadj',action='store_true',help='whether random initialize adaptive adj')
 
     parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia", "Djibouti"], help="Location for dataset")

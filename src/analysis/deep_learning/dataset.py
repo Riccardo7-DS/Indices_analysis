@@ -85,7 +85,8 @@ class CustomConvLSTMDataset(Dataset):
 
     def _generate_traing_data(self, args):
 
-        logger.debug("Adding one channel to features to account for lagged data" if self.lag else "No lag channel added")
+        logger.debug("Adding one channel to features to account for lagged data" \
+                      if self.lag else "No lag channel added")
         tot_channels = self.num_channels + 1 if self.lag else self.num_channels
 
         self.available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window

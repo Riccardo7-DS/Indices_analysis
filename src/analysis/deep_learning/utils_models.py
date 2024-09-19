@@ -70,6 +70,25 @@ def load_autoencoder(checkpoint_path,feature_days=90, output_shape=20):
     logger.info(f"Loading autoencoder trained up to epoch {checkpoint['epoch']}")
     return autoencoder
 
+def mask_gnn_pixels(data, target, mask):
+    
+    sm_data = data[0, -4:]
+
+    water_mask = np.ma.masked_where(mask==0, mask).mask
+    null_mask = np.any(np.isnan(target), axis=0)
+    null_sm_mask = np.any(np.isnan(sm_data), axis=0)
+
+    combined_mask =  (water_mask == True) | (null_mask==True) | (null_sm_mask==True)
+
+    broadcast_data_combined = np.broadcast_to(combined_mask, data.shape)
+    broadcast_target_combined = np.broadcast_to(combined_mask, target.shape)
+
+    data = np.ma.masked_where(broadcast_data_combined, data)
+    target = np.ma.masked_where(broadcast_target_combined, target)
+
+    return data, target, combined_mask
+    
+
 def plot_first_n_images(tensor, n:int, save:bool=False, name:str=None, img_path=None):
     from utils.xarray_functions import ndvi_colormap
     from utils.function_clns import config
@@ -271,19 +290,27 @@ def date_to_sinusoidal_embedding(date_string, h, w):
     
     return final_result
 
-def prepare_array_wgcnet(data):
-    
-    if len(data.shape)==3:
+def prepare_array_wgcnet(data, mask=None):
+
+    # Add one channel dimension if it's missing
+    if len(data.shape) == 3:
         logger.info("Adding one channel dimension")
         data = np.expand_dims(data, 1)
+    
+    T, C, W, H = data.shape  # Original dimensions
 
-    # Get the dimensions of the input array
-    T, C, lat, lon = data.shape
+    # Reshape the array to combine the lat and lon dimensions into one (T, C, V)
+    data_reshaped = data.reshape(T, C, W * H)
+    
+    if mask is not None:
+        # Create a mask to identify non-null images
+        mask = np.all(np.isnan(data_reshaped), axis=(0,1))  # Shape will be (T, C)
 
-    # Reshape the array to combine the lat and lon dimensions into one
-    data_reshaped = data.reshape(T, C, lat * lon) # T, C, V
+        # Apply the mask to filter out null images
+        non_null_data = data_reshaped[:, :, ~mask]
+        # Reshape mask back to (T, C, W, H)
+        data_reshaped = non_null_data.reshape(T, C, non_null_data.shape[-1])
 
-    # data_lag = transform_array(data_reshaped, lag)
     return data_reshaped
 
 def print_lr_change(old_lr, scheduler):
@@ -320,7 +347,7 @@ def pipeline_hydro_vars(args:dict,
         else:
             mask = None
 
-        logger.info("Checking dataset before imputation...")
+        logger.info("Preparating datasets as numpy arrays...")
         data, target = interpolate_prepare(
             HydroData.precp_ds, 
             HydroData.ndvi_ds, 
@@ -367,7 +394,7 @@ def pipeline_hydro_vars(args:dict,
             HydroData = PrecipDataPreparation(
                 args,
                 variables=Era5variables,
-                precipitation_data="ERA5_land",
+                precipitation_data="ERA5",
                 load_local_precp = load_local_precipitation,
                 interpolate = interpolate
             )
@@ -387,7 +414,7 @@ def pipeline_hydro_vars(args:dict,
         HydroData = PrecipDataPreparation(
                 args,
                 variables=None,
-                precipitation_data="ERA5_land",
+                precipitation_data="ERA5",
                 load_local_precp = False,
                 load_zarr_features=load_zarr_features,
                 interpolate = args.interpolate
@@ -569,7 +596,12 @@ def persistence_baseline(train_label):
     logger.info("The baseline is a RMSE of {}".format(np.mean(batch_rmse)))
 
 
-def get_train_valid_loader(model_config, args, data, labels, train_split:float=0.7, 
+def get_train_valid_loader(model_config, 
+                           args, 
+                           data, 
+                           labels,
+                           mask, 
+                           train_split:float=0.7, 
                            add_lag:bool=True):
     from scipy.io import loadmat
     from torch.utils.data import TensorDataset
@@ -578,8 +610,8 @@ def get_train_valid_loader(model_config, args, data, labels, train_split:float=0
     from analysis import CustomConvLSTMDataset
     from utils.function_clns import CNN_split
 
-    data = prepare_array_wgcnet(data)
-    labels = prepare_array_wgcnet(labels)
+    data = prepare_array_wgcnet(data, mask)
+    labels = prepare_array_wgcnet(labels, mask)
     
 
     train_data, val_data, train_label, val_label, \
@@ -587,17 +619,19 @@ def get_train_valid_loader(model_config, args, data, labels, train_split:float=0
     
     train_dataset = CustomConvLSTMDataset(model_config, args, 
                                           train_data, train_label, 
-                                          save_files=True, filename="train_ds")
+                                          save_files=False)
     
     val_dataset = CustomConvLSTMDataset(model_config, args, 
                                         val_data, val_label, 
-                                        save_files=True, filename="val_ds")
+                                        save_files=False)
     
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, 
-                                  batch_size=model_config.batch_size, shuffle=True)
+                                  batch_size=model_config.batch_size, 
+                                  shuffle=True)
     val_dataloader = DataLoader(val_dataset, 
-                                batch_size=model_config.batch_size, shuffle=False)
+                                batch_size=model_config.batch_size, 
+                                shuffle=False)
 
     return train_dataloader, val_dataloader, train_dataset
 
@@ -785,7 +819,7 @@ def masked_mse(preds, labels, null_val=np.nan):
     else:
         mask = (labels!=null_val)
     mask = mask.float()
-    mask /= torch.mean((mask))
+    mask /= torch.mean(mask)
     mask = torch.where(torch.isnan(mask), torch.zeros_like(mask), mask)
     loss = (preds-labels)**2
     loss = loss * mask
@@ -793,7 +827,7 @@ def masked_mse(preds, labels, null_val=np.nan):
     return torch.mean(loss)
 
 def masked_rmse(preds, labels, null_val=np.nan):
-    return torch.sqrt(masked_mse(preds=preds, labels=labels, null_val=null_val))
+    return torch.sqrt(masked_mse(preds, labels, null_val))
 
 def masked_mae(preds, labels, null_val=np.nan):
     if np.isnan(null_val):
@@ -801,7 +835,7 @@ def masked_mae(preds, labels, null_val=np.nan):
     else:
         mask = (labels!=null_val)
     mask = mask.float()
-    mask /=  torch.mean((mask))
+    mask /=  torch.mean(mask)
     mask = torch.where(torch.isnan(mask), torch.zeros_like(mask), mask)
     loss = torch.abs(preds-labels)
     loss = loss * mask
@@ -814,11 +848,18 @@ def masked_mape(preds, labels, null_val=np.nan):
     else:
         mask = (labels!=null_val)
     mask = mask.float()
-    mask /=  torch.mean((mask))
+    # normalize the mask by the mean
+    mask /=  torch.mean(mask)
+    # Replace any NaNs in the mask with zeros
     mask = torch.where(torch.isnan(mask), torch.zeros_like(mask), mask)
-    loss = torch.abs(preds-labels)/labels
+    # Calculate the percentage error (with small epsilon to avoid division by zero)
+    epsilon = 1e-10
+    loss = torch.abs(preds - labels) / (labels + epsilon)
+    # Apply the mask to the loss
     loss = loss * mask
+    # Replace any NaNs in the loss with zeros
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
+    # Return the mean of the masked loss
     return torch.mean(loss)
 
 
@@ -896,7 +937,7 @@ def masked_mse_loss(criterion, preds, labels, mask):
     return mse_loss_val
 
 
-def save_figures(args:dict, 
+def save_figures(
                  epoch:int, 
                  path, 
                  metrics_recorder:dict):
@@ -978,21 +1019,30 @@ class GWNETtrainer():
                  args, 
                  model_config, 
                  scaler, 
+                 loss,
                  num_nodes:int, 
-                 supports, 
+                 supports,
+                 adjinit, 
                  checkpoint_path=None):
         
         from analysis import gwnet
 
         self.device = model_config.device
-        self.model = gwnet(self.device, num_nodes, model_config.dropout, supports=supports, 
-                           gcn_bool=args.gcn_bool, addaptadj=args.addaptadj, 
-                           aptinit=args.aptinit, in_dim=model_config.in_dim, 
+        self.model = gwnet(self.device, 
+                           num_nodes, 
+                           model_config.dropout, 
+                           supports=supports, 
+                           gcn_bool=args.gcn_bool, 
+                           addaptadj=args.addaptadj, 
+                           aptinit=adjinit, 
+                           in_dim=model_config.in_dim, 
                            out_dim=model_config.out_dim, 
                            residual_channels=model_config.nhid, 
                            dilation_channels=model_config.nhid,
                            skip_channels=model_config.nhid * 8,
-                           end_channels=model_config.nhid * 16)
+                           end_channels=model_config.nhid * 16,
+                           blocks=model_config.blocks,
+                           layers=model_config.layers)
         
         self.learning_rate = model_config.learning_rate
         self.model.to(self.device)
@@ -1000,9 +1050,11 @@ class GWNETtrainer():
                                     lr=self.learning_rate,
                                     weight_decay=model_config.weight_decay)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        self.optimizer, factor=model_config.scheduler_factor, patience=model_config.scheduler_patience
+            self.optimizer, 
+            factor=model_config.scheduler_factor, 
+            patience=model_config.scheduler_patience
         )
-        self.loss = masked_mse
+        self.loss = loss
         self.scaler = scaler
         self.clip = 5
 
@@ -1015,17 +1067,14 @@ class GWNETtrainer():
             logger.info(f"Resuming training from epoch {self.checkp_epoch}")
 
     def train(self, input, real_val):
-        epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
         self.model.train()
         self.optimizer.zero_grad()
         input = nn.functional.pad(input,(1,0,0,0))
         output = self.model(input)
-        # output = output.transpose(2,3)
-        #output = [batch_size,12,num_nodes,1]
         real = torch.unsqueeze(real_val,dim=1)
-        predict = self.scaler.inverse_transform(output)
+        # predict = self.scaler.inverse_transform(output)
 
-        loss = self.loss(predict, real)
+        loss = self.loss(output, real)
         loss.backward()
         if self.clip is not None:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
@@ -1034,24 +1083,22 @@ class GWNETtrainer():
         #for name, param in self.model.named_parameters():
         #    if param.grad is not None:
         #        print("Gradient Stats:", name, param.grad.mean().item(), param.grad.max().item(), param.grad.min().item())
-        mape = masked_mape(predict,real).item()
-        rmse = masked_rmse(predict,real).item()
+        mape = masked_mape(output,real).item()
+        rmse = masked_rmse(output,real).item()
 
-        return loss, mape, rmse
+        return loss.item(), mape, rmse
 
     def eval(self, input, real_val):
         self.model.eval()
        
         input = nn.functional.pad(input,(1,0,0,0))
         output = self.model(input)
-        # output = output.transpose(2,3)
-        #output = [batch_size,12,num_nodes,1]
         real = torch.unsqueeze(real_val,dim=1)
-        predict = self.scaler.inverse_transform(output)
-        loss = self.loss(predict, real)
-        mape = masked_mape(predict,real).item()
-        rmse = masked_rmse(predict,real).item()
-        return loss, mape, rmse
+        # predict = self.scaler.inverse_transform(output)
+        loss = self.loss(output, real)
+        mape = masked_mape(output,real).item()
+        rmse = masked_rmse(output,real).item()
+        return loss.item(), mape, rmse
     
     def test(self, test_loader):
         self.model.eval()
@@ -1078,46 +1125,46 @@ class GWNETtrainer():
         new_lr = print_lr_change(self.learning_rate, self.scheduler)
         self.learning_rate = new_lr
 
-def metric(pred, real):
-    mae = masked_mae(pred,real,0.0).item()
-    mape = masked_mape(pred,real,0.0).item()
-    rmse = masked_rmse(pred,real,0.0).item()
-    return mae,mape,rmse
+    def metric(self, pred, real):
+        mae = masked_mae(pred,real).item()
+        mape = masked_mape(pred,real).item()
+        rmse = masked_rmse(pred,real).item()
+        return mae,mape,rmse
 
-def gwnet_train_loop(model_config, engine, train_dl):
-    epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
-    for iter, (x, y) in enumerate(train_dl):
-        trainx = torch.Tensor(x).to(model_config.device)
-        trainx= trainx.transpose(3, 2)
-        trainy = torch.Tensor(y).to(model_config.device)
-        trainy = trainy.transpose(3, 2)
-        loss, mape, rmse = engine.train(trainx, trainy[:, 0,:,:])
-        
-        epoch_records["loss"].append(loss.item())
-        epoch_records["rmse"].append(rmse)
-        epoch_records["mape"].append(mape)
-    return epoch_records
+    def gwnet_train_loop(self, model_config, engine, train_dl):
+        epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
+        for iter, (x, y) in enumerate(train_dl):
+            trainx = torch.Tensor(x).to(model_config.device)
+            trainx= trainx.transpose(3, 2)
+            trainy = torch.Tensor(y).to(model_config.device)
+            trainy = trainy.transpose(3, 2)
+            loss, mape, rmse = engine.train(trainx, trainy[:, 0,:,:])
 
-def gwnet_val_loop(model_config, engine, val_dl):
-    epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
-    for iter, (x, y) in enumerate(val_dl):
-        trainx = torch.Tensor(x).to(model_config.device)
-        trainx= trainx.transpose(2, 3)
-        trainy = torch.Tensor(y).to(model_config.device)
-        trainy = trainy.transpose(2, 3)
-        loss, rmse, mape = engine.eval(trainx, trainy[:, 0,:,:])
+            epoch_records["loss"].append(loss)
+            epoch_records["rmse"].append(rmse)
+            epoch_records["mape"].append(mape)
+        return epoch_records
 
-        epoch_records["loss"].append(loss.item())
-        epoch_records["rmse"].append(rmse)
-        epoch_records["mape"].append(mape)
+    def gwnet_val_loop(self, model_config, engine, val_dl):
+        epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
+        for iter, (x, y) in enumerate(val_dl):
+            trainx = torch.Tensor(x).to(model_config.device)
+            trainx= trainx.transpose(2, 3)
+            trainy = torch.Tensor(y).to(model_config.device)
+            trainy = trainy.transpose(2, 3)
+            loss, rmse, mape = engine.eval(trainx, trainy[:, 0,:,:])
 
-    ##### Step learning rate
-    mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
-    engine.scheduler.step(mean_loss)
-    engine.learning_rate = engine.scheduler.get_last_lr()[0]
-    epoch_records["lr"].append(engine.learning_rate)
+            epoch_records["loss"].append(loss)
+            epoch_records["rmse"].append(rmse)
+            epoch_records["mape"].append(mape)
 
-    return epoch_records
+        ##### Step learning rate
+        mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
+        engine.scheduler.step(mean_loss)
+        engine.learning_rate = engine.scheduler.get_last_lr()[0]
+        epoch_records["lr"].append(engine.learning_rate)
+
+        return epoch_records
 
 def generate_adj_dist(df, normalized_k=0.05,):
     coord = df[['lat', 'lon']].values
@@ -1130,30 +1177,52 @@ def generate_adj_dist(df, normalized_k=0.05,):
     adj_mx[adj_mx < normalized_k] = 0
     return adj_mx
 
-def generate_adj_matrix(args:dict, save_plot:bool=True):
+def generate_adj_matrix(dataset=None,
+                        mask = None, 
+                        save_dir = None,
+                        save_plot:bool=True, 
+                        load_zarr:bool=False):
+    
     logger.info("Generating new adjacency matrix...")
     import seaborn as sns
     from analysis.configs.config_models import config_gwnet
     from utils.function_clns import config, crop_image_left
+    import pandas as pd
 
-    output_dir, log_path, img_path, checkp_path = create_runtime_paths(args)
+    img_path = config_gwnet.data_dir
 
-    path = os.path.join(config["DEFAULT"]["basepath"], "hydro_vars.zarr")
-    data = xr.open_zarr(path).isel(time=0)["total_precipitation"]
+    if save_dir is None:
+        save_dir = config_gwnet.data_dir
 
-    dim = config["GWNET"]["dim"]
-    logger.debug(f"The adjacency matrix has coordinates {dim} x  {dim}")
-    adj_path = config_gwnet.adj_path
+    if load_zarr is True:
+        path = os.path.join(config["DEFAULT"]["basepath"], "hydro_vars.zarr")
+        data = xr.open_zarr(path).isel(time=0)["total_precipitation"]
+        dim = config["GWNET"]["dim"]
+        logger.debug(f"The adjacency matrix has coordinates {dim} x  {dim}")
+        
+        idx_lat, lat_max, idx_lon, lon_min = crop_image_left(data, dim)
+        sub_dataset = data.sel(lat=slice(lat_max, idx_lat), 
+                                              lon=slice(lon_min, idx_lon))
 
-    idx_lat, lat_max, idx_lon, lon_min = crop_image_left(data, dim)
-    sub_dataset = data.sel(lat=slice(lat_max, idx_lat), 
-                                          lon=slice(lon_min, idx_lon))
+        df = sub_dataset.to_dataframe()
+        adj_dist = generate_adj_dist(df.reset_index())
+    
+    else:
+        from utils.function_clns import extract_grid
+        logger.debug(f"The adjacency matrix has coordinates "
+                     f"{dataset.shape[-2]} x  {dataset.shape[-1]}")
+        grid = extract_grid((dataset.shape[-2], dataset.shape[-1]), 
+                          return_pandas=False)
+        if mask is not None:
+            mask_flatten = mask.flatten()
+            grid_filtered = grid[~mask_flatten]
+            df = pd.DataFrame(grid_filtered, columns=["lon","lat"])
 
-    df = sub_dataset.to_dataframe()
-
-    adj_dist = generate_adj_dist(df.reset_index())
-    with open(os.path.join(adj_path, "adj_dist.pkl"), 'wb') as f:
+        adj_dist = generate_adj_dist(df)
+    
+    with open(os.path.join(save_dir, "adj_dist.pkl"), 'wb') as f:
             pickle.dump(adj_dist, f, protocol=2)
+
     if save_plot is True:
         df = df.reset_index()
         df["lat_lon"] = df["lat"].astype(str) + ", " + df["lon"].astype(str)
@@ -1173,6 +1242,7 @@ if __name__=="__main__":
     start = time.time()
     from utils.function_clns import config
     import os
+    from analysis import pipeline_wavenet
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-f')
@@ -1197,7 +1267,10 @@ if __name__=="__main__":
     # main(args)
 
     # checkpoint = "src/output/gwnet/days_15/features_60/checkpoints/checkpoint_epoch_261.pth.tar"
-    pipeline_wavenet(args)
+    pipeline_wavenet(args,
+                    use_water_mask=True,
+                    load_local_precipitation=True,
+                    precipitation_only=False)
     end = time.time()
     total_time = end - start
     print("\n The script took "+ time.strftime("%H%M:%S", \

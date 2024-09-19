@@ -56,9 +56,9 @@ if __name__=="__main__":
     args = parser.parse_args()
 
     from utils.function_clns import config
-    from analysis.deep_learning.utils_gwnet import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
+    from analysis.deep_learning.utils_models import load_adj, MetricsRecorder, trainer,get_dataloader, data_preparation
     path = config["PRECIP"]["ERA5_land"]["path"]
-    
+
     args.output_dir = os.path.join(path,  "graph_net")
     checkp_path = os.path.join(args.output_dir,  f"checkpoints/forecast_{args.forecast}")
     model_path = [os.path.join(checkp_path, f) for f in os.listdir(checkp_path) if "best" in f][0]

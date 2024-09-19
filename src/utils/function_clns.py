@@ -103,11 +103,31 @@ def handle_unhandled_exception(exc_type, exc_value, exc_traceback):
     logger.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
 
 
+def extract_grid(grid_shape, return_pandas:bool=False):
+
+    min_lat, min_lon, max_lat, max_lon = hoa_bbox()
+
+    lats = np.linspace(min_lat, max_lat, grid_shape[0])
+    lons = np.linspace(min_lon, max_lon, grid_shape[1])
+
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
+
+    lat_lon_grid = np.stack([lat_grid, lon_grid], axis=-1)
+    reshaped_gird = lat_lon_grid.reshape(-1, 2)
+
+    if return_pandas is True:
+        import pandas as pd
+        return pd.DataFrame(reshaped_gird, 
+                            columns=["lon","lat"])
+    else:
+        return reshaped_gird
+
 def hoa_bbox(invert:bool = False):
     minx = -5.48369565
     miny = 32.01630435
     maxx = 15.48369565
     maxy = 51.48369565
+
     if invert is False:
         return [miny, minx, maxy, maxx]
     else:

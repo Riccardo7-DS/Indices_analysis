@@ -84,7 +84,7 @@ class PrecipDataPreparation():
             logger.debug("Successfully saved preprocessed variables")
 
         if load_local_precp is True:
-            self._load_local_precipitation(self.precp_product)
+            self._load_local_precipitation(self.precp_product, folder="batch_final")
             precp_ds = self._preprocess_array(path = self.precp_path,
                                                filename=self.precp_filename, 
                                                interpolate=interpolate)
@@ -139,8 +139,14 @@ class PrecipDataPreparation():
             ds = shift_xarray_overtime(dataset, "1D") 
             return ds.rename({"pev":"potential_evaporation", "e":"evaporation",
                          "t2m":"2m_temperature","tp":"total_precipitation"})
+        elif precp_dataset == "ERA5":
+            return dataset
 
-    def _load_local_precipitation(self, precp_dataset:str, format:Literal["nc", "zarr"]="zarr"):
+
+    def _load_local_precipitation(self, 
+                                  precp_dataset:str,
+                                  folder=None, 
+                                  format:Literal["nc", "zarr"]="zarr"):
         import os
         import re
         from utils.function_clns import config
@@ -182,8 +188,11 @@ class PrecipDataPreparation():
                 "ERA5_land": config["PRECIP"]["ERA5_land"]["path"]
             }
         }
-
-        if "SPI" in precp_dataset:
+        if folder is not None:
+            path = get_path(config_dict,"PRECIP", precp_dataset)
+            path = os.path.join(path, folder)
+            filename = None
+        elif "SPI" in precp_dataset:
             precp_dataset = precp_dataset.replace("SPI_","")
             path = get_path(config_dict, "SPI", precp_dataset)
             late =  re.search(r'\d+', path).group()
@@ -246,7 +255,7 @@ class PrecipDataPreparation():
             ds_temp_min, ds_temp_max = self._process_temperature_arco(input_data)
             evap, pot_evap = self._process_evapo_arco(input_data)
             precp_data = precp_data.to_dataset()
-            precp_data = precp_data.assing(evap = evap, potential_evap= pot_evap, 
+            precp_data = precp_data.assing(evap = evap, potential_evap = pot_evap, 
                                     temp_max= ds_temp_max, temp_min = ds_temp_min)
 
         hydro_data = self._process_soil_moisture(precp_data)\
@@ -302,21 +311,24 @@ class PrecipDataPreparation():
 
         ############## 1) Open dataset ############## 
         if dataset is None:
-            if path is None or filename is None:
-                error = ValueError(f"Either 'dataset' must be provided or both 'path'" 
-                                 f" and 'filename' must be provided.")
-                logging.error(error)
-                raise error
+            # if path is None or filename is None:
+            #     error = ValueError(f"Either 'dataset' must be provided or both 'path'" 
+            #                      f" and 'filename' must be provided.")
+            #     logging.error(error)
+            #     raise error
+            # else:
+        # Open the precipitation file with xarray
+            if (filename is None) and \
+                (len([f for f in os.listdir(path) if f.endswith(".nc")])>1):
+                dataset = xr.open_mfdataset(os.path.join(path, "*.nc"))
+            elif filename.endswith(".nc"):
+                dataset = xr.open_dataset(os.path.join(path, filename))
+            elif filename.endswith(".zarr"):
+                dataset = xr.open_zarr(os.path.join(path, filename))
             else:
-            # Open the precipitation file with xarray
-                if filename.endswith(".nc"):
-                    dataset = xr.open_dataset(os.path.join(path, filename))
-                elif filename.endswith(".zarr"):
-                    dataset = xr.open_zarr(os.path.join(path, filename))
-                else:
-                    err = logger.error(f"Please select a valid file format between "
-                                       f"\"zarr\" or \"netcdf\"")
-                    raise err
+                err = logger.error(f"Please select a valid file format between "
+                                   f"\"zarr\" or \"netcdf\"")
+                raise err
                 
         ############## 2) Clip dataset ##############
 
