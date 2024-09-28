@@ -184,9 +184,6 @@ class gwnet(nn.Module):
             #                                          |
             # ---------------------------------------> + ------------->	*skip*
 
-            #(dilation, init_dilation) = self.dilations[i]
-
-            #residual = dilation_func(x, dilation, init_dilation, i)
             residual = x
             # dilated convolution
             filter = self.filter_convs[i](residual)

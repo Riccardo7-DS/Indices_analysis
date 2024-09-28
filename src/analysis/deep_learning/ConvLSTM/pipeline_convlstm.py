@@ -11,7 +11,7 @@ import argparse
 from tqdm.auto import tqdm
 from typing import Union
 import logging
-from analysis import StandardScaler, StandardNormalizer
+from analysis import StandardScaler, StandardNormalizer, print_lr_change
 
 
 def training_convlstm(
@@ -75,7 +75,8 @@ def training_convlstm(
     if (dump_batches is True) & (len(os.listdir(train_load_path))==0):
         train_dataloader, val_dataloader = process_datasets(save=True)
         ################################# Check data shape #############################
-        check_shape_dataloaders(train_dataloader, val_dataloader)
+        if logging.getLevelName(logger.level) == "DEBUG":
+            check_shape_dataloaders(train_dataloader, val_dataloader)
     elif dump_batches is False:
         train_dataloader, val_dataloader = process_datasets()
     else:
@@ -97,8 +98,9 @@ def training_convlstm(
         criterion = MSELoss(reduction='none').to(model_config.device)
 
     learning_rate = model_config.learning_rate
-    early_stopping = EarlyStopping(model_config, logger, verbose=True)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    early_stopping = EarlyStopping(model_config, verbose=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
+                                 weight_decay=model_config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=model_config.scheduler_factor, 
         patience=model_config.scheduler_patience, 
@@ -156,13 +158,16 @@ def training_convlstm(
             "lr_sched": scheduler.state_dict()
         }
 
-        update_tensorboard_scalars(writer, metrics_recorder)
-
+        new_lr = print_lr_change(learning_rate, scheduler)
+        learning_rate = new_lr
         early_stopping(np.mean(val_records['loss']), 
                        model_dict, epoch, checkpoint_dir)
         
+        update_tensorboard_scalars(writer, metrics_recorder)
+        learning_rate = print_lr_change(learning_rate, scheduler)
+        
         if early_stopping.early_stop:
-            print("Early stopping")
+            logger.info("Early stopping")
             break
 
         plt.plot(range(epoch - start_epoch + 1), train_loss_records, label='train')
@@ -185,6 +190,7 @@ def pipeline_convlstm(args:dict,
 
     data, target, mask, ndvi_scaler = pipeline_hydro_vars(args,
                     model_config,
+                    "data_convlstm",
                     use_water_mask,
                     precipitation_only,
                     load_zarr_features,

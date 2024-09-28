@@ -1,5 +1,5 @@
 if __name__=="__main__":
-    from analysis.deep_learning.utils_models import data_preparation, create_paths
+    from analysis.deep_learning.utils_gwnet import data_preparation, create_paths
     import pickle
     import os
     import matplotlib.pyplot as plt
@@ -113,7 +113,7 @@ if __name__=="__main__":
 
     if evaluate is True:
         from analysis.deep_learning.ConvLSTM.clstm_unet import valid_loop
-        from analysis.deep_learning.utils_models import MetricsRecorder
+        from analysis.deep_learning.utils_gwnet import MetricsRecorder
 
         metrics_recorder = MetricsRecorder()
 

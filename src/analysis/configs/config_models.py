@@ -10,7 +10,18 @@ import yaml
 import torch
 from definitions import ROOT_DIR
 
-class ConfigDDIM:
+
+class BaseConfig():
+    def __init__(self):
+        self.data_dir = os.path.join(ROOT_DIR,  "..",'data')
+        self.output_dir = os.path.join(ROOT_DIR, "..", 'output')
+        self.model_dir = os.path.join(self.output_dir, 'model')
+        self.log_dir = os.path.join(self.output_dir, 'log')
+        for path in [self.data_dir, self.output_dir, self.log_dir, self.model_dir]:
+            if not os.path.exists(path):
+                os.makedirs(path)
+
+class ConfigDDIM(BaseConfig):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     image_size = 64
     input_size = (83, 77)
@@ -50,20 +61,8 @@ class ConfigDDIM:
     patience = 40
 
     include_lag = True
-    
-    data_dir = os.path.join(ROOT_DIR, "..", 'data')
-    output_dir = os.path.join(ROOT_DIR,  "..", 'output')
-    log_dir = os.path.join(output_dir, 'log')
-    model_dir = os.path.join(output_dir, 'model')
 
-    autoencoder_path = output_dir + "/dime/days_15/features_90/autoencoder/checkpoints/checkpoint_epoch_63.pth.tar"
-    
-
-    for path in [data_dir, output_dir, log_dir, model_dir]:
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-class ConfigConvLSTM:
+class ConfigConvLSTM(BaseConfig):
 
     gpus = [0, ]
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -77,8 +76,8 @@ class ConfigConvLSTM:
 
     epochs = 300
     patience = 10
-    learning_rate = 1e-3
-    batch_size= 4
+    learning_rate = 1e-2
+    batch_size= 8
 
     null_value = -1
     max_value = 1
@@ -88,6 +87,8 @@ class ConfigConvLSTM:
 
     image_size = (64, 64)
     input_size = (64, 64)
+
+    weight_decay = 0.0001
     
 
     # Parameters specific to ConvLSTM
@@ -109,17 +110,8 @@ class ConfigConvLSTM:
                ('convlstm', '', 16+num_samples, 16, 3, 1, 1),
                ('conv', 'sigmoid', 16, 1, 1, 0, 1)]
 
-    data_dir = os.path.join(ROOT_DIR, "..", 'data')
-    output_dir = os.path.join(ROOT_DIR,  "..", 'output')
-    log_dir = os.path.join(output_dir, 'log')
-    model_dir = os.path.join(output_dir, 'model')
 
-    for path in [data_dir, output_dir, log_dir, model_dir]:
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-
-class ConfigGWNET():
+class ConfigGWNET(BaseConfig):
 
     num_frames_output = 1 ### means 1 frame as output
     output_channels = 1
@@ -127,7 +119,7 @@ class ConfigGWNET():
     num_samples = 9 #### the number of channels to use
 
     epochs = 300
-    patience = 20
+    patience = 10
     learning_rate = 1e-3
     batch_size= 4
     dim = 64
@@ -151,16 +143,42 @@ class ConfigGWNET():
     scheduler_factor = 0.7
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    data_dir = os.path.join(ROOT_DIR,  "..",'data')
-    output_dir = os.path.join(ROOT_DIR, "..", 'output')
-    model_dir = os.path.join(output_dir, 'model')
-    log_dir = os.path.join(output_dir, 'log')
 
-    for path in [data_dir, output_dir, log_dir, model_dir]:
-        if not os.path.exists(path):
-            os.makedirs(path)
+class ConfigWNET(BaseConfig):
+
+    num_frames_output = 1 ### means 1 frame as output
+    output_channels = 1
+    include_lag = True
+    num_samples = 9 #### the number of channels to use
+
+    epochs = 200
+    patience = 10
+    learning_rate = 0.1
+    batch_size= 8
+    dim = 64
+
+    null_value = -1
+    max_value = 1
+
+    masked_loss = False
+
+    ### Parameters specific to GWNET
+    weight_decay = 0.0001
+    in_dim = 10
+    out_dim = 1
+    dropout = 0.3
+    nhid = 16
+    blocks = 6
+    layers = 4
+    print_every = 100
+
+    scheduler_patience = 3
+    scheduler_factor = 0.7
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
 
 config_convlstm_1 = ConfigConvLSTM()
 config_gwnet = ConfigGWNET()
 config_ddim = ConfigDDIM()
+config_wnet = ConfigWNET()

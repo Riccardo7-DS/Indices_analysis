@@ -102,8 +102,8 @@ def plot_first_n_images(tensor, n:int, save:bool=False, name:str=None, img_path=
         name = name + ".png"
 
     # Ensure n does not exceed the time dimension
-    
-    tensor = tensor.cpu().detach().numpy()
+    if torch.is_tensor(tensor):
+        tensor = tensor.cpu().detach().numpy()
 
     n = min(n, tensor.shape[1])
     
@@ -313,6 +313,28 @@ def prepare_array_wgcnet(data, mask=None):
 
     return data_reshaped
 
+
+def reverse_reshape_gnn(orig_data, non_null_data, mask):
+    
+    T = non_null_data.shape[0]
+
+    if len(orig_data.shape) == 3:
+        _, W, H = orig_data.shape  # Original dimensions
+        C = 1
+        
+    elif len(orig_data.shape) == 4:
+        _, C, W, H = orig_data.shape 
+    # Create an empty array with the original shape filled with NaNs
+    original_data = np.full((T, C, W * H), np.nan)
+    non_null_data = np.squeeze(non_null_data, -1)
+    mask = np.reshape(mask, W*H)
+
+    # Reinsert the non-null data into the non-masked locations
+    original_data[:, :, ~mask] = non_null_data
+
+    original_data = np.reshape(original_data, (T, C, W, H))
+    return np.squeeze(original_data)
+
 def print_lr_change(old_lr, scheduler):
     lr = scheduler.get_last_lr()[0]
     if lr != old_lr:
@@ -373,7 +395,7 @@ def pipeline_hydro_vars(args:dict,
     
     data_dir = os.path.join(model_config.data_dir, rawdata_name)
 
-    logger.info(f"Starting training {args.model} model for {args.step_length}" \
+    logger.info(f"Starting {args.mode} {args.model} model for {args.step_length}" \
                 f"days in the future" \
                 f" with {args.feature_days} days of features")
 
@@ -562,6 +584,68 @@ def valid_loop(config, args, model, valid_loader, criterion, scheduler,
     return epoch_records
 
 
+def test_loop(config, args, model, valid_loader, criterion,
+               scaler=None, mask=None, draw_scatter:bool=False):
+    
+    from tqdm.auto import tqdm
+    
+    _, _, img_path, _ = create_runtime_paths(args)
+
+    model.eval()
+    epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
+    predictions, outputs_real = [], []
+
+    if draw_scatter is True:
+        nbins= 200
+        bin0 = np.linspace(0, config.max_value, nbins+1)
+        n = np.zeros((nbins,nbins))
+
+    num_batchs = len(valid_loader)
+    for batch_idx, (inputs, targets) in enumerate(tqdm(valid_loader, desc="Testing", unit="batch")):
+        with torch.no_grad():
+            inputs = inputs.squeeze(0).float().to(config.device)
+            # logger.info("Feature tensor GPU memory: {:.2f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
+            targets = torch.squeeze(targets.float().to(config.device))
+            # logger.info("Label tensor GPU memory: {:.2f} GB".format(get_tensor_memory(targets)/ (1024**3)))
+            outputs = torch.squeeze(model(inputs))
+
+            if args.normalize is True:  
+                outputs = scaler.inverse_transform(outputs)
+                targets = scaler.inverse_transform(targets)
+
+            if draw_scatter is True:
+                img_pred = outputs.cpu().detach().numpy().flatten()
+                img_real = targets.cpu().detach().numpy().flatten()
+                h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins)
+                n = n+h
+
+            if config.masked_loss is False:
+                losses = criterion(outputs, targets).item()
+                mape = masked_mape(outputs,targets).item()
+                rmse = masked_rmse(outputs,targets).item()
+            else:
+                if mask is None:
+                    raise ValueError("Please provide a mask for loss computation")
+                else:
+                    mask = mask.float().to(config.device)
+                    losses = masked_mse_loss(criterion, outputs, targets, mask)
+                    mape = mask_mape(outputs,targets, mask).item()
+                    rmse = mask_rmse(outputs,targets, mask).item()
+
+
+            epoch_records['loss'].append(losses)
+            epoch_records["rmse"].append(rmse)
+            epoch_records["mape"].append(mape)
+            
+            outputs_real.append(outputs)
+            predictions.append(targets)
+
+    if draw_scatter is True:
+        plot_scatter_hist(n,  bin0, img_path)
+    
+    return epoch_records, predictions, outputs_real
+
+
 def evaluate_hist2d(real_img, pred_img, nbins):
     mdata=np.isnan(real_img)==0
     h, xed,yed=np.histogram2d(real_img[mdata], 
@@ -625,6 +709,10 @@ def get_train_valid_loader(model_config,
                                         val_data, val_label, 
                                         save_files=False)
     
+    test_dataset = CustomConvLSTMDataset(model_config, args, 
+                                        test_valid, test_label, 
+                                        save_files=False)
+    
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, 
                                   batch_size=model_config.batch_size, 
@@ -632,8 +720,14 @@ def get_train_valid_loader(model_config,
     val_dataloader = DataLoader(val_dataset, 
                                 batch_size=model_config.batch_size, 
                                 shuffle=False)
+    
+    test_dataloader = DataLoader(test_dataset, 
+                                batch_size=model_config.batch_size, 
+                                shuffle=False)
+    
+    
 
-    return train_dataloader, val_dataloader, train_dataset
+    return train_dataloader, val_dataloader, test_dataloader, train_dataset
 
 
 
@@ -1100,25 +1194,20 @@ class GWNETtrainer():
         rmse = masked_rmse(output,real).item()
         return loss.item(), mape, rmse
     
-    def test(self, test_loader):
+    def test(self, input, real_val, scaler, all_metrics=True):
         self.model.eval()
-        predictions = []
-        targets = []
-        test_loss = 0
+
         with torch.no_grad():
-            for iter, (x, y) in enumerate(test_loader.get_iterator()):
-                testx = torch.Tensor(x).to(self.device)
-                testx = testx.transpose(1,3)
-                y = torch.Tensor(y).to(self.device)
-                y = y.transpose(1, 3)
-                input = nn.functional.pad(testx, (1, 0, 0, 0))
-                output = self.model(input).transpose(1, 3)
-                real = torch.unsqueeze(y[:, 0, :, :], dim=1)
-                loss = self.loss(output, real)
-                test_loss += loss
-                predictions.append(output) #[:,0,:,:].squeeze()
-                targets.append(real)
-            return (test_loss / test_loader.num_batch).item(), predictions, targets
+            input = nn.functional.pad(input, (1, 0, 0, 0))
+            output = self.model(input)
+            real = torch.unsqueeze(real_val,dim=1)
+            output_scaled = scaler.inverse_transform(output)
+            real_scaled = scaler.inverse_transform(real)
+            loss = self.loss(output_scaled,real_scaled)
+            if all_metrics is True:
+                mape = masked_mape(output_scaled,real_scaled).item()
+                rmse = masked_rmse(output_scaled,real_scaled).item()
+            return loss.item(), mape, rmse, output, real
         
     def schedule_learning_rate(self, mean_loss):
         self.scheduler.step(mean_loss)
@@ -1126,9 +1215,9 @@ class GWNETtrainer():
         self.learning_rate = new_lr
 
     def metric(self, pred, real):
-        mae = masked_mae(pred,real).item()
-        mape = masked_mape(pred,real).item()
-        rmse = masked_rmse(pred,real).item()
+        mae = masked_mae(pred,real, 0.0).item()
+        mape = masked_mape(pred,real, 0.0).item()
+        rmse = masked_rmse(pred,real, 0.0).item()
         return mae,mape,rmse
 
     def gwnet_train_loop(self, model_config, engine, train_dl):
@@ -1165,6 +1254,43 @@ class GWNETtrainer():
         epoch_records["lr"].append(engine.learning_rate)
 
         return epoch_records
+    
+    def gwnet_test_loop(self, model_config, engine, test_dl, scaler):
+        from tqdm.auto import tqdm
+        epoch_records = {'loss': [], "mape":[], "rmse":[]}
+        test_loss = 0
+        outputs = []
+        target = []
+        for iter, (x, y) in enumerate(tqdm(test_dl, desc="Testing", unit="batch")):
+            trainx = torch.Tensor(x).to(model_config.device)
+            trainx= trainx.transpose(2, 3)
+            trainy = torch.Tensor(y).to(model_config.device)
+            trainy = trainy.transpose(2, 3)
+            loss, mape, rmse, output, real = engine.test(trainx, trainy[:, 0,:,:], scaler)
+            outputs.append(output)
+            target.append(real)
+           
+            epoch_records["loss"].append(loss)
+            epoch_records["rmse"].append(rmse)
+            epoch_records["mape"].append(mape)
+
+        yhat = torch.cat(outputs,dim=0)
+
+        return epoch_records, outputs, target
+
+def draw_adj_heatmap(engine, img_path):
+    import seaborn as sns
+    from torch.functional import F
+    import pandas as pd
+    adp = F.softmax(F.relu(torch.mm(engine.model.nodevec1, engine.model.nodevec2)), dim=1)
+    device = torch.device('cpu')
+    adp.to(device)
+    adp = adp.cpu().detach().numpy()
+    adp = adp*(1/np.max(adp))
+    df = pd.DataFrame(adp)
+    sns.heatmap(df, cmap="RdYlBu")
+    plt.savefig(os.path.join(img_path,"emb.pdf"))
+    logger.info("Adjacency matrix input saved in {}".format(img_path))
 
 def generate_adj_dist(df, normalized_k=0.05,):
     coord = df[['lat', 'lon']].values

@@ -45,7 +45,7 @@ def plot_noisy_images(image, imgs, with_orig=False, row_title=None, **imshow_kwa
             axs[row_idx, 0].set(ylabel=row_title[row_idx])
 
     plt.tight_layout()
-    plt.pause(5)
+    plt.pause(10)
     plt.close()
 
 

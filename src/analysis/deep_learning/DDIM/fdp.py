@@ -14,7 +14,7 @@ from utils.function_clns import config, CNN_split, init_logging
 from utils.xarray_functions import ndvi_colormap
 from analysis import default
 
-cmap = ndvi_colormap("diverging")
+cmap = ndvi_colormap("sequential")
 
 parser = argparse.ArgumentParser(conflict_handler="resolve")
 parser.add_argument('-f')
@@ -24,7 +24,9 @@ parser.add_argument('--model',type=str,default="AUTO_DIME",help='DL model traini
 parser.add_argument('--step_length',type=int,default=os.getenv("step_length", 15))
 
 parser.add_argument('--auto_train',type=bool,default=os.getenv("auto_train", False))
-parser.add_argument('--feature_days',type=int,default=os.getenv("feature_days", 180))
+parser.add_argument('--auto_days',type=int,default=os.getenv("feature_days", 180))
+
+parser.add_argument('--feature_days',type=int,default=os.getenv("feature_days", 90))
 parser.add_argument('--auto_ep',type=int,default=243)
 parser.add_argument('--gen_sample',type=int,default=os.getenv("gen_sample", 2))
 
@@ -44,8 +46,7 @@ args = parser.parse_args()
 auto_epoch = None
 
 autoencoder_path = model_config.output_dir + \
-    f"/dime/days_{args.step_length}" \
-    f"/features_{args.feature_days}/autoencoder/checkpoints" \
+    f"/dime/autoencoder/checkpoints" \
     "/checkpoint_epoch_{}.pth.tar"
 
 if args.auto_train is True:
@@ -53,17 +54,17 @@ if args.auto_train is True:
     if args.auto_ep > 0 :
         checkp_path = autoencoder_path.format(args.auto_ep)
         auto_epoch = train_autoencoder(args, 
-                                   output_shape=args.feature_days//5,
+                                   output_shape=args.auto_days//5,
                                    checkpoint_path=checkp_path)
     else:
         auto_epoch = train_autoencoder(args, 
-                                   output_shape=args.feature_days//5)
+                                   output_shape=args.auto_days//5)
 
-auto_epoch = default(auto_epoch, args.feature_days)
+auto_epoch = default(auto_epoch, args.auto_ep)
 
 autoencoder = load_autoencoder(autoencoder_path.format(auto_epoch), 
-                               feature_days=args.feature_days,
-                               output_shape=args.feature_days//5,)
+                               feature_days=args.auto_days,
+                               output_shape=args.auto_days//5,)
 
 ################################# Initialize datasets #############################
 
@@ -84,6 +85,13 @@ train_data, val_data, train_label, val_label, \
                             test_valid, test_label = CNN_split(data, target, 
                             split_percentage=config["MODELS"]["split"])
 
+import matplotlib.pyplot as plt
+#from analysis import plot_first_n_images
+
+# plot_first_n_images(train_data, 9)
+# plt.show()
+# plt.close()
+
 # create a CustomDataset object using the reshaped input data
 datagenrator_train = DataGenerator(model_config, args,
                             train_data, train_label, 
@@ -102,7 +110,7 @@ dataloader = DataLoader(datagenrator_train,
 
 model = TwoResUNet(dim=model_config.widths[0]*2, 
             channels=datagenrator_train.data.shape[1]+1,
-            dim_mults=(1, 2, 4, 8, 16),
+            dim_mults=(1, 2, 4),
             out_dim=model_config.output_channels).to(model_config.device)
 
 optimizer = torch.optim.AdamW(model.parameters(), 
