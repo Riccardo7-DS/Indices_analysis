@@ -5,19 +5,37 @@ import torch
 from torch.nn import MSELoss
 from analysis import tensor_corr, EarlyStopping
 import logging
+import pickle
 logger = logging.getLogger(__name__)
 
+# Define a custom unpickler that will remap the old module to the new one
+class CustomUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        # Check if the module is the old one and remap it to the new one
+        if module == 'analysis.deep_learning.utils_gwnet':
+            module = 'analysis.deep_learning.utils_models'
+        return super().find_class(module, name)
 
-def load_stored_data(model_config, squared:bool = True):
-    data_dir = model_config.data_dir+"/data_convlstm"
+# Now use this custom unpickler to load the pickle file
+def load_with_custom_unpickler(file_path):
+    with open(file_path, "rb") as handle:
+        return CustomUnpickler(handle).load()
+
+def load_stored_data(model_config):
+    import pickle
+    data_dir = model_config.data_dir+"/data_convlstm_full"
     data = np.load(os.path.join(data_dir, "data.npy"))
     target = np.load(os.path.join(data_dir, "target.npy"))
+    mask = np.load(os.path.join(data_dir, "mask.npy"))
+    path = os.path.join(data_dir, "ndvi_scaler.pickle")
+    scaler = load_with_custom_unpickler(path)
     
-    squared = True
+    squared = model_config.squared
     if squared is True:
         data = data[:, :, :64, :64]
         target = target[:, :64, :64]
-    return data, target
+        mask = mask[:64, :64]
+    return data, target, scaler, mask
 
 def plot_noisy_images(image, imgs, with_orig=False, row_title=None, **imshow_kwargs):
     if not isinstance(imgs[0], list):
@@ -67,7 +85,7 @@ def saveImage(image, image_size, epoch, step, folder):
 
     transform=T.ToPILImage()
 
-    image_array = image[0][0, 0].reshape(image_size, image_size)
+    image_array = image[0][0].reshape(image_size, image_size)
     image = transform(image_array)
 
     # Define the full path including the directory and file name
@@ -78,7 +96,7 @@ def saveImage(image, image_size, epoch, step, folder):
 
 def diffusion_train_loop(args, 
                          model_config, fdp, 
-                         dataloader, datagenrator_train,  
+                         dataloader, 
                          writer, checkpoint_dir, 
                          start_epoch=0):
 
@@ -114,8 +132,14 @@ def diffusion_train_loop(args,
 
         if epoch != 0 and epoch % model_config.save_and_sample_every == 0:
             # logger.info(f"Loss: {noise_loss}")
-            shape = (1, 1, model_config.image_size, model_config.image_size)
-            sample_im = fdp.sample(args, fdp.model, datagenrator_train, shape, model_config.timesteps)
+            img_shape = (1, 1, model_config.image_size, model_config.image_size)
+            sample_im = fdp.p_sample_loop(args, 
+                                          fdp.model, 
+                                          dataloader, 
+                                          img_shape, 
+                                          model_config.timesteps, 
+                                          samples=1,
+                                          random_enabled=True)
             saveImage(sample_im, model_config.image_size, epoch, step, results_folder)
 
         log = 'Epoch: {:03d}, Noise Loss: {:.4f}, Noise correlation: {:.4f}'
@@ -154,27 +178,57 @@ def diffusion_train_loop(args,
                                  f'{args.step_length}.png'))
         plt.close()
 
-def diffusion_sampling(args, model_config, fdp, dataloader, samples=1):
-    shape = (samples, 1, model_config.image_size, model_config.image_size)
-    sample_im = fdp.sample(args, fdp.model, dataloader, shape, model_config.timesteps, samples)
+def diffusion_sampling(args, model_config, fdp, dataloader, samples=1, random_enabled=False):
+    img_shape = (model_config.batch_size, 1, model_config.image_size, model_config.image_size)
+    sample_im = fdp.p_sample_loop(args, 
+        fdp.model, 
+        dataloader, 
+        img_shape, 
+        model_config.timesteps, 
+        samples,
+        random_enabled 
+    )
     return sample_im
 
-def compute_image_loss_plot(sample_image, y_true, loss_fn, cmap, plot_loss:bool=True):
+def compute_image_loss_plot(sample_image, 
+                            y_true, 
+                            loss_fn, 
+                            mask=None, 
+                            img_path:str=None,
+                            cmap="RdYlGn", 
+                            plot_loss:bool=True):
     
-    test_loss = loss_fn(sample_image.squeeze(), y_true.squeeze())
-    logger.info(f"The mean loss on the test data is {round(np.mean(test_loss.item()), 3)}")
+    
+    if img_path is None:
+        from definitions import ROOT_DIR
+        img_path = os.path.join(ROOT_DIR, "../output")
+           
+    if isinstance(loss_fn, torch.nn.Module):
+        from analysis import masked_custom_loss
+        test_loss = masked_custom_loss(loss_fn, 
+            sample_image.squeeze(), 
+            y_true.squeeze(),
+            mask
+        )
+    else:
+        test_loss = loss_fn(sample_image.squeeze(), 
+                            y_true.squeeze(), 
+                            mask)
+
+
+    logger.info(f"The mean loss on the test data is {round(np.nanmean(test_loss.item()), 3)}")
 
     fig, axs = plt.subplots(1, 2, figsize=(10, 5))
 
     if len(sample_image.squeeze().shape) > 2:
-        sample_image = sample_image[0]
-        y_true = y_true[0]
+        pred_sample = sample_image[0]
+        y_true_sample = y_true[0]
         
-    c1 = axs[0].imshow(sample_image.detach().cpu().numpy().squeeze() , cmap=cmap)
+    c1 = axs[0].imshow(pred_sample.detach().cpu().numpy().squeeze() , cmap=cmap)
     axs[0].set_title('Predicted Image')
 
     # Plot the second image
-    c2 = axs[1].imshow(y_true.detach().cpu().numpy().squeeze(), cmap=cmap)
+    c2 = axs[1].imshow(y_true_sample.detach().cpu().numpy().squeeze(), cmap=cmap)
     axs[1].set_title('True Image')
 
     fig.colorbar(c2, ax=axs[1]) 
@@ -182,10 +236,21 @@ def compute_image_loss_plot(sample_image, y_true, loss_fn, cmap, plot_loss:bool=
     plt.close()
 
     if plot_loss is True:
-        spat_loss = MSELoss(reduction="none")
-        img_loss = spat_loss(sample_image.squeeze(), y_true.squeeze())
-        plt.imshow(img_loss.squeeze(), vmax=0.1)
+        if isinstance(loss_fn, torch.nn.Module):
+            img_loss = masked_custom_loss(loss_fn,
+                sample_image.squeeze(), 
+                y_true.squeeze(), 
+                mask, 
+                return_value=False)
+        else:
+            img_loss = loss_fn(sample_image.squeeze(), 
+                y_true.squeeze(), 
+                mask, 
+                return_value=False)
+        image_masked = img_loss.squeeze().detach().cpu()
+        plt.imshow(image_masked, vmax=0.1)
         plt.title("MSE error map")
         plt.colorbar()
+        plt.savefig(os.path.join(img_path,"mbe_error_map.png")) 
         plt.pause(10)
         plt.close()

@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import torchvision.transforms.functional as TF
 import logging
 from tqdm.auto import tqdm
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -409,25 +410,22 @@ class Forward_diffussion_process():
             return self.p_sample_ddim( model, x_start, time_steps, x_cond)
         
     @torch.no_grad()
-    def reverse_diffusion(self, args, model, dataloader, shape, timesteps, time_steps_list):
-        import random
-        idx = random.randint(0, len(dataloader.data)-1)
-        x_cond = torch.from_numpy(dataloader.data[idx]).unsqueeze(0).to(self.device)
-        y_true = torch.from_numpy(dataloader.labels[idx]).unsqueeze(0).to(self.device)
-         # generate Gaussian noise
+    def reverse_diffusion(self, args, model, x, shape, timesteps, time_steps_list):
+        
+             # generate Gaussian noise
         z_t = torch.randn(shape, device=self.device, dtype=torch.float32)
         imgs = [z_t]
         x_start = None
         with tqdm(reversed(range(0, timesteps)), desc='sampling loop time step', total=timesteps) as sampling_steps:
             for t in sampling_steps:
                 x_start = z_t if x_start is None else x_start
-                x_start = self.p_sample(args, model, x_start, time_steps_list[t], x_cond)
+                x_start = self.p_sample(args, model, x_start, time_steps_list[t], x)
                 imgs.append(x_start)
     
-        return imgs[-1], y_true
+        return imgs[-1]
 
     @torch.no_grad()
-    def p_sample_loop(self, args, model, dataloader, shape, timesteps, samples):
+    def p_sample_loop(self, args, model, dataloader, img_shape, timesteps, samples, random_enabled):
         
         if args.diff_sample == "ddim":
             a = self.timesteps // timesteps
@@ -437,18 +435,59 @@ class Forward_diffussion_process():
             timesteps = self.timesteps
             time_steps = np.asarray(list(range(0, self.timesteps, 1)))
 
-        imgs = torch.empty(shape)
-        y = torch.empty(shape)
-        img_shape = (1, *shape[1:])
-        for s in range(samples):
-            img,  y_true = self.reverse_diffusion(args, model, dataloader, img_shape, timesteps, time_steps)
-            imgs[s] = img.squeeze()
-            y[s] = y_true.squeeze()
-        return imgs, y 
+        if random_enabled:
+            tot_samples = samples * img_shape[0]
+        else:
+            tot_samples =  len(dataloader.dataset.data)
 
-    @torch.no_grad()
-    def sample(self, args, model, dataloader, shape, timesteps=300, samples=1):
-        return self.p_sample_loop(args, model, dataloader, shape, timesteps, samples)
+        # Preallocate tensors
+        imgs = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+        y = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+
+        if random_enabled:
+            for s in range(samples):
+                x_cond, y_true = [], []
+                for _ in range(img_shape[0]):
+                    idx = random.randint(0, len(dataloader.dataset.data) - 1)
+                    x_cond.append(torch.from_numpy(dataloader.dataset.data[idx]).unsqueeze(0).to(self.device))
+                    y_true.append(torch.from_numpy(dataloader.dataset.labels[idx]).unsqueeze(0).to(self.device))
+
+                x_cond = torch.concat(x_cond, axis=0)
+                y_true = torch.concat(y_true, axis=0)
+
+                img = self.reverse_diffusion(args, 
+                    model, 
+                    x_cond, 
+                    img_shape, 
+                    timesteps, 
+                    time_steps
+                )
+                start, end = s * img_shape[0], (s + 1) * img_shape[0]
+                imgs[start:end] = img.squeeze()
+                y[start:end] = y_true.squeeze()
+
+        else:
+            # Standard batch processing logic
+            for batch_idx, (inputs, targets) in enumerate(tqdm(dataloader, 
+                                                          desc="Processing Batches")):
+                with torch.no_grad():
+                    img = self.reverse_diffusion(
+                        args, 
+                        model, 
+                        inputs.squeeze(0).float().to(self.device), 
+                        img_shape, 
+                        timesteps, 
+                        time_steps
+                    )
+                    start, end = batch_idx * img_shape[0], (batch_idx + 1) * img_shape[0]
+                    imgs[start:end] = img.squeeze()
+                    y[start:end] = targets.squeeze().float().to(self.device)
+
+        return imgs, y
+
+    # @torch.no_grad()
+    # def sample(self, args, model, dataloader, shape, timesteps=300, samples=1, random_enabled=True):
+    #     return self.p_sample_loop(args, model, dataloader, shape, timesteps, samples, random_enabled)
 
 
 '''

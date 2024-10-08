@@ -190,12 +190,16 @@ def pipeline_convlstm(args:dict,
 
     data, target, mask, ndvi_scaler = pipeline_hydro_vars(args,
                     model_config,
-                    "data_convlstm",
+                    "data_convlstm_full",
                     use_water_mask,
                     precipitation_only,
                     load_zarr_features,
                     load_local_precipitation,
                     interpolate)
+    
+    if args.mode == "no_train":
+        import sys
+        sys.exit(0)
     
     training_convlstm(args,
                     data, 
@@ -219,7 +223,9 @@ if __name__=="__main__":
     
     ### Convlstm parameters
     parser.add_argument('--model',type=str,default="CONVLSTM",help='DL model training')
-    parser.add_argument('--step_length',type=int,default=60)
+    parser.add_argument('--mode',type=str,default="no_train",help='create dataset, train or test')
+
+    parser.add_argument('--step_length',type=int,default=15)
     parser.add_argument('--feature_days',type=int,default=90)
     parser.add_argument('--crop_area',type=bool,default=False)
     parser.add_argument('--fillna',type=bool,default=True)

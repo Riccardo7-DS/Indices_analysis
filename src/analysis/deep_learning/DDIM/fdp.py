@@ -1,5 +1,5 @@
 from analysis import Forward_diffussion_process, TwoResUNet, plot_noisy_images, load_stored_data, DataGenerator, tensor_corr, UNET, create_runtime_paths, init_tb, EarlyStopping
-from analysis import diffusion_train_loop, diffusion_sampling, compute_image_loss_plot
+from analysis import diffusion_train_loop, diffusion_sampling, compute_image_loss_plot, autoencoder_wrapper
 from analysis.configs.config_models import config_ddim as model_config
 from torch.nn import L1Loss, MSELoss
 import numpy as np
@@ -12,7 +12,7 @@ import logging
 from torch.utils.data import DataLoader
 from utils.function_clns import config, CNN_split, init_logging
 from utils.xarray_functions import ndvi_colormap
-from analysis import default
+import matplotlib.pyplot as plt
 
 cmap = ndvi_colormap("sequential")
 
@@ -24,47 +24,28 @@ parser.add_argument('--model',type=str,default="AUTO_DIME",help='DL model traini
 parser.add_argument('--step_length',type=int,default=os.getenv("step_length", 15))
 
 parser.add_argument('--auto_train',type=bool,default=os.getenv("auto_train", False))
-parser.add_argument('--auto_days',type=int,default=os.getenv("feature_days", 180))
+parser.add_argument('--auto_days',type=int,default=os.getenv("auto_days", 180))
 
 parser.add_argument('--feature_days',type=int,default=os.getenv("feature_days", 90))
-parser.add_argument('--auto_ep',type=int,default=243)
+parser.add_argument('--auto_ep',type=int,default=os.getenv("auto_ep", 180))
 parser.add_argument('--gen_sample',type=int,default=os.getenv("gen_sample", 2))
 
 ### diffusion parameters
-parser.add_argument('--diff_schedule',type=str,default=os.getenv("diff_schedule", "linear"))
+parser.add_argument('--diff_schedule',type=str,default=os.getenv("diff_schedule", "cosine"))
 parser.add_argument('--diff_sample',type=str,default="ddpm")
 parser.add_argument('--epoch',type=int,default=os.getenv("epoch", 0), help="diffusion model trained epochs")
 
 parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
-parser.add_argument('--mode', type=str, default=os.getenv("mode", "train"))
+parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
 
 args = parser.parse_args()
 
+data, target, scaler, mask = load_stored_data(model_config)
+
 ################################# Autoencoder #############################
 
-auto_epoch = None
-
-autoencoder_path = model_config.output_dir + \
-    f"/dime/autoencoder/checkpoints" \
-    "/checkpoint_epoch_{}.pth.tar"
-
-if args.auto_train is True:
-    from analysis import train_autoencoder
-    if args.auto_ep > 0 :
-        checkp_path = autoencoder_path.format(args.auto_ep)
-        auto_epoch = train_autoencoder(args, 
-                                   output_shape=args.auto_days//5,
-                                   checkpoint_path=checkp_path)
-    else:
-        auto_epoch = train_autoencoder(args, 
-                                   output_shape=args.auto_days//5)
-
-auto_epoch = default(auto_epoch, args.auto_ep)
-
-autoencoder = load_autoencoder(autoencoder_path.format(auto_epoch), 
-                               feature_days=args.auto_days,
-                               output_shape=args.auto_days//5,)
+autoencoder = autoencoder_wrapper(args, model_config, data, target)
 
 ################################# Initialize datasets #############################
 
@@ -79,13 +60,11 @@ logger = init_logging(log_file=os.path.join(log_path,
                             f"dime_days_{args.step_length}"
                             f"features_{args.feature_days}.log"))
 writer = init_tb(log_path)
-data, target = load_stored_data(model_config)
 
 train_data, val_data, train_label, val_label, \
-                            test_valid, test_label = CNN_split(data, target, 
+                            test_data, test_label = CNN_split(data, target, 
                             split_percentage=config["MODELS"]["split"])
 
-import matplotlib.pyplot as plt
 #from analysis import plot_first_n_images
 
 # plot_first_n_images(train_data, 9)
@@ -95,9 +74,17 @@ import matplotlib.pyplot as plt
 # create a CustomDataset object using the reshaped input data
 datagenrator_train = DataGenerator(model_config, args,
                             train_data, train_label, 
-                            autoencoder)
+                            autoencoder, data_split="train")
 
-dataloader = DataLoader(datagenrator_train, 
+dataloader_train = DataLoader(datagenrator_train, 
+                        shuffle=True, 
+                        batch_size=model_config.batch_size)
+
+datagenrator_test= DataGenerator(model_config, args,
+                            test_data, test_label, 
+                            autoencoder, data_split="test")
+
+dataloader_test = DataLoader(datagenrator_test, 
                         shuffle=True, 
                         batch_size=model_config.batch_size)
 
@@ -137,7 +124,7 @@ fdp = Forward_diffussion_process(args, model_config,
 
 ################### test image ############################
 
-x_features, img = next(iter(dataloader))
+x_features, img = next(iter(dataloader_train))
 image = img[0].to(model_config.device)
 # img = fdp.get_noisy_image(image.to(model_config.device), t)
 
@@ -152,7 +139,7 @@ if args.mode == "train":
            f"and sampling technique {args.diff_sample} at epoch {start_epoch}") 
     diffusion_train_loop(args, 
                          model_config, fdp, 
-                         dataloader, datagenrator_train,
+                         dataloader_train,
                          writer, checkpoint_dir, 
                          start_epoch)
     
@@ -160,8 +147,18 @@ elif args.mode == "generate":
     logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
            f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs") 
     sample_image, y_true = diffusion_sampling(args, model_config, fdp, 
-                                              datagenrator_train, samples=args.gen_sample)
-    compute_image_loss_plot(sample_image, y_true, loss_fn, cmap)
+                                              dataloader_test, samples=args.gen_sample,
+                                              random_enabled=True)
+    if args.normalize is True:
+        sample_image = scaler.inverse_transform(sample_image)
+        y_true = scaler.inverse_transform(y_true)
+
+    sample_image = torch.clamp(sample_image, -1, 1)
+
+    mask = torch.from_numpy(mask).to(model_config.device)
+    # spat_loss = MSELoss(reduction="none")
+    from analysis import mask_mbe
+    compute_image_loss_plot(sample_image, y_true, mask_mbe, mask, img_path, cmap)
 
 else:
     raise ValueError(f"Specified {args.mode} must be \"train\" or \"generate\"")

@@ -162,26 +162,34 @@ class CustomConvLSTMDataset(Dataset):
             np.save(os.path.join(dest_path, f'batch_{num_batches}.npy'), batch_dict)
 
 class DataGenerator(CustomConvLSTMDataset):
-    def __init__(self, config, args, data, labels, autoencoder):
-        super().__init__(config, args, data, labels)
+    def __init__(self, config:dict, 
+                 args:dict, 
+                 data:np.array, 
+                 labels:np.array, 
+                 autoencoder, 
+                 data_split:str):
+        super().__init__(config, args, data, labels, autoencoder, data_split) 
 
         self.device = config.device
         self.time_list = self._add_time_list(data)
 
-        filepath = os.path.join(config.data_dir, "autoencoder_output")
+        filepath = os.path.join(config.data_dir, f"autoencoder_output")
         if not os.path.exists(filepath):
             os.makedirs(filepath)
-        file = os.path.join(filepath, "vae_features.npy")
+        file = os.path.join(filepath, f"vae_features_{data_split}.npy")
 
-        if (os.path.exists(file)) and (args.auto_train is False):
+        if (os.path.exists(file)):
             self.data = self._load_auto_output(file)
         else:
             vae_output = self._reduce_data_vae(autoencoder.to(self.device), 
-                                               args.feature_days//2)
-            extra_features = self.data[:, -1, :-1]
+                                               args.auto_days//5)
+            extra_features = self.data[:, :-1, -1]
             data = np.concatenate([extra_features, vae_output], axis=1)
             self._export_auto_output(data, file)
             self.data = data
+
+        if config.squared is True:
+            self.data = self.data[:, :, :64, :64]
 
     def _load_auto_output(self, data_dir):
         logger.info("Loading stored VAE output...")
@@ -210,6 +218,22 @@ class DataGenerator(CustomConvLSTMDataset):
             logger.info(f"The tensor input has missing dates")
             logger.info(f"Dates should be {len(dates)} instead of {num_steps}")
         return dates
+    
+    def _reshape_in_chunks(imag_past, batch_size):
+        from tqdm.auto import tqdm
+        b, t, h, w = imag_past.size()
+        imag_past = imag_past.permute(0, 2, 3, 1)  # (b, h, w, t)
+        reshaped = []
+
+        # Iterate batchwise over the last dimension (t) with progress bar
+        for batch_start in tqdm(range(0, t, batch_size), desc="Processing batches along t"):
+            batch_end = min(batch_start + batch_size, t)
+            batch = imag_past[..., batch_start:batch_end]  # Slice along t
+            reshaped.append(batch.reshape(b * h * w, -1))  # Reshape the batch
+
+        # Concatenate the results along the last dimension
+        imag = torch.cat(reshaped, dim=1)
+        return torch.unsqueeze(imag, dim=1)
 
     def _apply_batched_autoencoder(self, x, autoencoder, batch_size):
         from torch.utils.data import DataLoader, TensorDataset
@@ -222,7 +246,7 @@ class DataGenerator(CustomConvLSTMDataset):
         # Apply the encoder to each batch
         encoded_batches = []
         for batch in tqdm(dataloader):
-            inputs = batch[0]
+            inputs = batch[0].to(self.device)
             with torch.no_grad():  # Disable gradient computation for inference
                 encoded = autoencoder.encoder(inputs)
             encoded_batches.append(encoded)
@@ -231,13 +255,31 @@ class DataGenerator(CustomConvLSTMDataset):
         return torch.cat(encoded_batches)
 
     def _reduce_data_vae(self, autoencoder, output_shape):
-        imag_past = torch.from_numpy(self.data[:,:,-1]).to(self.device)
+        from tqdm.auto import tqdm
+        # if len(self.data.shape) == 5:
+        #     self.data = np.swapaxes(self.data, 1, 2)
+        imag_past = torch.from_numpy(self.data[:,-1])
         b, t, h, w = imag_past.size()
         imag_past = imag_past.permute(0, 2, 3, 1)
-        imag  =  imag_past.reshape(b*h*w, t)
-        x = torch.unsqueeze(imag, 1)
-        reduced_data = self._apply_autoencoder(x, autoencoder)
-        return reduced_data.view(b, h, w, output_shape).permute(0, 3, 1, 2) + 1 
+
+        batch_size = 512
+
+        outputs = []
+        
+        for batch_start in tqdm(range(0, b, batch_size), desc="Applying autoencoder in batches"):
+            batch_end = min(batch_start + batch_size, b)
+            temp_b = batch_end - batch_start
+            batch = imag_past[batch_start:batch_end]  # Slice along t
+            s = batch.reshape(temp_b*h*w, -1) 
+            x = torch.unsqueeze(s, 1)
+            reduced_data = self._apply_autoencoder(x, autoencoder)
+            outputs.append(reduced_data)
+
+        outputs = np.concatenate(outputs, 0)
+        outputs = np.reshape(outputs, (b, h, w, output_shape))  # Reshape to (b, h, w, output_shape)
+        outputs = np.transpose(outputs, (0, 3, 1, 2))  
+        outputs = outputs + 1
+        return outputs
 
     def _apply_autoencoder(self, x, autoencoder):
         reduced_data = self._apply_batched_autoencoder(x, autoencoder, 256)\

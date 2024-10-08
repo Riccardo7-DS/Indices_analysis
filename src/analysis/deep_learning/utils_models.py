@@ -44,7 +44,7 @@ def create_runtime_paths(args:dict, spi:bool=False):
                     f"output/dime/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "AUTO_DIME":
         output_dir = os.path.join(ROOT_DIR, "..", 
-                    f"output/dime/days_{args.step_length}/features_{args.feature_days}/autoencoder")
+                    f"output/dime/autoencoder")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
@@ -68,6 +68,41 @@ def load_autoencoder(checkpoint_path,feature_days=90, output_shape=20):
     checkpoint = torch.load(checkpoint_path)
     autoencoder.load_state_dict(checkpoint['state_dict'])
     logger.info(f"Loading autoencoder trained up to epoch {checkpoint['epoch']}")
+    return autoencoder
+
+
+def autoencoder_wrapper(args, model_config, data, target):
+    from analysis import default, pipeline_autoencoder
+    auto_epoch = None
+
+    autoencoder_path = model_config.output_dir + \
+        f"/dime/autoencoder/checkpoints" \
+        "/checkpoint_epoch_{}.pth.tar"
+
+    if args.auto_train is True:
+        
+        if args.auto_ep > 0 :
+            checkp_path = autoencoder_path.format(args.auto_ep)
+            auto_epoch = pipeline_autoencoder(args, 
+                                       output_shape=args.auto_days//5,
+                                       checkpoint_path=checkp_path)
+        else:
+
+            auto_epoch = pipeline_autoencoder(args, data, target,
+                                       output_shape=args.auto_days//5)
+    else:
+        if len(os.listdir(model_config.data_dir + "/autoencoder_output")) == 0 :
+            args.mode = "generate"
+            for dataset in ["train", "test"]:
+                pipeline_autoencoder(args, data, target,
+                                       output_shape=args.auto_days//5, 
+                                       dataset=dataset)
+
+    auto_epoch = default(auto_epoch, args.auto_ep)
+
+    autoencoder = load_autoencoder(autoencoder_path.format(auto_epoch), 
+                                   feature_days=args.auto_days,
+                                   output_shape=args.auto_days//5,)
     return autoencoder
 
 def mask_gnn_pixels(data, target, mask):
@@ -993,43 +1028,74 @@ def tensor_corr(prediction, label):
 Metrics with custom mask
 """
 
-def mask_mae(preds, labels, mask):
+def mask_mae(preds, labels, mask, return_value=True):
     loss = torch.abs(preds-labels)
-    mask = mask.float()
-    loss = loss * mask
-    loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-    return torch.mean(loss)
+    full_mask = torch.broadcast_to(mask, loss.shape)
+    null_loss = (loss * full_mask).float()
+    if return_value:
+        non_zero_elements = full_mask.sum()
+        return null_loss.sum() / non_zero_elements
+    else:
+        if len(loss.shape)>2:
+            return loss.mean(dim=0)
+        else:
+            return loss
 
 def mask_rmse(preds, labels, mask):
     mse = mask_mse(preds=preds, labels=labels, mask=mask)
     return torch.sqrt(mse)
 
-def mask_mape(preds, labels, mask):
+def mask_mape(preds, labels, mask, return_value=True):
     loss = torch.abs((preds-labels)/labels)
-    mask = mask.float()
-    loss = (loss * mask).sum() 
-    #loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-    non_zero_elements = mask.sum()
-    mape_loss_val = loss / non_zero_elements
-    return mape_loss_val
+    full_mask = torch.broadcast_to(mask, loss.shape)
+    null_loss = (loss * full_mask).float()
+    if return_value:
+        non_zero_elements = full_mask.sum()
+        return null_loss.sum() / non_zero_elements
+    else:
+        if len(loss.shape)>2:
+            return loss.mean(dim=0)
+        else:
+            return loss
 
-def mask_mse(preds, labels, mask):
+def mask_mse(preds, labels, mask, return_value=True):
     loss = (preds-labels)**2
-    mask = mask.float()
-    loss = (loss * mask).sum() 
-    #loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
-    non_zero_elements = mask.sum()
-    mse_loss_val = loss / non_zero_elements
-    return mse_loss_val
+    full_mask = torch.broadcast_to(mask, loss.shape)
+    null_loss = (loss * full_mask).float()
+    if return_value:
+        non_zero_elements = full_mask.sum()
+        return null_loss.sum() / non_zero_elements
+    else:
+        if len(loss.shape)>2:
+            return loss.mean(dim=0)
+        else:
+            return loss
 
-def masked_mse_loss(criterion, preds, labels, mask):
+def masked_custom_loss(criterion, preds, labels, mask, return_value=True):
     loss = criterion(preds, labels)
-    mask = mask.float()
-    loss = (loss * mask).sum() # gives \sigma_euclidean over unmasked elements
-    non_zero_elements = mask.sum()
-    mse_loss_val = loss / non_zero_elements
-    return mse_loss_val
-
+    full_mask = torch.broadcast_to(mask, loss.shape)
+    null_loss = (loss * full_mask).float()
+    if return_value:
+        non_zero_elements = full_mask.sum()
+        return null_loss.sum() / non_zero_elements
+    else:
+        if len(loss.shape)>2:
+            return loss.mean(dim=0)
+        else:
+            return loss
+        
+def mask_mbe(preds, labels, mask, return_value=True):
+    loss = (preds-labels)
+    full_mask = torch.broadcast_to(mask, loss.shape)
+    null_loss = (loss * full_mask).float()
+    if return_value:
+        non_zero_elements = full_mask.sum()
+        return null_loss.sum() / non_zero_elements
+    else:
+        if len(loss.shape)>2:
+            return loss.mean(dim=0)
+        else:
+            return loss
 
 def save_figures(
                  epoch:int, 

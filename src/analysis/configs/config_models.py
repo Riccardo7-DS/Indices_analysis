@@ -21,6 +21,20 @@ class BaseConfig():
             if not os.path.exists(path):
                 os.makedirs(path)
 
+
+class ConfigAutoDime(BaseConfig):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    learning_rate = 1e-3
+    squared = True
+    batch_size = 8
+    include_lag = True
+    image_size = 64
+    input_size = (83, 77)
+    output_channels = 1
+    num_frames_output = 1
+    patience = 40
+    epochs = 200
+
 class ConfigDDIM(BaseConfig):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     image_size = 64
@@ -61,6 +75,7 @@ class ConfigDDIM(BaseConfig):
     patience = 40
 
     include_lag = True
+    squared = True
 
 class ConfigConvLSTM(BaseConfig):
 
@@ -76,7 +91,7 @@ class ConfigConvLSTM(BaseConfig):
 
     epochs = 300
     patience = 10
-    learning_rate = 1e-2
+    learning_rate = 1e-3
     batch_size= 8
 
     null_value = -1
@@ -182,3 +197,4 @@ config_convlstm_1 = ConfigConvLSTM()
 config_gwnet = ConfigGWNET()
 config_ddim = ConfigDDIM()
 config_wnet = ConfigWNET()
+config_autodime = ConfigAutoDime()
