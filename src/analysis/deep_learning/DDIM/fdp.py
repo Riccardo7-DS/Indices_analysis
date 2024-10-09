@@ -13,7 +13,10 @@ from torch.utils.data import DataLoader
 from utils.function_clns import config, CNN_split, init_logging
 from utils.xarray_functions import ndvi_colormap
 import matplotlib.pyplot as plt
-
+import torch
+import gc
+gc.collect()
+torch.cuda.empty_cache()
 cmap = ndvi_colormap("sequential")
 
 parser = argparse.ArgumentParser(conflict_handler="resolve")
@@ -97,7 +100,7 @@ dataloader_test = DataLoader(datagenrator_test,
 
 model = TwoResUNet(dim=model_config.widths[0]*2, 
             channels=datagenrator_train.data.shape[1]+1,
-            dim_mults=(1, 2, 4),
+            dim_mults=(1, 2, 4, 8, 16),
             out_dim=model_config.output_channels).to(model_config.device)
 
 optimizer = torch.optim.AdamW(model.parameters(), 
@@ -157,8 +160,8 @@ elif args.mode == "generate":
 
     mask = torch.from_numpy(mask).to(model_config.device)
     # spat_loss = MSELoss(reduction="none")
-    from analysis import mask_mbe
-    compute_image_loss_plot(sample_image, y_true, mask_mbe, mask, img_path, cmap)
+    from analysis import mask_mbe, mask_mse
+    compute_image_loss_plot(sample_image, y_true, mask_mse, mask, True, img_path, cmap)
 
 else:
     raise ValueError(f"Specified {args.mode} must be \"train\" or \"generate\"")

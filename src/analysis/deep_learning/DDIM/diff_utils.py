@@ -194,10 +194,12 @@ def compute_image_loss_plot(sample_image,
                             y_true, 
                             loss_fn, 
                             mask=None, 
+                            draw_scatter:bool=False,
                             img_path:str=None,
                             cmap="RdYlGn", 
                             plot_loss:bool=True):
     
+    from analysis import evaluate_hist2d, plot_scatter_hist
     
     if img_path is None:
         from definitions import ROOT_DIR
@@ -235,6 +237,14 @@ def compute_image_loss_plot(sample_image,
     plt.pause(10)
     plt.close()
 
+    if draw_scatter is True:
+        nbins= 200
+        bin0 = np.linspace(0, 1, nbins+1)
+        n = np.zeros((nbins,nbins))
+        h, xed, yed = evaluate_hist2d(sample_image.detach().cpu(), y_true.detach().cpu(), nbins)
+        n = n+h
+        plot_scatter_hist(n,  bin0, img_path)
+
     if plot_loss is True:
         if isinstance(loss_fn, torch.nn.Module):
             img_loss = masked_custom_loss(loss_fn,
@@ -247,10 +257,11 @@ def compute_image_loss_plot(sample_image,
                 y_true.squeeze(), 
                 mask, 
                 return_value=False)
+            
         image_masked = img_loss.squeeze().detach().cpu()
         plt.imshow(image_masked, vmax=0.1)
         plt.title("MSE error map")
         plt.colorbar()
-        plt.savefig(os.path.join(img_path,"mbe_error_map.png")) 
+        plt.savefig(os.path.join(img_path,"mse_error_map.png")) 
         plt.pause(10)
         plt.close()
