@@ -65,8 +65,8 @@ logger = init_logging(log_file=os.path.join(log_path,
 writer = init_tb(log_path)
 
 train_data, val_data, train_label, val_label, \
-                            test_data, test_label = CNN_split(data, target, 
-                            split_percentage=config["MODELS"]["split"])
+    test_data, test_label = CNN_split(data, target, 
+    split_percentage=config["MODELS"]["split"])
 
 #from analysis import plot_first_n_images
 
@@ -150,15 +150,25 @@ elif args.mode == "generate":
     logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
            f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs") 
     sample_image, y_true = diffusion_sampling(args, model_config, fdp, 
-                                              dataloader_test, samples=args.gen_sample,
+                                              dataloader_test, 
+                                              samples=args.gen_sample,
                                               random_enabled=True)
     if args.normalize is True:
         sample_image = scaler.inverse_transform(sample_image)
-        y_true = scaler.inverse_transform(y_true)
+        y_true = scaler.inverse_transform(y_true)   
 
     sample_image = torch.clamp(sample_image, -1, 1)
-
+    y_true = torch.clamp(y_true, -1, 1)
     mask = torch.from_numpy(mask).to(model_config.device)
+
+    out_path = os.path.join(img_path, "output_data")
+
+    if not os.path.exists(out_path):
+         os.makedirs(out_path)
+
+    for d, name in zip([sample_image, y_true, mask],  ['pred_data', 'true_data', 'mask']):
+                np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu())
+
     # spat_loss = MSELoss(reduction="none")
     from analysis import mask_mbe, mask_mse
     compute_image_loss_plot(sample_image, y_true, mask_mse, mask, True, img_path, cmap)

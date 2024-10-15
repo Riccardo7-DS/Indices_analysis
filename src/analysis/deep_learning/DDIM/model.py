@@ -208,21 +208,6 @@ class TwoResUNet(nn.Module):
 
         return self.final_conv(x)
 
-class BlockAttention(nn.Module):
-    def __init__(self, gate_in_channel, residual_in_channel, scale_factor):
-        super().__init__()
-        self.gate_conv = nn.Conv2d(gate_in_channel, gate_in_channel, kernel_size=1, stride=1)
-        self.residual_conv = nn.Conv2d(residual_in_channel, gate_in_channel, kernel_size=1, stride=1)
-        self.in_conv = nn.Conv2d(gate_in_channel, 1, kernel_size=1, stride=1)
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
-        in_attention = self.relu(self.gate_conv(g) + self.residual_conv(x))
-        in_attention = self.in_conv(in_attention)
-        in_attention = self.sigmoid(in_attention)
-        return in_attention * x
-
 class Forward_diffussion_process():
     def __init__(self, args, config, model,  optimizer, scheduler, loss, eta=0):
         self.start = config.beta_start
@@ -574,14 +559,14 @@ class Residual(nn.Module):
         return self.fn(x, *args, **kwargs) + x
 
 
-def Upsample(dim, dim_out=None):
+def Upsample_block(dim, dim_out=None):
     return nn.Sequential(
         nn.Upsample(scale_factor=2, mode="nearest"),
         nn.Conv2d(dim, default(dim_out, dim), 3, padding=1),
     )
 
 
-def Downsample(dim, dim_out=None):
+def Downsample_block(dim, dim_out=None):
     # No More Strided Convolutions or Pooling
     return nn.Sequential(
         Rearrange("b c (h p1) (w p2) -> b (c p1 p2) h w", p1=2, p2=2),
@@ -739,7 +724,7 @@ class UNET(nn.Module):
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
                         Residual(PreNorm(dim_in, LinearAttention(dim_in))),  # input x; apply group norm, then attention to x, then add x to it.
-                        Downsample(dim_in, dim_out) if not is_last
+                        Downsample_block(dim_in, dim_out) if not is_last
                         else nn.Conv2d(dim_in, dim_out, 3, padding=1),
                     ]
                 )
@@ -759,7 +744,7 @@ class UNET(nn.Module):
                         block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         Residual(PreNorm(dim_out, LinearAttention(dim_out))),
-                        Upsample(dim_out, dim_in)
+                        Upsample_block(dim_out, dim_in)
                         if not is_last
                         else nn.Conv2d(dim_out, dim_in, 3, padding=1),
                     ]

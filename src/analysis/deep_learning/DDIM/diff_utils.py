@@ -6,6 +6,7 @@ from torch.nn import MSELoss
 from analysis import tensor_corr, EarlyStopping
 import logging
 import pickle
+import pandas as pd
 logger = logging.getLogger(__name__)
 
 # Define a custom unpickler that will remap the old module to the new one
@@ -21,9 +22,9 @@ def load_with_custom_unpickler(file_path):
     with open(file_path, "rb") as handle:
         return CustomUnpickler(handle).load()
 
-def load_stored_data(model_config):
+def load_stored_data(model_config, data_name = "data_convlstm_full" ):
     import pickle
-    data_dir = model_config.data_dir+"/data_convlstm_full"
+    data_dir = os.path.join(model_config.data_dir, data_name)
     data = np.load(os.path.join(data_dir, "data.npy"))
     target = np.load(os.path.join(data_dir, "target.npy"))
     mask = np.load(os.path.join(data_dir, "mask.npy"))
@@ -36,6 +37,35 @@ def load_stored_data(model_config):
         target = target[:, :64, :64]
         mask = mask[:64, :64]
     return data, target, scaler, mask
+
+def custom_subset_data(
+    args,
+    model_config, 
+    data_name="data_convlstm", 
+    start=None, 
+    end=None,
+    autoencoder = True):
+    
+    from datetime import timedelta
+    from utils.function_clns import config
+
+    data, target, scaler, mask = load_stored_data(model_config, data_name)
+
+    start_data = config["DEFAULT"]["date_start"]
+    end_data = config["DEFAULT"]["date_end"]
+
+    start_pd = pd.to_datetime(start_data, format='%Y-%m-%d')
+    end_pd = pd.to_datetime(end_data, format='%Y-%m-%d')
+    date_range = pd.date_range(start_pd, end_pd)
+
+    extra_days =  args.auto_days if autoencoder else 0
+
+    new_start = pd.to_datetime( start, format='%Y-%m-%d') - timedelta(days=extra_days)
+    new_end = pd.to_datetime( end, format='%Y-%m-%d')
+    i = date_range.get_loc(new_start)
+    e = date_range.get_loc(new_end)
+    
+    return data[i:e], target[i:e], scaler, mask
 
 def plot_noisy_images(image, imgs, with_orig=False, row_title=None, **imshow_kwargs):
     if not isinstance(imgs[0], list):
@@ -198,8 +228,23 @@ def compute_image_loss_plot(sample_image,
                             img_path:str=None,
                             cmap="RdYlGn", 
                             plot_loss:bool=True):
-    
+    from analysis.configs.config_models import config_convlstm_1 as model_config
     from analysis import evaluate_hist2d, plot_scatter_hist
+
+    if isinstance(loss_fn, torch.nn.Module):
+        logger.info("Shifting numpy arrays to gpu")
+        sample_image = torch.from_numpy(sample_image).to(model_config.device)
+        y_true = torch.from_numpy(y_true).to(model_config.device)
+        if mask is not None:
+            mask = torch.from_numpy(mask).to(model_config.device)
+
+    else:
+        logger.info("Shifting tensors to cpu")
+        sample_image = sample_image.detach().cpu().numpy().squeeze() if isinstance(sample_image, torch.Tensor) else sample_image
+        y_true = y_true.detach().cpu().numpy().squeeze() if isinstance(y_true, torch.Tensor) else y_true
+        if mask is not None:
+            mask = mask.detach().cpu().numpy().squeeze() if isinstance(mask, torch.Tensor) else mask
+
     
     if img_path is None:
         from definitions import ROOT_DIR
@@ -208,60 +253,73 @@ def compute_image_loss_plot(sample_image,
     if isinstance(loss_fn, torch.nn.Module):
         from analysis import masked_custom_loss
         test_loss = masked_custom_loss(loss_fn, 
-            sample_image.squeeze(), 
-            y_true.squeeze(),
+            sample_image, 
+            y_true,
             mask
         )
     else:
-        test_loss = loss_fn(sample_image.squeeze(), 
-                            y_true.squeeze(), 
+        test_loss = loss_fn(sample_image, 
+                            y_true,
                             mask)
-
-
-    logger.info(f"The mean loss on the test data is {round(np.nanmean(test_loss.item()), 3)}")
-
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
-
-    if len(sample_image.squeeze().shape) > 2:
-        pred_sample = sample_image[0]
-        y_true_sample = y_true[0]
-        
-    c1 = axs[0].imshow(pred_sample.detach().cpu().numpy().squeeze() , cmap=cmap)
-    axs[0].set_title('Predicted Image')
-
-    # Plot the second image
-    c2 = axs[1].imshow(y_true_sample.detach().cpu().numpy().squeeze(), cmap=cmap)
-    axs[1].set_title('True Image')
-
-    fig.colorbar(c2, ax=axs[1]) 
-    plt.pause(10)
-    plt.close()
-
-    if draw_scatter is True:
-        nbins= 200
-        bin0 = np.linspace(0, 1, nbins+1)
-        n = np.zeros((nbins,nbins))
-        h, xed, yed = evaluate_hist2d(sample_image.detach().cpu(), y_true.detach().cpu(), nbins)
-        n = n+h
-        plot_scatter_hist(n,  bin0, img_path)
+    final_error = round(np.nanmean(test_loss.item()), 5)
+    logger.info(f"The mean loss on the test data is {final_error}")
 
     if plot_loss is True:
         if isinstance(loss_fn, torch.nn.Module):
             img_loss = masked_custom_loss(loss_fn,
-                sample_image.squeeze(), 
-                y_true.squeeze(), 
+                sample_image, 
+                y_true, 
                 mask, 
                 return_value=False)
         else:
-            img_loss = loss_fn(sample_image.squeeze(), 
-                y_true.squeeze(), 
+            img_loss = loss_fn(sample_image, 
+                y_true, 
                 mask, 
                 return_value=False)
             
-        image_masked = img_loss.squeeze().detach().cpu()
-        plt.imshow(image_masked, vmax=0.1)
+        image_masked = img_loss.detach().cpu() if isinstance(img_loss, torch.Tensor) else img_loss
+        vmax = image_masked.max()*0.5
+        plt.imshow(image_masked, cmap ="binary", vmax=vmax)
         plt.title("MSE error map")
         plt.colorbar()
         plt.savefig(os.path.join(img_path,"mse_error_map.png")) 
         plt.pause(10)
         plt.close()
+
+    if isinstance(sample_image, torch.Tensor):
+        logger.info("Shifting tensors to cpu")
+        sample_image = sample_image.detach().cpu().numpy().squeeze() if isinstance(sample_image, torch.Tensor) else sample_image
+        y_true = y_true.detach().cpu().numpy().squeeze() if isinstance(y_true, torch.Tensor) else y_true
+        if mask is not None:
+            mask = mask.detach().cpu().numpy().squeeze() if isinstance(mask, torch.Tensor) else mask
+
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+
+    if plot_loss is True:
+        if len(sample_image.shape) > 2:
+            idx = np.random.randint(0, sample_image.shape[0])
+            pred_sample = sample_image[idx]
+            y_true_sample = y_true[idx]
+
+        c1 = axs[0].imshow(pred_sample, cmap=cmap)
+        axs[0].set_title('Predicted Image')
+
+        # Plot the second image
+        c2 = axs[1].imshow(y_true_sample, cmap=cmap)
+        axs[1].set_title('True Image')
+
+        fig.colorbar(c2, ax=axs[1]) 
+        plt.pause(10)
+        plt.close()
+
+    if draw_scatter is True:
+        nbins= 200
+        bin0 = np.linspace(0, 1, nbins+1)
+        n = np.zeros((nbins,nbins))
+        h, xed, yed = evaluate_hist2d(y_true, sample_image, nbins)
+        n = n+h
+        plot_scatter_hist(n,  bin0, img_path)
+
+    return final_error
+            
+        

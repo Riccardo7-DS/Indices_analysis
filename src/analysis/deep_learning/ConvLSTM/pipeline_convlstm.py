@@ -190,7 +190,7 @@ def pipeline_convlstm(args:dict,
 
     data, target, mask, ndvi_scaler = pipeline_hydro_vars(args,
                     model_config,
-                    "data_convlstm_full",
+                    "data_gnn_drought",
                     use_water_mask,
                     precipitation_only,
                     load_zarr_features,
@@ -222,17 +222,17 @@ if __name__=="__main__":
     parser.add_argument('-f')
     
     ### Convlstm parameters
-    parser.add_argument('--model',type=str,default="CONVLSTM",help='DL model training')
+    parser.add_argument('--model',type=str,default="GWNET",help='DL model training')
     parser.add_argument('--mode',type=str,default="no_train",help='create dataset, train or test')
 
     parser.add_argument('--step_length',type=int,default=15)
     parser.add_argument('--feature_days',type=int,default=90)
     parser.add_argument('--crop_area',type=bool,default=False)
-    parser.add_argument('--fillna',type=bool,default=True)
+    parser.add_argument('--fillna',type=bool,default=False)
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
     parser.add_argument("--interpolate", type=bool, default=False, help="Input data interpolation over time")
 
-    parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia"], help="Location for dataset")
+    parser.add_argument("--country", type=list, default=["Kenya","Somalia","Ethiopia","Djibouti"], help="Location for dataset")
     parser.add_argument("--region", type=list, default=None, help="Location for dataset")
     parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
 

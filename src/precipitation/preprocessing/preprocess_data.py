@@ -3,8 +3,10 @@ from typing import Literal, Union
 import os 
 import xarray as xr
 import numpy as np
+import rasterio
 import sys
 from dask.diagnostics import ProgressBar
+from rasterio.enums import Resampling
 import logging
 import pickle
 from datetime import timedelta
@@ -45,6 +47,8 @@ class PrecipDataPreparation():
                                             self.ndvi_filename)
         ndvi_ds = self._preprocess_array(ndvi_ds)
         ndvi_ds = self._reproject_odc(ndvi_ds, self.precp_ds)
+        # ndvi_ds = self._reproject_raster(ndvi_ds, self.precp_ds, 
+        #                                  method=Resampling.bilinear)
 
         logger.debug("Proceeding with interpolation of instance over time")
         from utils.xarray_functions import extend_dataset_over_time 
@@ -67,14 +71,16 @@ class PrecipDataPreparation():
             self.ndvi_ds = self._crop_area_for_dl(self.ndvi_ds)
 
         ### Check nulls
-        self._count_nulls(self.precp_ds)
-        self._count_nulls(self.ndvi_ds)
+        # self._count_nulls(self.precp_ds)
+        # self._count_nulls(self.ndvi_ds)
 
     def _estimate_gigs(self, dataset:xr.Dataset, description:str):
         logger.info("{d} dataset has {g} GiB".format(d=description, 
                                                      g=dataset.nbytes * 1e-9))
 
-    def process_input_vars(self, variables:list, load_local_precp:bool, 
+    def process_input_vars(self, 
+                           variables:list, 
+                           load_local_precp:bool, 
                            interpolate:bool, save:bool=False):
         
         def save_dataset_tozarr(dataset, dest_path):
@@ -433,15 +439,16 @@ class PrecipDataPreparation():
     
     def _reproject_raster(self, 
                           resample_ds:xr.DataArray,
-                          target_ds:Union[xr.Dataset, xr.DataArray]):
+                          target_ds:Union[xr.Dataset, xr.DataArray],
+                          method:rasterio.enums.Resampling):
         if type(target_ds) == xr.Dataset:
             var_target = [var for var in target_ds.data_vars][0]
             target_ds = prepare(target_ds[var_target])
 
         # elif type(target_ds)== xr.DataArray:
             
-        ds_repr = resample_ds.rio.reproject_match(
-            target_ds).rename({'x':'lon','y':'lat'})
+        ds_repr = resample_ds.transpose("time","lat","lon").rio.reproject_match(
+            target_ds, resampling=method).rename({'x':'lon','y':'lat'})
         return prepare(ds_repr)
     
     def _process_precp_arco(self, 

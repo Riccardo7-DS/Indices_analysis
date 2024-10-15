@@ -351,7 +351,7 @@ def pipeline_gnn(args:dict,
     from analysis import pipeline_hydro_vars
     from analysis.configs.config_models import config_gwnet as model_config
 
-    rawdata_name = "data_gnn"
+    rawdata_name = "data_gnn_full"
 
     data, target, mask, ndvi_scaler = pipeline_hydro_vars(args,
         model_config,

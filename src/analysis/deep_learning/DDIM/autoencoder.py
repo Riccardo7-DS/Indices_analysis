@@ -151,7 +151,7 @@ def pipeline_autoencoder(args,
 
     start_epoch = 0 if checkpoint_path is None else checkp_epoch 
 
-    if args.mode == "train":
+    if args.auto_train is True:
 
         logger.info(f"Generating new autoencoder with {args.feature_days} days of features")
 
@@ -224,7 +224,7 @@ def pipeline_autoencoder(args,
 
         return epoch
     
-    elif args.mode == "generate":
+    elif args.auto_train is False:
         
         logger.info(f"Generating autoencoder output with {args.feature_days} days of features")
         dataset = "train" if dataset is None else dataset

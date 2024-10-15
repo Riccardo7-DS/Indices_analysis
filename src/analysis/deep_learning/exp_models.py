@@ -10,7 +10,7 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description='test', conflict_handler="resolve")
     parser.add_argument('-f')
     parser.add_argument('--model', default=os.environ.get('MODEL', "GWNET"))
-    parser.add_argument('--mode', default=os.environ.get('MODE', "eval"))
+    parser.add_argument('--mode', default=os.environ.get('MODE', "train"))
 
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',default=True,help='whether to add graph convolution layer')
@@ -32,18 +32,16 @@ if __name__=="__main__":
     parser.add_argument('--plotheatmap', default=False, help="Save adjacency matrix heatmap")
 
 
-    parser.add_argument('--checkpoint',type=int,default=os.environ.get('checkpoint', 22))
+    parser.add_argument('--checkpoint',type=int,default=os.environ.get('checkpoint', 0))
 
     args = parser.parse_args()
     os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
 
     if (args.mode == "eval") and (args.checkpoint==0):
-        raise ValueError("Please chose a checkpoint if in evaluate mode")
+        raise ValueError("Please chose a checkpoint if in evaluate mode")  
 
-    
-
-    for feature_days in [args.feature_days]: 
-        for window in [args.step_length]:
+    for feature_days in [90]: 
+        for window in [10, 15, 30]:
             if args.checkpoint > 0 :
                 checkpoint_path =  model_config.output_dir + f"/{(args.model).lower()}" \
                 f"/days_{window}/features_{feature_days}" \

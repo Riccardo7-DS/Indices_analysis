@@ -71,7 +71,12 @@ def load_autoencoder(checkpoint_path,feature_days=90, output_shape=20):
     return autoencoder
 
 
-def autoencoder_wrapper(args, model_config, data, target):
+def autoencoder_wrapper(args, 
+    model_config, 
+    data=None, 
+    target=None, 
+    generate_output:bool=True):
+    
     from analysis import default, pipeline_autoencoder
     auto_epoch = None
 
@@ -79,24 +84,23 @@ def autoencoder_wrapper(args, model_config, data, target):
         f"/dime/autoencoder/checkpoints" \
         "/checkpoint_epoch_{}.pth.tar"
 
-    if args.auto_train is True:
-        
-        if args.auto_ep > 0 :
-            checkp_path = autoencoder_path.format(args.auto_ep)
-            auto_epoch = pipeline_autoencoder(args, 
-                                       output_shape=args.auto_days//5,
-                                       checkpoint_path=checkp_path)
-        else:
+    if generate_output is True:
+        if args.auto_train is True:
+            if args.auto_ep > 0 :
+                checkp_path = autoencoder_path.format(args.auto_ep)
+                auto_epoch = pipeline_autoencoder(args, 
+                                           output_shape=args.auto_days//5,
+                                           checkpoint_path=checkp_path)
+            else:
 
-            auto_epoch = pipeline_autoencoder(args, data, target,
-                                       output_shape=args.auto_days//5)
-    else:
-        if len(os.listdir(model_config.data_dir + "/autoencoder_output")) == 0 :
-            args.mode = "generate"
-            for dataset in ["train", "test"]:
-                pipeline_autoencoder(args, data, target,
-                                       output_shape=args.auto_days//5, 
-                                       dataset=dataset)
+                auto_epoch = pipeline_autoencoder(args, data, target,
+                                           output_shape=args.auto_days//5)
+        else:
+            if len(os.listdir(model_config.data_dir + "/autoencoder_output")) == 0 :
+                for dataset in ["train", "test"]:
+                    pipeline_autoencoder(args, data, target,
+                                        output_shape=args.auto_days//5, 
+                                        dataset=dataset)
 
     auto_epoch = default(auto_epoch, args.auto_ep)
 
@@ -698,6 +702,7 @@ def plot_scatter_hist(n, bin0, path=None):
     #a0=ax[0].imshow(np.log10(n),origin='lower')
     a0=ax.pcolor(bin0,bin0,n,norm=LogNorm(vmin=1, vmax=np.nanmax(n)))
     plt.colorbar(a0)
+    ax.plot(bin0, bin0, '--', color='black', label='y=x')
     if path is not None:
         name = "scatterplot.png"
         plt.savefig(os.path.join(path,name))
@@ -1060,40 +1065,64 @@ def mask_mape(preds, labels, mask, return_value=True):
 
 def mask_mse(preds, labels, mask, return_value=True):
     loss = (preds-labels)**2
-    full_mask = torch.broadcast_to(mask, loss.shape)
-    null_loss = (loss * full_mask).float()
+    if isinstance(mask, torch.Tensor):
+        full_mask = torch.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+    elif isinstance(mask, np.ndarray):
+        full_mask = np.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+    elif not mask:
+        null_loss = loss
+        full_mask = 1
+        full_mask = torch.broadcast_to(full_mask, loss.shape)
+
     if return_value:
         non_zero_elements = full_mask.sum()
         return null_loss.sum() / non_zero_elements
     else:
         if len(loss.shape)>2:
-            return loss.mean(dim=0)
+            return loss.mean(0)
         else:
             return loss
+            
 
 def masked_custom_loss(criterion, preds, labels, mask, return_value=True):
     loss = criterion(preds, labels)
-    full_mask = torch.broadcast_to(mask, loss.shape)
-    null_loss = (loss * full_mask).float()
+    if isinstance(mask, torch.Tensor):
+        full_mask = torch.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+    elif isinstance(mask, np.ndarray):
+        full_mask = np.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+    elif not mask:
+        null_loss = loss
+        full_mask = 1
+        full_mask = np.broadcast_to(full_mask, loss.shape)
+        if isinstance(null_loss, torch.Tensor):
+            full_mask = torch.from_numpy(full_mask).to("cuda")
+
     if return_value:
         non_zero_elements = full_mask.sum()
         return null_loss.sum() / non_zero_elements
     else:
         if len(loss.shape)>2:
-            return loss.mean(dim=0)
+            return loss.mean(0)
         else:
             return loss
         
 def mask_mbe(preds, labels, mask, return_value=True):
     loss = (preds-labels)
-    full_mask = torch.broadcast_to(mask, loss.shape)
-    null_loss = (loss * full_mask).float()
+    if isinstance(mask, torch.Tensor):
+        full_mask = torch.broadcast_to(mask, loss.shape)
+    elif isinstance(mask, np.ndarray):
+        full_mask = np.broadcast_to(mask, loss.shape)
+    null_loss = (loss * full_mask)
     if return_value:
         non_zero_elements = full_mask.sum()
         return null_loss.sum() / non_zero_elements
     else:
         if len(loss.shape)>2:
-            return loss.mean(dim=0)
+            return loss.mean(0)
         else:
             return loss
 
