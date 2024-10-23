@@ -1,7 +1,7 @@
-from analysis import Forward_diffussion_process, TwoResUNet, plot_noisy_images, load_stored_data, DataGenerator, tensor_corr, UNET, create_runtime_paths, init_tb, EarlyStopping
+from analysis import Forward_diffussion_process, TwoResUNet, UNET, plot_noisy_images, load_stored_data, DataGenerator, tensor_corr, UNET, create_runtime_paths, init_tb, EarlyStopping
 from analysis import diffusion_train_loop, diffusion_sampling, compute_image_loss_plot, autoencoder_wrapper
 from analysis.configs.config_models import config_ddim as model_config
-from torch.nn import L1Loss, MSELoss
+from torch.nn import L1Loss, MSELoss, DataParallel
 import numpy as np
 import os
 import argparse
@@ -14,7 +14,9 @@ from utils.function_clns import config, CNN_split, init_logging
 from utils.xarray_functions import ndvi_colormap
 import matplotlib.pyplot as plt
 import torch
+import matplotlib
 import gc
+matplotlib.use('Agg')
 gc.collect()
 torch.cuda.empty_cache()
 cmap = ndvi_colormap("sequential")
@@ -26,18 +28,19 @@ parser.add_argument('-f')
 parser.add_argument('--model',type=str,default="AUTO_DIME",help='DL model training')
 parser.add_argument('--step_length',type=int,default=os.getenv("step_length", 15))
 
+parser.add_argument('--attention',type=bool,default=os.getenv("attention", False),help='U-NET architecture w/o attention')
 parser.add_argument('--auto_train',type=bool,default=os.getenv("auto_train", False))
 parser.add_argument('--auto_days',type=int,default=os.getenv("auto_days", 180))
 
 parser.add_argument('--feature_days',type=int,default=os.getenv("feature_days", 90))
-parser.add_argument('--auto_ep',type=int,default=os.getenv("auto_ep", 180))
+parser.add_argument('--auto_ep',type=int,default=os.getenv("auto_ep", 80))
 parser.add_argument('--gen_sample',type=int,default=os.getenv("gen_sample", 2))
 
 ### diffusion parameters
-parser.add_argument('--diff_schedule',type=str,default=os.getenv("diff_schedule", "cosine"))
+parser.add_argument('--diff_schedule',type=str,default=os.getenv("diff_schedule", "sigmoid"))
 parser.add_argument('--diff_sample',type=str,default="ddpm")
 parser.add_argument('--epoch',type=int,default=os.getenv("epoch", 0), help="diffusion model trained epochs")
-
+parser.add_argument('--conditioning', type=str, choices=["none", "all", "autoencoder"], default=os.getenv("conditioning",'all'))
 parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
 parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
@@ -60,52 +63,63 @@ _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
 checkpoint_path  = checkpoint_dir + f"/checkpoint_epoch_{args.epoch}.pth.tar"
 
 logger = init_logging(log_file=os.path.join(log_path, 
-                            f"dime_days_{args.step_length}"
-                            f"features_{args.feature_days}.log"))
+    f"dime_days_{args.step_length}"
+    f"features_{args.feature_days}.log")
+)
 writer = init_tb(log_path)
 
 train_data, val_data, train_label, val_label, \
     test_data, test_label = CNN_split(data, target, 
     split_percentage=config["MODELS"]["split"])
 
-#from analysis import plot_first_n_images
-
-# plot_first_n_images(train_data, 9)
-# plt.show()
-# plt.close()
-
 # create a CustomDataset object using the reshaped input data
-datagenrator_train = DataGenerator(model_config, args,
-                            train_data, train_label, 
-                            autoencoder, data_split="train")
+datagenrator_train = DataGenerator(model_config, 
+    args,
+    train_data, 
+    train_label, 
+    autoencoder, 
+    data_split="train"
+)
 
 dataloader_train = DataLoader(datagenrator_train, 
-                        shuffle=True, 
-                        batch_size=model_config.batch_size)
+    shuffle=True, 
+    batch_size=model_config.batch_size)
 
-datagenrator_test= DataGenerator(model_config, args,
-                            test_data, test_label, 
-                            autoencoder, data_split="test")
+datagenrator_test= DataGenerator(model_config, 
+    args,
+    test_data, 
+    test_label, 
+    autoencoder, 
+    data_split="test"
+)
 
 dataloader_test = DataLoader(datagenrator_test, 
-                        shuffle=True, 
-                        batch_size=model_config.batch_size)
+    shuffle=True, 
+    batch_size=model_config.batch_size
+)
 
 ########################### Models and training functions #######################
 
-# model = UNET(dim=datagenrator_train.data.shape[-1], 
-#             channels=datagenrator_train.data.shape[1]+1,
-#             dim_mults=(1, 2, 4),
-#             out_dim=model_config.output_channels).to(model_config.device)
+input_channels = datagenrator_train.data.shape[1] if args.conditioning != "none" else 0
 
-model = TwoResUNet(dim=model_config.widths[0]*2, 
-            channels=datagenrator_train.data.shape[1]+1,
-            dim_mults=(1, 2, 4, 8, 16),
-            out_dim=model_config.output_channels).to(model_config.device)
+if args.attention:
+    model = TwoResUNet(dim=model_config.widths[0]*2, 
+        channels=input_channels+1,
+        dim_mults=(1, 2, 4, 8, 16),
+        out_dim=model_config.output_channels).to(model_config.device)
+    weight_decay = 1e-2
+else:
+    model = UNET(dim=model_config.widths[0]*2, 
+        channels=input_channels+1,
+        dim_mults=(1, 2, 4, 8, 16),
+        out_dim=model_config.output_channels).to(model_config.device)
+    weight_decay = 1e-3
+
+model = DataParallel(model)
 
 optimizer = torch.optim.AdamW(model.parameters(), 
-                              lr=model_config.learning_rate, 
-                              weight_decay=1e-4)
+    lr=model_config.learning_rate, 
+    weight_decay=weight_decay)
 
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, factor=model_config.scheduler_factor, 
@@ -114,16 +128,21 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 
 if args.epoch > 0:
     model, optimizer, scheduler, start_epoch = load_checkpoint(checkpoint_path, 
-                                                               model, 
-                                                               optimizer, 
-                                                               scheduler)
+        model, 
+        optimizer, 
+        scheduler
+    )
 else:
     start_epoch = 0
 
 loss_fn = MSELoss()
 fdp = Forward_diffussion_process(args, model_config, 
-                                 model,  optimizer, 
-                                 scheduler, loss_fn)
+    model,  
+    optimizer, 
+    scheduler, 
+    loss_fn
+)
+
 
 ################### test image ############################
 
@@ -139,9 +158,11 @@ plot_noisy_images(image, [fdp.get_noisy_image(image, torch.tensor([t])\
 
 if args.mode == "train":
     logger.info(f"Starting training diffusion model with {args.diff_schedule} schedule " 
-           f"and sampling technique {args.diff_sample} at epoch {start_epoch}") 
+            f"with conditioning option {args.conditioning} and attention {args.attention}"  
+            f" sampling technique {args.diff_sample} at epoch {start_epoch}") 
     diffusion_train_loop(args, 
-                         model_config, fdp, 
+                         model_config, 
+                         fdp, 
                          dataloader_train,
                          writer, checkpoint_dir, 
                          start_epoch)

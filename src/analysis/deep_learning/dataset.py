@@ -168,7 +168,7 @@ class DataGenerator(CustomConvLSTMDataset):
                 data:np.array, 
                 labels:np.array,
                 autoencoder, 
-                past_data: Union[np.ndarray, None]=None,
+                past_data: Union[np.ndarray, None]= None,
                 data_split:Union[str, None]=None):
         super().__init__(config, args, data, labels) 
 
@@ -176,29 +176,39 @@ class DataGenerator(CustomConvLSTMDataset):
         self.time_list = self._add_time_list(data)
         self.autoencoder = autoencoder.to(self.device)
 
-        if data_split is not None:
-            filepath = os.path.join(config.data_dir, f"autoencoder_output")
-            if not os.path.exists(filepath):
-                os.makedirs(filepath)
-            file = os.path.join(filepath, f"vae_features_{data_split}.npy")
+        if args.conditioning != "none":
 
-            if (os.path.exists(file)):
-                self.data = self._load_auto_output(file)
+            if data_split is not None:
+                filepath = os.path.join(config.data_dir, f"autoencoder_output")
+                if not os.path.exists(filepath):
+                    os.makedirs(filepath)
+                file = os.path.join(filepath, f"vae_features_{data_split}.npy")
+
+                if (os.path.exists(file)):
+                    self.data = self._load_auto_output(file)
+                else:
+                    self.data = self._autoencoder_pipeline(args, 
+                                                           file, 
+                                                           export=True)
             else:
-                self.data = self._autoencoder_pipeline(args, 
-                                                       file, 
-                                                       export=True)
-        else:
-            logger.info("Avoiding using local autoencoder output and generating"
-                        " new one")
-            self.data = self._autoencoder_pipeline(args,
-                                                   past_data, 
-                                                   export=False)
+                logger.info("Avoiding using local autoencoder output and generating"
+                            " new one")
+                self.data = self._autoencoder_pipeline(args,
+                                                       past_data, 
+                                                       export=False)
+                
+        
 
         if config.squared is True:
             self.data = self.data[:, :, :64, :64]
+            self.labels = self.labels[:, :64, :64]
 
-    def _autoencoder_pipeline(self, args, autodata=None, file=None, export=True):
+    def _autoencoder_pipeline(self, 
+                              args, 
+                              autodata=None, 
+                              file=None, 
+                              export=True):
+        
         vae_output = self._reduce_data_vae(autodata=autodata,
             output_shape=args.auto_days//5)
         
@@ -207,10 +217,15 @@ class DataGenerator(CustomConvLSTMDataset):
         if n_vae != n_samples:
             logger.warning(f"VAE output has different shape than data"
                         f"...proceeding with subsetting samples {n_samples} --> {n_vae}")    
-            extra_features = self.data[-n_vae:, :-1, -1]
+            
+            extra_features = self.data[-n_vae:, -1, :-1]
         else:
             extra_features = self.data[:, :-1, -1]
-        data = np.concatenate([extra_features, vae_output], axis=1)
+        
+        if args.conditioning == "all":
+            data = np.concatenate([extra_features, vae_output], axis=1)
+        elif args.conditioning == "autoencoder":
+            data = vae_output
         if export:
             self._export_auto_output(data, file)
         return data

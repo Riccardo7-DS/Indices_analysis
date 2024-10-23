@@ -32,7 +32,7 @@ class ConfigAutoDime(BaseConfig):
     input_size = (83, 77)
     output_channels = 1
     num_frames_output = 1
-    patience = 40
+    patience = 20
     epochs = 200
 
 class ConfigDDIM(BaseConfig):
@@ -72,7 +72,7 @@ class ConfigDDIM(BaseConfig):
     ema = 0.999
     learning_rate = 1e-4
     epochs = 500
-    patience = 40
+    patience = 20
 
     include_lag = True
     squared = True
@@ -89,11 +89,10 @@ class ConfigConvLSTM(BaseConfig):
     include_lag = True
     num_samples = 9 #### the number of channels to use
 
-    epochs = 300
+    epochs = 100
     patience = 10
     learning_rate = 1e-3
-    batch_size= 8
-
+    batch_size= 16 #52
     null_value = -1
     max_value = 1
 
@@ -108,7 +107,7 @@ class ConfigConvLSTM(BaseConfig):
 
     # Parameters specific to ConvLSTM
     # dim = 64
-    layers = [32, 32, 32]
+    layers = [64, 64, 64]
 
     # (type, activation, in_ch, out_ch, kernel_size, padding, stride)
     encoder = [('conv', 'leaky', num_samples, 16, 3, 1, 2),
@@ -135,7 +134,7 @@ class ConfigGWNET(BaseConfig):
 
     epochs = 300
     patience = 10
-    learning_rate = 1e-3
+    learning_rate = 1e-4
     batch_size= 4
     dim = 64
 

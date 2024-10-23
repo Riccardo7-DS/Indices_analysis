@@ -9,8 +9,10 @@ if __name__=="__main__":
 
     parser = argparse.ArgumentParser(description='test', conflict_handler="resolve")
     parser.add_argument('-f')
-    parser.add_argument('--model', default=os.environ.get('MODEL', "GWNET"))
-    parser.add_argument('--mode', default=os.environ.get('MODE', "train"))
+    parser.add_argument('--model', default=os.environ.get('model', "GWNET"))
+    parser.add_argument('--mode', default=os.environ.get('mode', "train"))
+
+    parser.add_argument('--loglevel', default=os.environ.get('loglevel',False))
 
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',default=True,help='whether to add graph convolution layer')
@@ -41,7 +43,7 @@ if __name__=="__main__":
         raise ValueError("Please chose a checkpoint if in evaluate mode")  
 
     for feature_days in [90]: 
-        for window in [10, 15, 30]:
+        for window in [10]:
             if args.checkpoint > 0 :
                 checkpoint_path =  model_config.output_dir + f"/{(args.model).lower()}" \
                 f"/days_{window}/features_{feature_days}" \
@@ -60,14 +62,13 @@ if __name__=="__main__":
                         use_water_mask=True,
                         load_local_precipitation=True,
                         precipitation_only=False,
-                        checkpoint_path=checkpoint_path)
+                        checkpoint_path=checkpoint_path
+                    )
                     
             except RuntimeError as e:
                 if 'out of memory' in str(e):
                     print("CUDA out of memory error caught.")
-                    # Optionally, free up memory or handle the error as needed
                     torch.cuda.empty_cache()
                 else:
-                    raise e  # Re-raise the exception if it's not a CUDA out of memory error
-
+                    raise e
 

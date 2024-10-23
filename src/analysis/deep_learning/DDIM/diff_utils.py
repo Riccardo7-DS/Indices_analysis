@@ -44,12 +44,21 @@ def custom_subset_data(
     data_name="data_convlstm", 
     start=None, 
     end=None,
+    fillna=False,
     autoencoder = True):
+
+    def shift_data_channels(data):
+        era_5_data = data[:,:4]
+        sm_data = data[:,-4:]
+        precp_data = data[:, 4]
+        return np.concatenate([np.expand_dims(precp_data, 1), era_5_data, sm_data], axis=1)
     
     from datetime import timedelta
     from utils.function_clns import config
 
     data, target, scaler, mask = load_stored_data(model_config, data_name)
+
+    data = shift_data_channels(data)
 
     start_data = config["DEFAULT"]["date_start"]
     end_data = config["DEFAULT"]["date_end"]
@@ -64,6 +73,10 @@ def custom_subset_data(
     new_end = pd.to_datetime( end, format='%Y-%m-%d')
     i = date_range.get_loc(new_start)
     e = date_range.get_loc(new_end)
+
+    if fillna is True:
+        data = np.nan_to_num(data, nan=-1)
+        target = np.nan_to_num(target, nan=-1)
     
     return data[i:e], target[i:e], scaler, mask
 
@@ -150,6 +163,8 @@ def diffusion_train_loop(args,
             noisy_images = fdp.forward_process(target, t, noise)
             fdp.optimizer.zero_grad()
 
+            if args.conditioning == "none":
+                batch = None
             # Forward pass
             predicted_noise = fdp.model(noisy_images, t, batch)
             noise_loss = fdp.loss_fn(predicted_noise, noise)
@@ -164,12 +179,13 @@ def diffusion_train_loop(args,
             # logger.info(f"Loss: {noise_loss}")
             img_shape = (1, 1, model_config.image_size, model_config.image_size)
             sample_im = fdp.p_sample_loop(args, 
-                                          fdp.model, 
-                                          dataloader, 
-                                          img_shape, 
-                                          model_config.timesteps, 
-                                          samples=1,
-                                          random_enabled=True)
+                fdp.model, 
+                dataloader, 
+                img_shape, 
+                model_config.timesteps, 
+                samples=1,
+                random_enabled=True
+            )
             saveImage(sample_im, model_config.image_size, epoch, step, results_folder)
 
         log = 'Epoch: {:03d}, Noise Loss: {:.4f}, Noise correlation: {:.4f}'

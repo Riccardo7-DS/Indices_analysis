@@ -131,6 +131,11 @@ class ConvLSTM(nn.Module):
                                      out_channels=1,
                                      kernel_size=(1, 3, 3),
                                      padding=(0, 1, 1))
+        
+        self.conv2d = nn.Conv2d(in_channels=hidden_dim[-1], 
+                                out_channels=1, 
+                                kernel_size=3, 
+                                padding=1) 
 
     def forward(self, input_tensor, hidden_state=None):
         import torch
@@ -185,13 +190,20 @@ class ConvLSTM(nn.Module):
             last_state_list.append([h_, c])
             
 
-        layer_output_list = layer_output_list[-1:]
+        if not self.return_all_layers:
+            layer_output_list = layer_output_list[-1:]
+            last_state_list = last_state_list[-1:]
+
+        output = self.conv2d(layer_output_list[0][:, -1])
+
+        return output
         # last_state_list = last_state_list[-1:]
         # Use the final output of the last layer
-        layer_output = layer_output_list[0] ###[:, -1, :, :, :]
-        layer_output = torch.transpose(layer_output, 2, 1)
+        # layer_output = layer_output_list[:, -1, :, :, :]
+        # layer_output = torch.transpose(layer_output, 2, 1)
 
-        outputs = self.decoder_CNN(layer_output) ### b, s, d=c, w, h #layer_output.unsqueeze(2)
+        # outputs = self.decoder_CNN(layer_output) ### b, s, d=c, w, h #layer_output.unsqueeze(2)
+        #outputs[:, :, -1, :, :]
         # outputs = torch.nn.Sigmoid()(outputs)
         #output_linear = self.linear1(output_decoder.squeeze())
 
@@ -199,7 +211,6 @@ class ConvLSTM(nn.Module):
         # output_linear = self.linear2(output_decoder.squeeze().view(b* h, w))
         # output_linear = output_linear.view(b, h, w)
 
-        return outputs[:, :, -1, :, :]
 
 
         

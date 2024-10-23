@@ -18,33 +18,45 @@ import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
 
-
 def init_tb(log_path):
     from torch.utils.tensorboard import SummaryWriter
     writer = SummaryWriter(log_dir=log_path)
     print("Tensorboard:  tensorboard --logdir="+ log_path)
     return writer
 
-def create_runtime_paths(args:dict, spi:bool=False):
+def create_runtime_paths(args:dict):
     from definitions import ROOT_DIR
-    from utils.function_clns import config
+
+    base_dir = os.path.join(ROOT_DIR, "..", f"output")
 
     ### Create all the paths
     if args.model == "GWNET":
-        output_dir = os.path.join(ROOT_DIR, "..",
-                    f"output/gwnet/days_{args.step_length}/features_{args.feature_days}")
+        output_dir = os.path.join(base_dir,
+                    f"gwnet/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "CONVLSTM": 
-        output_dir = os.path.join(ROOT_DIR, "..",
-                    f"output/convlstm/days_{args.step_length}/features_{args.feature_days}")
+        output_dir = os.path.join(base_dir,
+                    f"convlstm/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "WNET":
-        output_dir = os.path.join(ROOT_DIR, "..", 
-                    f"output/wnet/days_{args.step_length}/features_{args.feature_days}")
+        output_dir = os.path.join(base_dir,
+                    f"wnet/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "DIME":
-        output_dir = os.path.join(ROOT_DIR, "..", 
-                    f"output/dime/days_{args.step_length}/features_{args.feature_days}")
+        
+        specific_path = f"days_{args.step_length}/features_{args.feature_days}"
+        if args.attention:
+            model_subpath =  "dime_attn"
+        else:
+            model_subpath =  "dime"
+
+        if args.conditioning != "all":
+            output_dir = os.path.join(base_dir, model_subpath, f"{args.conditioning}", 
+                                      specific_path)
+        else:
+            output_dir = os.path.join(base_dir, model_subpath, specific_path)
+        
+            
+            
     elif args.model == "AUTO_DIME":
-        output_dir = os.path.join(ROOT_DIR, "..", 
-                    f"output/dime/autoencoder")
+        output_dir = os.path.join(base_dir, f"dime/autoencoder")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
@@ -543,7 +555,7 @@ def train_loop(config,
                 raise ValueError("Please provide a mask for loss computation")
             else:
                 mask = mask.float().to(config.device)
-                losses = masked_mse_loss(criterion, outputs, targets, mask)
+                losses =  masked_custom_loss(criterion, outputs, targets, mask)
                 mape = mask_mape(outputs,targets, mask).item()
                 rmse = mask_rmse(outputs,targets, mask).item()
         
@@ -602,7 +614,7 @@ def valid_loop(config, args, model, valid_loader, criterion, scheduler,
                     raise ValueError("Please provide a mask for loss computation")
                 else:
                     mask = mask.float().to(config.device)
-                    losses = masked_mse_loss(criterion, outputs, targets, mask)
+                    losses =  masked_custom_loss(criterion, outputs, targets, mask)
                     mape = mask_mape(outputs,targets, mask).item()
                     rmse = mask_rmse(outputs,targets, mask).item()
 
@@ -623,8 +635,14 @@ def valid_loop(config, args, model, valid_loader, criterion, scheduler,
     return epoch_records
 
 
-def test_loop(config, args, model, valid_loader, criterion,
-               scaler=None, mask=None, draw_scatter:bool=False):
+def test_loop(config, 
+    args, 
+    model, 
+    valid_loader, 
+    criterion,
+    scaler=None, 
+    mask=None, 
+    draw_scatter:bool=False):
     
     from tqdm.auto import tqdm
     
@@ -667,12 +685,12 @@ def test_loop(config, args, model, valid_loader, criterion,
                     raise ValueError("Please provide a mask for loss computation")
                 else:
                     mask = mask.float().to(config.device)
-                    losses = masked_mse_loss(criterion, outputs, targets, mask)
+                    losses = masked_custom_loss(criterion, outputs, targets, mask)
                     mape = mask_mape(outputs,targets, mask).item()
                     rmse = mask_rmse(outputs,targets, mask).item()
 
 
-            epoch_records['loss'].append(losses)
+            epoch_records['loss'].append(losses.item())
             epoch_records["rmse"].append(rmse)
             epoch_records["mape"].append(mape)
             
@@ -681,6 +699,9 @@ def test_loop(config, args, model, valid_loader, criterion,
 
     if draw_scatter is True:
         plot_scatter_hist(n,  bin0, img_path)
+
+    predictions = torch.cat(predictions, 0)
+    outputs_real = torch.cat(outputs_real, 0)
     
     return epoch_records, predictions, outputs_real
 
@@ -959,6 +980,39 @@ def masked_mse(preds, labels, null_val=np.nan):
     loss = loss * mask
     loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
     return torch.mean(loss)
+
+from ignite.engine import Engine
+from ignite.metrics import SSIM
+
+def tensor_ssim(preds, labels, range=1.0):
+
+    def process_function(engine, batch):
+        if isinstance(batch[0], np.ndarray):
+            x = torch.from_numpy(batch[0])
+            y = torch.from_numpy(batch[1])
+        else:
+            x = batch[0]
+            y = batch[1]
+        
+        if len(x.shape)==3:
+            x = x.unsqueeze(1)
+            y = y.unsqueeze(1)
+
+        return {'y_pred': x, 'y_true': y}
+
+    def output_transform(output):
+        # `output` variable is returned by above `process_function`
+        y_pred = output['y_pred']
+        y = output['y_true']
+        return y_pred, y
+
+    engine = Engine(process_function)
+
+    metric = SSIM(output_transform=output_transform, data_range=range)
+    metric.attach(engine, 'ssim')
+
+    state = engine.run([[preds, labels]])
+    return state.metrics['ssim']
 
 def masked_rmse(preds, labels, null_val=np.nan):
     return torch.sqrt(masked_mse(preds, labels, null_val))

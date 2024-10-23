@@ -502,11 +502,34 @@ def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset],
     return target, data
 
 
+def find_checkpoint_path(model_config, args, return_latest:bool=False):
+    import os
+    import glob
+
+    folder_path =  model_config.output_dir + f"/{(args.model).lower()}" \
+                f"/days_{args.step_length}/features_{args.feature_days}" \
+                f"/checkpoints"
+    
+    if return_latest:
+        # Find all files matching the pattern 'checkpoint_*'
+        checkpoint_files = glob.glob(os.path.join(folder_path, 'checkpoint_epoch_*'))
+
+        # Get the most recently created file
+        most_recent_file = max(checkpoint_files, key=os.path.getctime)
+
+        # Output the most recently created file
+        print(f"The most recently created checkpoint is: {os.path.basename(most_recent_file)}")
+        return most_recent_file
+    else:
+        return folder_path
+
+
 def CNN_split(data:np.array, 
               target:np.array, 
               split_percentage:float=0.7,
-              test_split:float=0.5):
-    tot_perc_val = (1 - split_percentage) * test_split
+              val_split:float=0.5,
+              print_actual_days:bool=True):
+    tot_perc_val = (1 - split_percentage) * val_split
     tot_perc_test = 1 - tot_perc_val - split_percentage 
     logger.info(f"Data is divided as {split_percentage :.0%} train," 
                 f" {tot_perc_val :.0%} validation and {tot_perc_test :.0%} independent test")
@@ -523,6 +546,26 @@ def CNN_split(data:np.array,
     train_label = target[:train_samples]
     val_label =  target[train_samples:train_samples+val_samples]
     test_label = target[train_samples+ val_samples:]
+
+    if print_actual_days:
+        from utils.function_clns import config
+        import pandas as pd
+        from datetime import timedelta, datetime
+        start_data = config["DEFAULT"]["date_start"]
+        end_data = config["DEFAULT"]["date_end"]
+        start_pd = pd.to_datetime(start_data, format='%Y-%m-%d')
+        end_pd = pd.to_datetime(end_data, format='%Y-%m-%d')
+        date_range = pd.date_range(start_pd, end_pd)
+
+        end_1 = start_pd + timedelta(days = train_samples -1)
+        new_start = end_1 + timedelta(days = 1)
+
+        end_2 = new_start + timedelta(days = val_samples - 1)
+        new_start_2 = end_2 + timedelta(days = 1)
+
+        logger.info(f"Training is from {start_data} to {datetime.strftime(end_1, '%Y-%m-%d')}, "
+            f"validation from {datetime.strftime(new_start, '%Y-%m-%d')} to {datetime.strftime(end_2, '%Y-%m-%d')}, "
+            f"testing from {datetime.strftime(new_start_2, '%Y-%m-%d')} to {end_data}")
 
     return train_data, val_data, train_label, val_label, test_data, test_label
 
@@ -583,6 +626,29 @@ def drop_extra_vars(dataset):
             if var in dataset.data_vars:
                 dataset = dataset.drop_vars(var)
     return dataset
+
+
+def bias_correction(y_true, y_pred):
+    from sklearn.linear_model import LinearRegression
+
+    s, w, h = y_true.shape
+    # Create linear regression model
+    model = LinearRegression()
+    model.fit(y_pred.reshape( s*w*h).reshape(-1, 1),y_true.reshape(s*w*h).reshape(-1, 1))
+
+    def shift_data(data, intercept, coefficient):
+        return data*coefficient[0] + intercept[0]
+
+    # Compute bias
+    coefficient = model.coef_  # Coefficients of the model
+    intercept = model.intercept_  # Intercept of the model
+
+    # print(f"Coefficients: {coefficient}")
+    # print(f"Intercept: {intercept}")
+
+    y_corr = shift_data(y_pred, intercept, coefficient)
+
+    return y_corr, coefficient, intercept
 
 def interpolate_prepare(input_data:Union[xr.Dataset, xr.DataArray], 
                         target_data:xr.DataArray, 
