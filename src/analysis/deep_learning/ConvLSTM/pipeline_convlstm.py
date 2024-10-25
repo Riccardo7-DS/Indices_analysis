@@ -234,17 +234,41 @@ def training_convlstm(args:dict,
             args.scatterplot
         )
 
-        # y_corr, _, _ = bias_correction(y_true.detach().cpu(), y_pred.detach().cpu())
-        # y_corr = y_corr.to(model_config.device)
+        # Expand the mask to match the dimensions of the tensor [S, W, H]
+        expanded_mask = mask.bool().unsqueeze(0).expand(y_pred.size())
 
-        ssim_metric = tensor_ssim(y_pred, y_true, range=2.0)
+        y_corr, _, _ = bias_correction(y_true.detach().cpu(), 
+                                       y_pred.detach().cpu())
+        
+        y_corr = y_corr.to(model_config.device)
+
+        # Set values where the mask is True to NaN
+        pred_masked = y_pred.masked_fill(expanded_mask, float(-1.0))
+        true_masked = y_true.masked_fill(expanded_mask, float(-1.0))
+        y_corr_masked = y_corr.masked_fill(expanded_mask, float(-1.0))
+
+        ssim_metric = tensor_ssim(pred_masked, true_masked, range=2.0)
+        ssim_metric_bias = tensor_ssim(y_corr_masked, true_masked, range=2.0)
+
         rmse = mask_rmse(y_pred, y_true, mask)
         losses = masked_custom_loss(criterion, y_pred, y_true, mask)
+        
+        rmse_bias = mask_rmse(y_corr, y_true, mask)
+        losses_bias = masked_custom_loss(criterion, y_corr, y_true, mask)
 
-        log = 'Test Loss: {:.4f},Test SSIM: {:.4f}, Test RMSE: {:.4f}'
+        log = "Test MSE: {:.4f},Test SSIM: {:.4f}, Test RMSE: {:.4f}, " \
+              "Bias Test MSE: {:.4f},Bias Test SSIM: {:.4f}, Bias Test RMSE: {:.4f}," \
+              "Batch RMSE: {:.4f}, Batch MAPE: {:.4f}, Batch MSE: {:.4f} " \
+        
         logger.info(log.format(losses, 
                                ssim_metric, 
-                               rmse))
+                               rmse,
+                               losses_bias, 
+                               ssim_metric_bias, 
+                               rmse_bias,
+                               np.mean(test_records["rmse"]),
+                               np.mean(test_records["mape"]),
+                               np.mean(test_records["loss"])))
 
 
 def pipeline_convlstm(args:dict,

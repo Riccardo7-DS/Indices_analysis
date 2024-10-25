@@ -685,12 +685,12 @@ def test_loop(config,
                     raise ValueError("Please provide a mask for loss computation")
                 else:
                     mask = mask.float().to(config.device)
-                    losses = masked_custom_loss(criterion, outputs, targets, mask)
+                    losses = masked_custom_loss(criterion, outputs, targets, mask).item()
                     mape = mask_mape(outputs,targets, mask).item()
                     rmse = mask_rmse(outputs,targets, mask).item()
 
 
-            epoch_records['loss'].append(losses.item())
+            epoch_records['loss'].append(losses)
             epoch_records["rmse"].append(rmse)
             epoch_records["mape"].append(mape)
             
@@ -760,19 +760,27 @@ def get_train_valid_loader(model_config,
     
 
     train_data, val_data, train_label, val_label, \
-        test_valid, test_label = CNN_split(data, labels, split_percentage=train_split)
+        test_valid, test_label = CNN_split(data, 
+                                           labels, 
+                                           split_percentage=train_split,
+                                           val_split=0.333)
     
     train_dataset = CustomConvLSTMDataset(model_config, args, 
                                           train_data, train_label, 
                                           save_files=False)
+    logger.info("Generated train dataloader")
     
     val_dataset = CustomConvLSTMDataset(model_config, args, 
                                         val_data, val_label, 
                                         save_files=False)
     
+    logger.info("Generated validation dataloader")
+    
     test_dataset = CustomConvLSTMDataset(model_config, args, 
                                         test_valid, test_label, 
                                         save_files=False)
+    
+    logger.info("Generated test dataloader")
     
     # create a DataLoader object that uses the dataset
     train_dataloader = DataLoader(train_dataset, 
@@ -1100,7 +1108,7 @@ def mask_mae(preds, labels, mask, return_value=True):
         else:
             return loss
 
-def mask_rmse(preds, labels, mask):
+def mask_rmse(preds, labels, mask=None):
     mse = mask_mse(preds=preds, labels=labels, mask=mask)
     return torch.sqrt(mse)
 
@@ -1127,8 +1135,7 @@ def mask_mse(preds, labels, mask, return_value=True):
         null_loss = (loss * full_mask)
     elif not mask:
         null_loss = loss
-        full_mask = 1
-        full_mask = torch.broadcast_to(full_mask, loss.shape)
+        full_mask = torch.ones(loss.shape)
 
     if return_value:
         non_zero_elements = full_mask.sum()
@@ -1140,7 +1147,7 @@ def mask_mse(preds, labels, mask, return_value=True):
             return loss
             
 
-def masked_custom_loss(criterion, preds, labels, mask, return_value=True):
+def masked_custom_loss(criterion, preds, labels, mask=None, return_value=True):
     loss = criterion(preds, labels)
     if isinstance(mask, torch.Tensor):
         full_mask = torch.broadcast_to(mask, loss.shape)
@@ -1150,10 +1157,7 @@ def masked_custom_loss(criterion, preds, labels, mask, return_value=True):
         null_loss = (loss * full_mask)
     elif not mask:
         null_loss = loss
-        full_mask = 1
-        full_mask = np.broadcast_to(full_mask, loss.shape)
-        if isinstance(null_loss, torch.Tensor):
-            full_mask = torch.from_numpy(full_mask).to("cuda")
+        full_mask = torch.ones(loss.shape)
 
     if return_value:
         non_zero_elements = full_mask.sum()
@@ -1269,23 +1273,27 @@ class GWNETtrainer():
                  checkpoint_path=None):
         
         from analysis import gwnet
+        from torch.nn import DataParallel
 
         self.device = model_config.device
         self.model = gwnet(self.device, 
-                           num_nodes, 
-                           model_config.dropout, 
-                           supports=supports, 
-                           gcn_bool=args.gcn_bool, 
-                           addaptadj=args.addaptadj, 
-                           aptinit=adjinit, 
-                           in_dim=model_config.in_dim, 
-                           out_dim=model_config.out_dim, 
-                           residual_channels=model_config.nhid, 
-                           dilation_channels=model_config.nhid,
-                           skip_channels=model_config.nhid * 8,
-                           end_channels=model_config.nhid * 16,
-                           blocks=model_config.blocks,
-                           layers=model_config.layers)
+            num_nodes, 
+            model_config.dropout, 
+            supports=supports, 
+            gcn_bool=args.gcn_bool, 
+            addaptadj=args.addaptadj, 
+            aptinit=adjinit, 
+            in_dim=model_config.in_dim, 
+            out_dim=model_config.out_dim, 
+            residual_channels=model_config.nhid, 
+            dilation_channels=model_config.nhid,
+            skip_channels=model_config.nhid * 8,
+            end_channels=model_config.nhid * 16,
+            blocks=model_config.blocks,
+            layers=model_config.layers
+        )
+
+        # self.model = DataParallel(self.model)
         
         self.learning_rate = model_config.learning_rate
         self.model.to(self.device)
@@ -1343,20 +1351,38 @@ class GWNETtrainer():
         rmse = masked_rmse(output,real).item()
         return loss.item(), mape, rmse
     
-    def test(self, input, real_val, scaler, all_metrics=True):
-        self.model.eval()
+    def test(self, 
+            args, 
+            input, 
+            real_val, 
+            scaler, 
+            all_metrics=True, 
+            n:int=None,
+            draw_scatter:bool=False
+        ):
 
+        self.model.eval()
         with torch.no_grad():
             input = nn.functional.pad(input, (1, 0, 0, 0))
             output = self.model(input)
-            real = torch.unsqueeze(real_val,dim=1)
-            output_scaled = scaler.inverse_transform(output)
-            real_scaled = scaler.inverse_transform(real)
+            real = torch.unsqueeze(real_val, dim=1)
+
+            if args.normalize:
+                output_scaled = scaler.inverse_transform(output)
+                real_scaled = scaler.inverse_transform(real)
+
+            if draw_scatter is True:
+                img_pred = output_scaled.cpu().detach().numpy().flatten()
+                img_real = real_scaled.cpu().detach().numpy().flatten()
+                h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins= 200)
+                n = n+h
+
             loss = self.loss(output_scaled,real_scaled)
             if all_metrics is True:
                 mape = masked_mape(output_scaled,real_scaled).item()
                 rmse = masked_rmse(output_scaled,real_scaled).item()
-            return loss.item(), mape, rmse, output, real
+
+            return loss.item(), mape, rmse, output, real, n
         
     def schedule_learning_rate(self, mean_loss):
         self.scheduler.step(mean_loss)
@@ -1376,7 +1402,7 @@ class GWNETtrainer():
             trainx= trainx.transpose(3, 2)
             trainy = torch.Tensor(y).to(model_config.device)
             trainy = trainy.transpose(3, 2)
-            loss, mape, rmse = engine.train(trainx, trainy[:, 0,:,:])
+            loss, mape, rmse = self.train(trainx, trainy[:, 0,:,:])
 
             epoch_records["loss"].append(loss)
             epoch_records["rmse"].append(rmse)
@@ -1390,7 +1416,7 @@ class GWNETtrainer():
             trainx= trainx.transpose(2, 3)
             trainy = torch.Tensor(y).to(model_config.device)
             trainy = trainy.transpose(2, 3)
-            loss, rmse, mape = engine.eval(trainx, trainy[:, 0,:,:])
+            loss, rmse, mape = self.eval(trainx, trainy[:, 0,:,:])
 
             epoch_records["loss"].append(loss)
             epoch_records["rmse"].append(rmse)
@@ -1404,18 +1430,40 @@ class GWNETtrainer():
 
         return epoch_records
     
-    def gwnet_test_loop(self, model_config, engine, test_dl, scaler):
+    def gwnet_test_loop(self, 
+            args, 
+            config, 
+            engine, 
+            test_dl, 
+            scaler, 
+            draw_scatter:bool=False
+        ):
+        
         from tqdm.auto import tqdm
+        _, _, img_path, _ = create_runtime_paths(args)
+
         epoch_records = {'loss': [], "mape":[], "rmse":[]}
-        test_loss = 0
+
+        if draw_scatter is True:
+            nbins= 200
+            bin0 = np.linspace(0, config.max_value, nbins+1)
+            n = np.zeros((nbins,nbins))
+        else: n = 0
+        
         outputs = []
         target = []
         for iter, (x, y) in enumerate(tqdm(test_dl, desc="Testing", unit="batch")):
-            trainx = torch.Tensor(x).to(model_config.device)
+            trainx = torch.Tensor(x).to(config.device)
             trainx= trainx.transpose(2, 3)
-            trainy = torch.Tensor(y).to(model_config.device)
+            trainy = torch.Tensor(y).to(config.device)
             trainy = trainy.transpose(2, 3)
-            loss, mape, rmse, output, real = engine.test(trainx, trainy[:, 0,:,:], scaler)
+            loss, mape, rmse, output, real, n = self.test(args, 
+                trainx, 
+                trainy[:, 0,:,:], 
+                scaler=scaler,
+                n=n, 
+                draw_scatter=draw_scatter
+            )
             outputs.append(output)
             target.append(real)
            
@@ -1423,7 +1471,11 @@ class GWNETtrainer():
             epoch_records["rmse"].append(rmse)
             epoch_records["mape"].append(mape)
 
-        yhat = torch.cat(outputs,dim=0)
+        if img_path is not None and draw_scatter is True:
+            plot_scatter_hist(n,  bin0, img_path)
+
+        target = torch.cat(target,dim=0)
+        outputs = torch.cat(outputs,dim=0)
 
         return epoch_records, outputs, target
 

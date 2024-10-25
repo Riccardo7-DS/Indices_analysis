@@ -44,6 +44,7 @@ def training_weatherGCNet(args,
     from utils.function_clns import init_logging, config
     from analysis import check_shape_dataloaders, init_tb
     import torch
+    from torch.nn import DataParallel
     from analysis.configs.config_models import config_wnet as model_config
     import os
     
@@ -83,11 +84,12 @@ def training_weatherGCNet(args,
         check_shape_dataloaders(train_dl, valid_dl)
 
     model = WGCNModel(args, model_config, dataset.data).to(device)
+    # model = DataParallel(model)
 
     metrics_recorder = MetricsRecorder()
-    train_records, valid_records, test_records = [], [], []
-    rmse_train, rmse_valid, rmse_test = [], [], []
-    mape_train, mape_valid, mape_test = [], [], []
+    train_records, valid_records = [], []
+    rmse_train, rmse_valid, = [], []
+    mape_train, mape_valid = [], []
 
     loss_func = torch.nn.MSELoss()
     learning_rate = model_config.learning_rate
@@ -169,22 +171,39 @@ def training_weatherGCNet(args,
                                      f'{args.feature_days}.png'))
             plt.close()
         
-    elif args.mode == "eval":
+    elif args.mode == "test":
         logger.info("Starting evaluation")
-        from analysis import test_loop
-        test_records, prediction, target = test_loop(model_config,
+        from analysis import test_loop, tensor_ssim, reverse_reshape_gnn, mask_rmse, masked_custom_loss
+        test_records, y_pred, y_true = test_loop(model_config,
             args, 
             model, 
             test_dl, 
             loss_func, 
-            ndvi_scaler)
+            ndvi_scaler,
+            draw_scatter=args.scatterplot
+        )
         
         mean_loss = sum(test_records['loss']) / len(test_records['loss'])
         mean_rmse = sum(test_records['rmse']) / len(test_records['rmse'])
         mean_mape = sum(test_records['mape']) / len(test_records['mape'])
-        log = 'The prediction for {} days ahead: Test loss: {:.4f}, ' \
-            'Test MAPE: {:.4f}, Test RMSE: {:.4f}'
-        logger.info(log.format(args.step_length, mean_loss, mean_mape, mean_rmse))
+
+        corr_output = reverse_reshape_gnn(target, y_pred.detach().cpu().numpy(), combined_mask)
+        corr_real = reverse_reshape_gnn(target, y_true.detach().cpu().numpy(), combined_mask)
+        ssim_metric = tensor_ssim(corr_output, corr_real, range=2.0)
+
+        rmse = mask_rmse(corr_output, corr_real, combined_mask)
+        losses = masked_custom_loss(loss_func, corr_output, corr_real, combined_mask)
+
+        log = 'The prediction for {} days ahead: Batch Test loss: {:.4f}, ' \
+            'Batch Test MAPE: {:.4f}, Batch Test RMSE: {:.4f}, Test SSIM: {:.4f}' \
+            'Test RMSE: {:.4f}, Test MSE:{:.4f}'
+        logger.info(log.format(args.step_length,
+                            mean_loss, 
+                            mean_mape, 
+                            mean_rmse, 
+                            ssim_metric,
+                            rmse,
+                            losses))
 
 # # # # # # # # # #
 
@@ -318,27 +337,37 @@ def training_wavenet(args,
                     draw_adj_heatmap(engine, img_path)
                 break
 
-    elif args.mode== "eval":
-        from analysis import reverse_reshape_gnn
-        logger.info("Starting evaluation")
-        test_records, outputs, y_real = engine.gwnet_test_loop(model_config, 
+    elif args.mode== "test":
+        from analysis import reverse_reshape_gnn,tensor_ssim
+        logger.info("Starting evaluation on independent dataset")
+        test_records, outputs, y_real = engine.gwnet_test_loop(args,
+            model_config, 
             engine, 
             test_dl, 
-            ndvi_scaler)
+            ndvi_scaler,
+            draw_scatter=args.scatterplot)
         
         mean_loss = sum(test_records['loss']) / len(test_records['loss'])
         mean_rmse = sum(test_records['rmse']) / len(test_records['rmse'])
         mean_mape = sum(test_records['mape']) / len(test_records['mape'])
-        
-        log = 'The prediction for {} days ahead: Test loss: {:.4f}, ' \
-            'Test MAPE: {:.4f}, Test RMSE: {:.4f}'
-        logger.info(log.format(args.step_length, mean_loss, mean_mape, mean_rmse))
 
-        yhat = torch.cat(outputs,dim=0).detach().cpu().numpy()
-        y = torch.cat(y_real,dim=0).detach().cpu().numpy()
-        corr_output = reverse_reshape_gnn(target, yhat, combined_mask)
-        corr_real = reverse_reshape_gnn(target, y, combined_mask)
-   
+        corr_output = reverse_reshape_gnn(target, outputs.detach().cpu().numpy(), combined_mask)
+        corr_real = reverse_reshape_gnn(target, y_real.detach().cpu().numpy(), combined_mask)
+
+        # Replace NaNs with -1 using torch.where
+        y_pred_null = np.where(np.isnan(corr_output), -1, corr_output)
+        y_true_null = np.where(np.isnan(corr_real), -1, corr_real)
+        ssim_metric = tensor_ssim(y_pred_null, y_true_null, range=2.0)
+
+        log = 'The prediction for {} days ahead: Test loss: {:.4f}, ' \
+            'Test MAPE: {:.4f}, Test RMSE: {:.4f}, Test SSIM: {:.4f}'
+        logger.info(log.format(args.step_length, 
+                               mean_loss, 
+                               mean_mape, 
+                               mean_rmse, 
+                               ssim_metric))
+
+
 
 def pipeline_gnn(args:dict,
                 use_water_mask:bool = True,
@@ -346,10 +375,12 @@ def pipeline_gnn(args:dict,
                 load_zarr_features:bool = False,
                 load_local_precipitation:bool=True,
                 interpolate:bool =False,
-                checkpoint_path:str=None):
+                checkpoint_path:str=None,
+                add_extra_data:bool=False):
     
     from analysis import pipeline_hydro_vars
     from analysis.configs.config_models import config_gwnet as model_config
+    from utils.function_clns import find_checkpoint_path
 
     rawdata_name = "data_gnn_full"
 
@@ -362,6 +393,20 @@ def pipeline_gnn(args:dict,
         load_local_precipitation,
         interpolate
     )
+
+    if add_extra_data:
+        extra_data  = np.load(os.path.join(model_config.data_dir, "data_gnn_drought/data.npy"))[-365*2:]
+        extra_target =  np.load(os.path.join(model_config.data_dir, "data_gnn_drought/target.npy"))[-365*2:]
+        
+        extra_data[np.isnan(extra_data)] = -1
+        extra_target[np.isnan(extra_target)] = -1
+    
+        target = np.concatenate([target, extra_target], 0)
+        data = np.concatenate([data, extra_data], 0)
+
+    if checkpoint_path is None and args.mode == "test":
+        checkpoint_path = find_checkpoint_path(model_config, args, True)
+
     if args.model == "GWNET":
         training_wavenet(args,
             dataname=rawdata_name,

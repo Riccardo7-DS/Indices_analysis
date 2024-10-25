@@ -557,15 +557,17 @@ def CNN_split(data:np.array,
         end_pd = pd.to_datetime(end_data, format='%Y-%m-%d')
         date_range = pd.date_range(start_pd, end_pd)
 
-        end_1 = start_pd + timedelta(days = train_samples -1)
+        end_1 = start_pd + timedelta(days = train_samples-1)
         new_start = end_1 + timedelta(days = 1)
 
-        end_2 = new_start + timedelta(days = val_samples - 1)
+        end_2 = new_start + timedelta(days = val_samples-1)
         new_start_2 = end_2 + timedelta(days = 1)
+
+        final_end = new_start_2 + timedelta(days=test_samples-1)
 
         logger.info(f"Training is from {start_data} to {datetime.strftime(end_1, '%Y-%m-%d')}, "
             f"validation from {datetime.strftime(new_start, '%Y-%m-%d')} to {datetime.strftime(end_2, '%Y-%m-%d')}, "
-            f"testing from {datetime.strftime(new_start_2, '%Y-%m-%d')} to {end_data}")
+            f"testing from {datetime.strftime(new_start_2, '%Y-%m-%d')} to {datetime.strftime(final_end, '%Y-%m-%d')}")
 
     return train_data, val_data, train_label, val_label, test_data, test_label
 
