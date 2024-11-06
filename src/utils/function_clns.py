@@ -505,14 +505,17 @@ def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset],
 def find_checkpoint_path(model_config, args, return_latest:bool=False):
     import os
     import glob
+    from analysis import create_runtime_paths
 
-    folder_path =  model_config.output_dir + f"/{(args.model).lower()}" \
-                f"/days_{args.step_length}/features_{args.feature_days}" \
-                f"/checkpoints"
+    # folder_path =  model_config.output_dir + f"/{(args.model).lower()}" \
+    #             f"/days_{args.step_length}/features_{args.feature_days}" \
+    #             f"/checkpoints"
+
+    _, _, _, checkp_path = create_runtime_paths(args)
     
     if return_latest:
         # Find all files matching the pattern 'checkpoint_*'
-        checkpoint_files = glob.glob(os.path.join(folder_path, 'checkpoint_epoch_*'))
+        checkpoint_files = glob.glob(os.path.join(checkp_path, 'checkpoint_epoch_*'))
 
         # Get the most recently created file
         most_recent_file = max(checkpoint_files, key=os.path.getctime)
@@ -521,7 +524,7 @@ def find_checkpoint_path(model_config, args, return_latest:bool=False):
         print(f"The most recently created checkpoint is: {os.path.basename(most_recent_file)}")
         return most_recent_file
     else:
-        return folder_path
+        return checkp_path
 
 
 def CNN_split(data:np.array, 

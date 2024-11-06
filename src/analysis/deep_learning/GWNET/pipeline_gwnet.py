@@ -6,6 +6,8 @@ import time
 import matplotlib.pyplot as plt
 import pickle
 from analysis import EarlyStopping, save_figures, create_runtime_paths, print_lr_change, MetricsRecorder, generate_adj_matrix, load_adj, get_train_valid_loader
+import logging
+logger = logging.getLogger(__name__)
 
 class StandardNormalizer():
     """
@@ -115,7 +117,7 @@ def training_weatherGCNet(args,
 
         for epoch in range(start_epoch, model_config.epochs):
             epoch_records = train_loop(model_config, args, model, train_dl, loss_func, 
-                                optimizer, scaler=ndvi_scaler, mask=None, draw_scatter=False)
+                                optimizer, scaler=ndvi_scaler, draw_scatter=False)
 
             train_records.append(np.mean(epoch_records['loss']))
             rmse_train.append(np.mean(epoch_records['rmse']))
@@ -173,13 +175,14 @@ def training_weatherGCNet(args,
         
     elif args.mode == "test":
         logger.info("Starting evaluation")
-        from analysis import test_loop, tensor_ssim, reverse_reshape_gnn, mask_rmse, masked_custom_loss
+        from analysis import test_loop, tensor_ssim, reverse_reshape_gnn, CustomMetrics
         test_records, y_pred, y_true = test_loop(model_config,
             args, 
             model, 
             test_dl, 
             loss_func, 
             ndvi_scaler,
+            mask = combined_mask,
             draw_scatter=args.scatterplot
         )
         
@@ -189,14 +192,27 @@ def training_weatherGCNet(args,
 
         corr_output = reverse_reshape_gnn(target, y_pred.detach().cpu().numpy(), combined_mask)
         corr_real = reverse_reshape_gnn(target, y_true.detach().cpu().numpy(), combined_mask)
-        ssim_metric = tensor_ssim(corr_output, corr_real, range=2.0)
 
-        rmse = mask_rmse(corr_output, corr_real, combined_mask)
-        losses = masked_custom_loss(loss_func, corr_output, corr_real, combined_mask)
+        y_pred_null = np.where(np.isnan(corr_output), -1, corr_output)
+        y_true_null = np.where(np.isnan(corr_real), -1, corr_real)
+        ssim_metric = tensor_ssim(y_pred_null, y_true_null, range=2.0)
+
+        metric_list = ["rmse", "mse"]
+
+        test_metrics = CustomMetrics(
+            corr_output, 
+            corr_real, 
+            metric_list, 
+            combined_mask, 
+            True
+        )
+        rmse = test_metrics.losses[0]
+        losses = test_metrics.losses[1]
 
         log = 'The prediction for {} days ahead: Batch Test loss: {:.4f}, ' \
             'Batch Test MAPE: {:.4f}, Batch Test RMSE: {:.4f}, Test SSIM: {:.4f}' \
             'Test RMSE: {:.4f}, Test MSE:{:.4f}'
+        
         logger.info(log.format(args.step_length,
                             mean_loss, 
                             mean_mape, 
@@ -395,12 +411,13 @@ def pipeline_gnn(args:dict,
     )
 
     if add_extra_data:
+        logger.info("Adding extra data for 2021-22")
         extra_data  = np.load(os.path.join(model_config.data_dir, "data_gnn_drought/data.npy"))[-365*2:]
         extra_target =  np.load(os.path.join(model_config.data_dir, "data_gnn_drought/target.npy"))[-365*2:]
-        
+
         extra_data[np.isnan(extra_data)] = -1
         extra_target[np.isnan(extra_target)] = -1
-    
+
         target = np.concatenate([target, extra_target], 0)
         data = np.concatenate([data, extra_data], 0)
 

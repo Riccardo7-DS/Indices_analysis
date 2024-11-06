@@ -13,7 +13,7 @@ from typing import Union
 import logging
 from analysis import StandardScaler, StandardNormalizer, print_lr_change
 import matplotlib
-matplotlib.use('Agg') 
+# matplotlib.use('Agg') 
 
 def training_convlstm(args:dict,
     data:np.array, 

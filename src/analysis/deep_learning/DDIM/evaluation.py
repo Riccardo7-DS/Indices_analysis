@@ -1,14 +1,15 @@
 from analysis import load_stored_data
 from analysis.configs.config_models import config_ddim as model_config, config_autodime as auto_config
 import pandas as pd
-from utils.function_clns import init_logging
+from utils.function_clns import init_logging, find_checkpoint_path
 from utils.xarray_functions import ndvi_colormap
 import torch
 from torch.nn import MSELoss
 import os
 import numpy as np
-from analysis import DataGenerator, load_checkpoint, custom_subset_data, create_runtime_paths, autoencoder_wrapper, diffusion_sampling, CustomConvLSTMDataset, TwoResUNet, Forward_diffussion_process
+from analysis import  DataGenerator, UNET, load_checkpoint, custom_subset_data, create_runtime_paths, autoencoder_wrapper, diffusion_sampling, CustomConvLSTMDataset, TwoResUNet, Forward_diffussion_process
 from torch.utils.data import DataLoader
+from torch.nn import DataParallel
 import argparse 
 parser = argparse.ArgumentParser(conflict_handler="resolve")
 parser.add_argument('-f')
@@ -18,7 +19,7 @@ cmap = ndvi_colormap("diverging")
 parser.add_argument('--model',type=str,default="AUTO_DIME",help='DL model training')
 parser.add_argument('--step_length',type=int,default=os.getenv("step_length", 15))
 
-parser.add_argument('--conditioning', type=str, choices=[None, "all", "autoencoder"], default='all')
+parser.add_argument('--conditioning', type=str, choices=["none", "all", "autoenc"], default='all')
 parser.add_argument('--attention',type=bool,default=False,help='U-NET architecture w/o attention')
 parser.add_argument('--auto_train',type=bool,default=os.getenv("auto_train", False))
 parser.add_argument('--auto_days',type=int,default=os.getenv("auto_days", 180))
@@ -49,12 +50,16 @@ autoencoder = autoencoder_wrapper(args,
 parser.add_argument('--model',type=str,default="DIME",help='DL model training')
 args = parser.parse_args()
 
-start = "2020-01-01"
+start = "2017-01-01"
 end = "2022-12-31"
 
 data_name = "data_gnn_drought"
 _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
-checkpoint_path  = checkpoint_dir + f"/checkpoint_epoch_{args.epoch}.pth.tar"
+
+if args.epoch == 0 and args.mode == "generate":
+    checkpoint_path = find_checkpoint_path(model_config, args, True)
+else:
+    checkpoint_path  = checkpoint_dir + f"/checkpoint_epoch_{args.epoch}.pth.tar"
 
 logger = init_logging(log_file=os.path.join(log_path, 
                             f"dime_days_{args.step_length}"
@@ -92,11 +97,22 @@ dataloader = DataLoader(datagenerator,
     shuffle=True, 
     batch_size=model_config.batch_size
 )
+input_channels = datagenerator.data.shape[1] if args.conditioning != "none" else 0
 
-model = TwoResUNet(dim=model_config.widths[0]*2, 
-    channels=datagenerator.data.shape[1]+1,
-    dim_mults=(1, 2, 4, 8, 16),
-    out_dim=model_config.output_channels).to(model_config.device)
+if args.attention:
+    model = TwoResUNet(dim=model_config.widths[0]*2, 
+        channels=input_channels+1,
+        dim_mults=(1, 2, 4, 8, 16),
+        out_dim=model_config.output_channels).to(model_config.device)
+    weight_decay = 1e-2
+else:
+    model = UNET(dim=model_config.widths[0]*2, 
+        channels=input_channels+1,
+        dim_mults=(1, 2, 4, 8, 16),
+        out_dim=model_config.output_channels).to(model_config.device)
+    weight_decay = 1e-3
+
+model = DataParallel(model)
 
 optimizer = torch.optim.AdamW(model.parameters(), 
     lr=model_config.learning_rate, 
@@ -109,7 +125,7 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 )
 loss_fn = MSELoss()
 
-if args.epoch > 0:
+if os.path.exists(checkpoint_path):
     model, optimizer, scheduler, start_epoch = load_checkpoint(checkpoint_path, 
         model, 
         optimizer, 
@@ -130,23 +146,35 @@ fdp = Forward_diffussion_process(args,
 logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
        f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs")
 
-sample_image, y_true = diffusion_sampling(args, 
+y_pred, y_true = diffusion_sampling(args, 
     model_config, 
     fdp, 
     dataloader, 
     samples=args.gen_sample,
-    random_enabled=False
+    random_enabled=True
 )
+
 if args.normalize is True:
-    sample_image = scaler.inverse_transform(sample_image)
+    y_pred = scaler.inverse_transform(y_pred)
     y_true = scaler.inverse_transform(y_true)   
 
-sample_image = torch.clamp(sample_image, -1, 1)
+y_pred = torch.clamp(y_pred, -1, 1)
 y_true = torch.clamp(y_true, -1, 1)
 mask = torch.from_numpy(mask).to(model_config.device)
 
-from analysis import mask_mbe, mask_mse, compute_image_loss_plot
-compute_image_loss_plot(sample_image, 
+from analysis import mask_mse, compute_image_loss_plot, tensor_ssim, CustomMetrics
+from utils.function_clns import bias_correction
+
+y_corr, _, _ = bias_correction(y_true.detach().cpu(), 
+    y_pred.detach().cpu())
+
+y_corr = y_corr.to(model_config.device)
+
+y_pred_null = torch.where(torch.isnan(y_corr), torch.tensor(-1.0), y_corr)
+y_true_null = torch.where(torch.isnan(y_true), torch.tensor(-1.0), y_true)
+
+
+compute_image_loss_plot(y_corr,
     y_true, 
     mask_mse, 
     mask, 
@@ -155,6 +183,28 @@ compute_image_loss_plot(sample_image,
     cmap
 )
 
+ssim_metric = tensor_ssim(y_pred_null, y_true_null, range=2.0)
+
+metric_list = ["rmse", "mse"]
+
+test_metrics = CustomMetrics(
+    y_corr, 
+    y_true, 
+    metric_list, 
+    mask, 
+    True
+)
+rmse = test_metrics.losses[0]
+losses = test_metrics.losses[1]
+
+log = 'The prediction for {} days ahead: Test SSIM: {:.4f}' \
+            'Test RMSE: {:.4f}, Test MSE:{:.4f}'
+        
+logger.info(log.format(args.step_length,
+                    ssim_metric,
+                    rmse,
+                    losses))
+
 out_path = os.path.join(img_path, "output_data")
-for d, name in zip([sample_image, y_true, mask],  ['pred_data_dr', 'true_data_dr', 'mask_dr']):
-    np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu)
+for d, name in zip([y_corr, y_true, mask],  ['pred_data_dr', 'true_data_dr', 'mask_dr']):
+    np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu())

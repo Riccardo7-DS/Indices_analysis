@@ -40,7 +40,6 @@ def create_runtime_paths(args:dict):
         output_dir = os.path.join(base_dir,
                     f"wnet/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "DIME":
-        
         specific_path = f"days_{args.step_length}/features_{args.feature_days}"
         if args.attention:
             model_subpath =  "dime_attn"
@@ -129,13 +128,13 @@ def mask_gnn_pixels(data, target, mask):
     null_mask = np.any(np.isnan(target), axis=0)
     null_sm_mask = np.any(np.isnan(sm_data), axis=0)
 
-    combined_mask =  (water_mask == True) | (null_mask==True) | (null_sm_mask==True)
+    combined_mask =  ~water_mask & ~null_mask & ~null_sm_mask #1 is good pixel, 0 no
 
     broadcast_data_combined = np.broadcast_to(combined_mask, data.shape)
     broadcast_target_combined = np.broadcast_to(combined_mask, target.shape)
 
-    data = np.ma.masked_where(broadcast_data_combined, data)
-    target = np.ma.masked_where(broadcast_target_combined, target)
+    data = np.ma.masked_where(broadcast_data_combined==False, data)
+    target = np.ma.masked_where(broadcast_target_combined==False, target)
 
     return data, target, combined_mask
     
@@ -365,26 +364,29 @@ def prepare_array_wgcnet(data, mask=None):
     return data_reshaped
 
 
-def reverse_reshape_gnn(orig_data, non_null_data, mask):
+def reverse_reshape_gnn(original_data, pred_data, mask):
     
-    T = non_null_data.shape[0]
+    T = pred_data.shape[0]
 
-    if len(orig_data.shape) == 3:
-        _, W, H = orig_data.shape  # Original dimensions
+    if len(original_data.shape) == 3:
+        _, W, H = original_data.shape  # Original dimensions
         C = 1
         
-    elif len(orig_data.shape) == 4:
-        _, C, W, H = orig_data.shape 
+    elif len(original_data.shape) == 4:
+        _, C, W, H = original_data.shape 
     # Create an empty array with the original shape filled with NaNs
-    original_data = np.full((T, C, W * H), np.nan)
-    non_null_data = np.squeeze(non_null_data, -1)
+    reconstructed_data = np.full((T, C, W * H), np.nan)
+
+    if len(reconstructed_data.shape) != len(pred_data.shape):
+        pred_data = np.squeeze(pred_data)
+        reconstructed_data = np.squeeze(reconstructed_data)
     mask = np.reshape(mask, W*H)
 
     # Reinsert the non-null data into the non-masked locations
-    original_data[:, :, ~mask] = non_null_data
+    reconstructed_data[..., mask] = pred_data
 
-    original_data = np.reshape(original_data, (T, C, W, H))
-    return np.squeeze(original_data)
+    reconstructed_data = np.reshape(reconstructed_data, (T, C, W, H))
+    return np.squeeze(reconstructed_data)
 
 def print_lr_change(old_lr, scheduler):
     lr = scheduler.get_last_lr()[0]
@@ -529,7 +531,7 @@ def train_loop(config,
 
     for batch_idx, (inputs, targets) in enumerate(train_loader):
 
-        inputs = inputs.squeeze(0).float().to(config.device)
+        inputs = inputs.float().to(config.device)
         # logger.info("Feature tensor GPU memory: {:.4f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
         targets = torch.squeeze(targets.float().to(config.device))
         # logger.info("Label tensor GPU memory: {:.4f} GB".format(get_tensor_memory(targets)/ (1024**3)))
@@ -997,9 +999,12 @@ def tensor_ssim(preds, labels, range=1.0):
     def process_function(engine, batch):
         if isinstance(batch[0], np.ndarray):
             x = torch.from_numpy(batch[0])
-            y = torch.from_numpy(batch[1])
         else:
             x = batch[0]
+
+        if isinstance(batch[1], np.ndarray):
+            y = torch.from_numpy(batch[1])
+        else:
             y = batch[1]
         
         if len(x.shape)==3:
@@ -1097,14 +1102,24 @@ Metrics with custom mask
 
 def mask_mae(preds, labels, mask, return_value=True):
     loss = torch.abs(preds-labels)
-    full_mask = torch.broadcast_to(mask, loss.shape)
-    null_loss = (loss * full_mask).float()
+    if isinstance(mask, torch.Tensor):
+        full_mask = torch.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+        null_loss = torch.where(torch.isnan(mask), torch.tensor(0.0), null_loss)
+    elif isinstance(mask, np.ndarray):
+        full_mask = np.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+        null_loss = np.where(np.isnan(mask), 0, null_loss)
+    elif not mask:
+        null_loss = loss
+        full_mask = torch.ones(loss.shape)
+
     if return_value:
         non_zero_elements = full_mask.sum()
         return null_loss.sum() / non_zero_elements
     else:
         if len(loss.shape)>2:
-            return loss.mean(dim=0)
+            return loss.mean(0)
         else:
             return loss
 
@@ -1112,16 +1127,113 @@ def mask_rmse(preds, labels, mask=None):
     mse = mask_mse(preds=preds, labels=labels, mask=mask)
     return torch.sqrt(mse)
 
+from typing import Union
+
+class CustomMetrics():
+    def __init__(self,
+                 preds:Union[torch.tensor, np.ndarray],
+                 labels:Union[torch.tensor, np.ndarray], 
+                 metric_lists:Union[list, str],
+                 mask = Union[None, torch.tensor, np.ndarray],
+                 masked:bool=False):
+        
+        if isinstance(preds, np.ndarray):
+            preds = torch.from_numpy(preds)
+        if isinstance(labels, np.ndarray):
+            labels = torch.from_numpy(labels)
+        if isinstance(mask, np.ndarray):
+            mask = torch.from_numpy(mask)
+
+        if masked:
+            self._count_masked_pixels(mask)
+
+        self.mask = mask
+        if masked and mask is None:
+            logger.error(RuntimeError("No provided mask but chosen masked loss option"))
+
+        self.losses, self.metrics = self._get_metrics(metric_lists, preds, labels, masked)
+
+    def _get_metrics(self, metric_list, preds, labels, masked):
+        if isinstance(metric_list, list):
+            results = []
+            metrics = []
+            for metric in metric_list:
+                res, m = self._apply_metric(metric, preds, labels)
+                if masked:
+                    res = self._metric_masking(res, self.mask)
+                results.append(res)
+                metrics.append(m)
+            return results, metrics
+        
+        elif isinstance(metric_list, str):
+            results, m = self._apply_metric(metric_list, preds, labels)
+            if masked:
+                results = self._metric_masking(results, self.mask)
+            return [results], [m]
+    
+    def _apply_metric(self, metric, preds, labels):
+        if metric == "rmse":
+            loss = torch.sqrt((preds-labels)**2)
+        elif metric == "bias":
+            loss = labels - preds
+        
+        elif metric == "mse":
+            loss = (preds-labels)**2
+
+        elif metric == "mae":
+            loss = torch.abs(preds-labels)
+
+        elif metric == "mape":
+            loss = torch.abs((preds-labels)/labels)
+        else:
+            logger.warning(f"Metric {metric} not recognized")
+            loss = None
+
+        return loss, metric
+    
+    def _count_masked_pixels(self, mask):
+        w, h = mask.shape
+        good_pixels = mask.sum()
+        tot_pixels = w*h
+        logger.info(f"{(1-good_pixels/tot_pixels):.2%} of the pixels are masked in the loss computation")
+        
+
+    def _metric_masking(self, loss, mask, return_value=True):
+        if isinstance(loss, np.ndarray):
+            loss = torch.from_numpy(loss)
+
+        full_mask = torch.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+        null_loss = torch.where(torch.isnan(null_loss), torch.tensor(0.0), null_loss)
+
+        if return_value:
+            non_zero_elements = full_mask.sum()
+            return (null_loss.sum() / non_zero_elements).item()
+        else:
+            if len(loss.shape)>2:
+                return loss.mean(0)
+            else:
+                return loss
+
 def mask_mape(preds, labels, mask, return_value=True):
     loss = torch.abs((preds-labels)/labels)
-    full_mask = torch.broadcast_to(mask, loss.shape)
-    null_loss = (loss * full_mask).float()
+    if isinstance(mask, torch.Tensor):
+        full_mask = torch.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+        null_loss = torch.where(torch.isnan(mask), torch.tensor(0.0), null_loss)
+    elif isinstance(mask, np.ndarray):
+        full_mask = np.broadcast_to(mask, loss.shape)
+        null_loss = (loss * full_mask)
+        null_loss = np.where(np.isnan(mask), 0, null_loss)
+    if not mask:
+        full_mask = torch.ones(loss.shape)
+
     if return_value:
         non_zero_elements = full_mask.sum()
         return null_loss.sum() / non_zero_elements
     else:
         if len(loss.shape)>2:
-            return loss.mean(dim=0)
+            return loss.mean(0)
         else:
             return loss
 
@@ -1130,9 +1242,11 @@ def mask_mse(preds, labels, mask, return_value=True):
     if isinstance(mask, torch.Tensor):
         full_mask = torch.broadcast_to(mask, loss.shape)
         null_loss = (loss * full_mask)
+        null_loss = torch.where(torch.isnan(mask), torch.tensor(0.0), null_loss)
     elif isinstance(mask, np.ndarray):
         full_mask = np.broadcast_to(mask, loss.shape)
         null_loss = (loss * full_mask)
+        null_loss = np.where(np.isnan(mask), 0, null_loss)
     elif not mask:
         null_loss = loss
         full_mask = torch.ones(loss.shape)
@@ -1152,9 +1266,11 @@ def masked_custom_loss(criterion, preds, labels, mask=None, return_value=True):
     if isinstance(mask, torch.Tensor):
         full_mask = torch.broadcast_to(mask, loss.shape)
         null_loss = (loss * full_mask)
+        null_loss = torch.where(torch.isnan(mask), torch.tensor(0.0), null_loss)
     elif isinstance(mask, np.ndarray):
         full_mask = np.broadcast_to(mask, loss.shape)
         null_loss = (loss * full_mask)
+        null_loss = np.where(np.isnan(mask), 0, null_loss)
     elif not mask:
         null_loss = loss
         full_mask = torch.ones(loss.shape)

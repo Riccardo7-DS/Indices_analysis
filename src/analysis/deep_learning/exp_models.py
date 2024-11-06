@@ -43,7 +43,7 @@ if __name__=="__main__":
         raise ValueError("Please chose a checkpoint if in evaluate mode")  
 
     for feature_days in [90]: 
-        for window in [10, 15, 30]:
+        for window in [10]:
             if args.checkpoint > 0 :
                 checkpoint_path =  model_config.output_dir + f"/{(args.model).lower()}" \
                 f"/days_{window}/features_{feature_days}" \
@@ -62,7 +62,8 @@ if __name__=="__main__":
                         use_water_mask=True,
                         load_local_precipitation=True,
                         precipitation_only=False,
-                        checkpoint_path=checkpoint_path
+                        checkpoint_path=checkpoint_path,
+                        add_extra_data=True
                     )
                     
             except RuntimeError as e:

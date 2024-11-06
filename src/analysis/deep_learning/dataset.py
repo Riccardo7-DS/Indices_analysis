@@ -224,7 +224,7 @@ class DataGenerator(CustomConvLSTMDataset):
         
         if args.conditioning == "all":
             data = np.concatenate([extra_features, vae_output], axis=1)
-        elif args.conditioning == "autoencoder":
+        elif args.conditioning == "autoenc":
             data = vae_output
         if export:
             self._export_auto_output(data, file)
