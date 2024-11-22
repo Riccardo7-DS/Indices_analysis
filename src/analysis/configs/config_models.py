@@ -34,6 +34,7 @@ class ConfigAutoDime(BaseConfig):
     num_frames_output = 1
     patience = 20
     epochs = 200
+    sampling_steps = 50
 
 class ConfigDDIM(BaseConfig):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -49,6 +50,7 @@ class ConfigDDIM(BaseConfig):
     scheduler_factor = 0.7
 
     timesteps = 1000
+    sampling_steps = 50
 
     # sampling
 

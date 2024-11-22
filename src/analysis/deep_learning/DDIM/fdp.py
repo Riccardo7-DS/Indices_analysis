@@ -40,7 +40,7 @@ parser.add_argument('--gen_sample',type=int,default=os.getenv("gen_sample", 2))
 parser.add_argument('--diff_schedule',type=str,default=os.getenv("diff_schedule", "sigmoid"))
 parser.add_argument('--diff_sample',type=str,default="ddpm")
 parser.add_argument('--epoch',type=int,default=os.getenv("epoch", 0), help="diffusion model trained epochs")
-parser.add_argument('--conditioning', type=str, choices=["none", "all", "autoenc"], default=os.getenv("conditioning",'all'))
+parser.add_argument('--conditioning', type=str, choices=["none", "all", "autoenc","climate"], default=os.getenv("conditioning",'all'))
 parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
 parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
@@ -51,7 +51,7 @@ data, target, scaler, mask = load_stored_data(model_config)
 
 ################################# Autoencoder #############################
 
-autoencoder = autoencoder_wrapper(args, model_config, data, target)
+autoencoder = autoencoder_wrapper(args, model_config, data, target, False)
 
 ################################# Initialize datasets #############################
 
@@ -63,9 +63,9 @@ _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
 checkpoint_path  = checkpoint_dir + f"/checkpoint_epoch_{args.epoch}.pth.tar"
 
 logger = init_logging(log_file=os.path.join(log_path, 
-    f"dime_days_{args.step_length}"
-    f"features_{args.feature_days}.log")
-)
+                                            f"dime_days_{args.step_length}_"  \
+                                            f"features_{args.feature_days}"
+                                            f"{args.mode}.log"))
 writer = init_tb(log_path)
 
 train_data, val_data, train_label, val_label, \

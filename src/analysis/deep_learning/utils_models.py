@@ -107,7 +107,10 @@ def autoencoder_wrapper(args,
                 auto_epoch = pipeline_autoencoder(args, data, target,
                                            output_shape=args.auto_days//5)
         else:
-            if len(os.listdir(model_config.data_dir + "/autoencoder_output")) == 0 :
+            dest_path = model_config.data_dir + "/autoencoder_output"
+            if not os.path.exists(dest_path):
+                os.makedirs(dest_path)
+            if len(os.listdir(dest_path)) == 0 :
                 for dataset in ["train", "test"]:
                     pipeline_autoencoder(args, data, target,
                                         output_shape=args.auto_days//5, 

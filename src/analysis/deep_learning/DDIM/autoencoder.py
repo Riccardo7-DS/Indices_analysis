@@ -240,6 +240,7 @@ def pipeline_autoencoder(args,
             feature_days=args.auto_days,
             output_shape=args.auto_days//5
         )
+        args.conditioning = "all"
         DataGenerator(model_config, 
             args, 
             locals()[f"{dataset}_data"], 

@@ -33,7 +33,13 @@ def get_ram():
     free_cubes = int(total_cubes * free / total)
     return f'RAM: {total - free:.2f}/{total:.2f}GB\t RAM:[' + (total_cubes - free_cubes) * '▮' + free_cubes * '▯' + ']'
 
+def exists(x):
+    return x is not None
 
+def default(val, d):
+    if exists(val):
+        return val
+    return d() if callable(d) else d
 
 def create_xarray_datarray(var_name:str, data, time, lat, lon):
     return xr.DataArray(

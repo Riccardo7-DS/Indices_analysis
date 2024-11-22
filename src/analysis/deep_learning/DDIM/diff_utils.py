@@ -67,7 +67,7 @@ def custom_subset_data(
     end_pd = pd.to_datetime(end_data, format='%Y-%m-%d')
     date_range = pd.date_range(start_pd, end_pd)
 
-    extra_days =  args.auto_days if autoencoder else 0
+    extra_days =  args.auto_days + model_config.num_frames_output + model_config.output_channels if autoencoder else 0
 
     new_start = pd.to_datetime( start, format='%Y-%m-%d') - timedelta(days=extra_days)
     new_end = pd.to_datetime( end, format='%Y-%m-%d')

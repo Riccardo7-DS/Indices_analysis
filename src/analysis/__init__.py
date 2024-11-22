@@ -8,3 +8,4 @@ from .deep_learning.GWNET.pipeline_gwnet import *
 from .deep_learning.DDIM.model import *
 from .deep_learning.DDIM.autoencoder import *
 from .deep_learning.DDIM.diff_utils import *
+from .deep_learning.DDIM.evaluation import *

@@ -51,7 +51,9 @@ class CustomConvLSTMDataset(Dataset):
     """
     Class for the ConvLSTM model, converting features and instances to pytorch tensors
     """
-    def __init__(self, config:dict, args:dict, 
+    def __init__(self, 
+            config:dict, 
+            args:dict, 
             data:xr.DataArray, 
             labels: xr.DataArray, 
             save_files:bool=False,
@@ -89,7 +91,7 @@ class CustomConvLSTMDataset(Dataset):
                       if self.lag else "No lag channel added")
         tot_channels = self.num_channels + 1 if self.lag else self.num_channels
 
-        self.available_timesteps = self.num_timesteps - self.learning_window - self.steps_head - self.output_window
+        self.available_timesteps = self.num_timesteps - self.learning_window - self.steps_head #- self.output_window
         shape_train = (self.available_timesteps, tot_channels, self.learning_window, self.data.shape[2], self.data.shape[3]) if isinstance(self.input_size, tuple) else \
                       (self.available_timesteps, tot_channels, self.learning_window, self.input_size)
         shape_label = (self.available_timesteps, self.output_channels, self.output_window, self.labels.shape[2], self.labels.shape[3]) if isinstance(self.input_size, tuple) else \
@@ -104,14 +106,14 @@ class CustomConvLSTMDataset(Dataset):
         def populate_arrays(args, train_data_processed, label_data_processed):
 
             current_idx = self.learning_window
-            while current_idx < self.num_timesteps - self.steps_head - self.output_window:
+            while current_idx < self.num_timesteps - self.steps_head: #- self.output_window:
                 start_idx = current_idx - self.learning_window
                 end_idx = current_idx
 
                 if self.num_channels == 1:
                     train_data_processed[start_idx, 0] = self.data[0, start_idx:end_idx]
                     label_data_processed[start_idx, 0, :] = \
-                        self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window]
+                        self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window ] #
 
                 elif self.num_channels > 1:
                     for chnl in range(self.num_channels):
@@ -121,7 +123,7 @@ class CustomConvLSTMDataset(Dataset):
                         train_data_processed[start_idx, -1] = self.labels[0, start_idx:end_idx]
 
                     label_data_processed[start_idx, 0 ] = \
-                        self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window]
+                        self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window ] #
 
                 current_idx += 1
             
@@ -168,7 +170,7 @@ class DataGenerator(CustomConvLSTMDataset):
                 data:np.array, 
                 labels:np.array,
                 autoencoder, 
-                past_data: Union[np.ndarray, None]= None,
+                # past_data: Union[np.ndarray, None]= None,
                 data_split:Union[str, None]=None):
         super().__init__(config, args, data, labels) 
 
@@ -176,51 +178,61 @@ class DataGenerator(CustomConvLSTMDataset):
         self.time_list = self._add_time_list(data)
         self.autoencoder = autoencoder.to(self.device)
 
-        if args.conditioning != "none":
+        if args.conditioning == "climate":
+            self.data = self.data[:, -1, :-1]
+
+        elif args.conditioning != "none":
 
             if data_split is not None:
                 filepath = os.path.join(config.data_dir, f"autoencoder_output")
                 if not os.path.exists(filepath):
                     os.makedirs(filepath)
-                file = os.path.join(filepath, f"vae_features_{data_split}.npy")
+                file = os.path.join(filepath, f"vae_features_{data_split}_{args.step_length}.npy")
 
                 if (os.path.exists(file)):
                     self.data = self._load_auto_output(file)
+                    self.data, self.labels = self._align_auto_datasets(self.data, 
+                                                                       self.labels)
                 else:
+                    autodata = self._collect_autoencoder_data(args, config, data, labels)
                     self.data = self._autoencoder_pipeline(args, 
-                                                           file, 
+                                                           autodata=autodata.data[:, :, -1],
+                                                           file = file, 
                                                            export=True)
+                if args.conditioning == "autoenc":
+                    auto_channels = args.auto_days // 5
+                    if self.data.shape[1]!= auto_channels:
+                        logger.warning("Found different number of channels in data "
+                                       "compared to autoencoder setting. Removing "
+                                       "climate varaibles...")
+                        self.data = self.data[:, -auto_channels:]
             else:
                 logger.info("Avoiding using local autoencoder output and generating"
                             " new one")
-                self.data = self._autoencoder_pipeline(args,
-                                                       past_data, 
-                                                       export=False)
+                autodata = self._collect_autoencoder_data(args, config, data, labels)
+                self.data = self._autoencoder_pipeline(args, 
+                    autodata=autodata.data[:, :, -1],
+                    file = None, 
+                    export=False)
                 
-        
-
         if config.squared is True:
             self.data = self.data[:, :, :64, :64]
             self.labels = self.labels[:, :64, :64]
+        
+        logger.info(f"Data shape is {self.data.shape}")
+        logger.info(f"Target shape is {self.labels.shape}")
 
     def _autoencoder_pipeline(self, 
-                              args, 
-                              autodata=None, 
-                              file=None, 
-                              export=True):
+            args, 
+            autodata=None, 
+            file=None, 
+            export=True
+        ):
         
         vae_output = self._reduce_data_vae(autodata=autodata,
             output_shape=args.auto_days//5)
         
-        n_vae = vae_output.shape[0]
-        n_samples = self.data.shape[0]
-        if n_vae != n_samples:
-            logger.warning(f"VAE output has different shape than data"
-                        f"...proceeding with subsetting samples {n_samples} --> {n_vae}")    
-            
-            extra_features = self.data[-n_vae:, -1, :-1]
-        else:
-            extra_features = self.data[:, :-1, -1]
+        extra_features, self.labels = self._align_auto_datasets(self.data, self.labels, vae_output)
         
         if args.conditioning == "all":
             data = np.concatenate([extra_features, vae_output], axis=1)
@@ -229,6 +241,34 @@ class DataGenerator(CustomConvLSTMDataset):
         if export:
             self._export_auto_output(data, file)
         return data
+    
+    def _align_auto_datasets(self, data, labels, vae_data = None):
+        if vae_data is not None:
+
+            n_vae = vae_data.shape[0]
+            n_samples = data.shape[0]
+
+            if n_vae != n_samples:
+                logger.warning(f"VAE output has different shape than data"
+                            f"...proceeding with subsetting samples {n_samples} --> {n_vae}")    
+
+                extra_features = data[-n_vae:, -1, :-1]
+                labels = labels[-n_vae:]
+        
+            else:
+                extra_features = data[:, :-1, -1]
+
+            return extra_features, labels
+        
+        else:
+            n_data= data.shape[0]
+            n_labels = labels.shape[0]
+
+            if n_data != n_labels:
+                logger.warning(f"VAE output has different shape than data"
+                            f"...proceeding with subsetting samples {n_labels} --> {n_data}")
+            labels = labels[-n_data:]
+            return data, labels
 
     def _load_auto_output(self, data_dir):
         logger.info("Loading stored VAE output...")
@@ -292,10 +332,24 @@ class DataGenerator(CustomConvLSTMDataset):
 
         # Concatenate all encoded batches
         return torch.cat(encoded_batches)
+    
+
+    def _collect_autoencoder_data(self, args, model_config, data, target):
+        original_features = args.feature_days
+        original_step = args.step_length 
+        args.feature_days = 180
+        args.step_length = 0
+        dataset = CustomConvLSTMDataset(model_config, args, data, target)
+        args.feature_days = original_features
+        args.step_length = original_step
+        return dataset
 
     def _reduce_data_vae(self, output_shape, autodata=None):
         if autodata is None:
-            autodata = self.data[:,-1]
+            logger.warning("No data provided to compute autoencoder output. "
+                          f"Using the default data with shape {self.data.shape}"
+                          f" taking the last channel (third dimension)")
+            autodata = self.data[:, :, -1]
 
         from tqdm.auto import tqdm
         # if len(self.data.shape) == 5:

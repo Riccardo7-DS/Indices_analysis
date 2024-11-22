@@ -8,6 +8,8 @@ import torchvision.transforms.functional as TF
 import logging
 from tqdm.auto import tqdm
 import random
+from typing import Literal, Union
+from utils.function_clns import default
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +211,20 @@ class TwoResUNet(nn.Module):
         return self.final_conv(x)
 
 class Forward_diffussion_process():
-    def __init__(self, args, config, model,  optimizer, scheduler, loss, eta=0):
+    def __init__(self, 
+        args, 
+        config, 
+        model,  
+        optimizer, 
+        scheduler, 
+        loss
+    ):
         self.start = config.beta_start
         self.end = config.beta_end
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.timesteps = config.timesteps
+        self.sampling_timesteps = config.sampling_steps if args.diff_sample=="ddim" else None
         self.device = config.device
         self.loss_fn = loss
         self.eta = 0.
@@ -350,7 +360,7 @@ class Forward_diffussion_process():
         return x_t_minus_one
     
     @torch.no_grad()
-    def p_sample_ddim(self, model, x_t, t:int, x_cond=None, clip=True):
+    def p_sample_ddim(self, model, x_t, t:int, prev_t:int, x_cond=None, clip=True):
 
         r""" Sample x_(t-1) given x_t and noise predicted
              by model.
@@ -363,10 +373,9 @@ class Forward_diffussion_process():
         epsilon_t = torch.randn_like(x_t)
 
         b = x_t.shape[0]
-        prev_time_step = (t-1)
 
         batched_times = torch.full((b,), t, device=self.device, dtype=torch.long)
-        batched_prev_t =  torch.full((b,), prev_time_step, device=self.device, dtype=torch.long)
+        batched_prev_t =  torch.full((b,), prev_t, device=self.device, dtype=torch.long)
 
         # get current and previous alpha_cumprod
         alpha_t = self._extract(self.alpha_bars, batched_times, x_t.shape)
@@ -388,14 +397,15 @@ class Forward_diffussion_process():
 
         # Algorithm 2 (including returning all images)
     @torch.no_grad()
-    def p_sample(self, args, model, x_start, time_steps, x_cond):
+    def p_sample(self, args, model, x_start, time_steps, prev_steps, x_cond):
         if args.diff_sample == "ddpm":
             return self.p_sample_ddpm( model, x_start, time_steps, x_cond)
         elif args.diff_sample =="ddim":
-            return self.p_sample_ddim( model, x_start, time_steps, x_cond)
+            return self.p_sample_ddim( model, x_start, time_steps, prev_steps, x_cond)
         
     @torch.no_grad()
     def reverse_diffusion(self, args, model, x, shape, timesteps, time_steps_list):
+        time_steps_prev = np.concatenate([[0], time_steps_list[:-1]])
         # generate Gaussian noise
         z_t = torch.randn(shape, device=self.device, dtype=torch.float32)
         imgs = [z_t]
@@ -403,7 +413,12 @@ class Forward_diffussion_process():
         with tqdm(reversed(range(0, timesteps)), desc='sampling loop time step', total=timesteps) as sampling_steps:
             for t in sampling_steps:
                 x_start = z_t if x_start is None else x_start
-                x_start = self.p_sample(args, model, x_start, time_steps_list[t], x)
+                x_start = self.p_sample(args, 
+                    model, 
+                    x_start, 
+                    time_steps_list[t], 
+                    time_steps_prev[t],
+                    x)
                 imgs.append(x_start)
     
         return imgs[-1]
@@ -425,12 +440,13 @@ class Forward_diffussion_process():
             return x_cond, y_true
         
         if args.diff_sample == "ddim":
-            a = self.timesteps // timesteps
-            time_steps = np.asarray(list(range(0, self.timesteps, a))) + 1
-        
+            step = self.timesteps // self.sampling_timesteps
+            time_steps_list = np.asarray(list(range(0, self.timesteps, step))) + 1
+            n_timesteps = self.sampling_timesteps
+
         elif args.diff_sample == "ddpm":
-            timesteps = self.timesteps
-            time_steps = np.asarray(list(range(0, self.timesteps, 1)))
+            time_steps_list = np.asarray(list(range(0, self.timesteps, 1)))
+            n_timesteps = self.timesteps
 
         if random_enabled:
             tot_samples = samples * img_shape[0]
@@ -452,8 +468,8 @@ class Forward_diffussion_process():
                     model, 
                     x_cond, 
                     img_shape, 
-                    timesteps, 
-                    time_steps
+                    n_timesteps, 
+                    time_steps_list
                 )
                 start, end = s * img_shape[0], (s + 1) * img_shape[0]
                 imgs[start:end] = img.squeeze()
@@ -481,8 +497,8 @@ class Forward_diffussion_process():
                         model, 
                         x_cond, 
                         img_shape, 
-                        timesteps, 
-                        time_steps
+                        n_timesteps, 
+                        time_steps_list
                     )
                     start, end = batch_idx * img_shape[0], (batch_idx + 1) * img_shape[0]
                     imgs[start:end] = img.squeeze()
@@ -510,6 +526,7 @@ from einops import reduce, rearrange
 from einops.layers.torch import Rearrange
 from torch import nn, einsum
 from torch.nn import Module
+from utils.function_clns import default, exists
 
 class PreNorm(nn.Module):
     def __init__(self, channels, fn):
@@ -522,16 +539,6 @@ class PreNorm(nn.Module):
         x = self.fn(x)
 
         return x
-
-
-def exists(val):
-    return val is not None
-
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if isfunction(d) else d
 
 class SinusoidalPosEmb(Module):
     def __init__(self, dim, theta = 10000):
