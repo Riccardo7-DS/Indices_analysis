@@ -55,37 +55,6 @@ def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
     plt.tight_layout()
     plt.show()
 
-# def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
-#                                  mask: Union[xr.DataArray, xr.Dataset, None] = None,
-#                                  n_points: int = 1):
-
-#     # Step 1: Apply boolean mask
-#     valid_indices = np.where(mask == 1)
-
-#     # Step 2: Generate random indices
-#     random_indices = np.random.choice(len(valid_indices[0]), 
-#                                       size=n_points, replace=False)
-
-#     # Step 3: Retrieve latitudes and longitudes corresponding to selected indices
-#     selected_lats = data_array1.lat.values[valid_indices[0][random_indices]]
-#     selected_lons = data_array1.lon.values[valid_indices[1][random_indices]]
-
-#     # Step 4: Generate time axis
-#     time_axis = data_array1.time.values
-
-#     # Step 5: Plot latitude-longitude combinations over time
-#     plt.figure(figsize=(10, 6))
-#     for i in range(n_points):
-#         plt.plot(time_axis, data_array1.sel(lat=selected_lats[i], 
-#                 lon=selected_lons[i]), 
-#                 label=f'Lat: {selected_lats[i]}, Lon: {selected_lons[i]}')
-
-#     plt.xlabel('Time')
-#     plt.ylabel('Data Variable')
-#     plt.title('Latitude-Longitude Combinations Over Time')
-#     plt.grid(True)
-#     plt.show()
-
 class VizNC():
     def __init__(self, root: Path, data:str,  period_start:str, period_end:str, plot:str='first', dims_mean=["time"]):
         '''
@@ -234,4 +203,200 @@ def plot_ndvi_days(dataset:xr.DataArray,
     fig.tight_layout()
 
     # Display the plot
+    plt.show()
+
+
+"""
+Functions for visualizing predicted models
+"""
+
+def process_error_by_time_aggregation(y, y_pred, start, aggregate_by="day", new_start=None, new_end=None):
+    """
+    Process average error aggregated by calendar day or month across multiple years.
+
+    Parameters:
+        y (np.ndarray): Ground truth data with shape [s, h, w].
+        y_pred (np.ndarray): Predicted data with shape [s, h, w].
+        start (str): Starting date in the format 'YYYY-MM-DD'.
+        aggregate_by (str): Aggregation level ("day" or "month").
+        new_start (str): Optional. Start of the subset range in 'YYYY-MM-DD'.
+        new_end (str): Optional. End of the subset range in 'YYYY-MM-DD'.
+
+    Returns:
+        pd.Series: Aggregated average error indexed by time keys.
+    """
+    # Create a date range corresponding to the days in the dataset
+    days = y.shape[0]
+    start_pd = pd.to_datetime(start)
+    end_pd = start_pd + timedelta(days=days - 1)
+    range_dates = pd.date_range(start_pd, end_pd)
+
+    # Subset the data if a range is specified
+    if new_start is not None and new_end is not None:
+        new_st_loc = range_dates.get_loc(pd.to_datetime(new_start))
+        new_end_loc = range_dates.get_loc(pd.to_datetime(new_end))
+        y = y[new_st_loc:new_end_loc + 1]
+        y_pred = y_pred[new_st_loc:new_end_loc + 1]
+        range_dates = range_dates[new_st_loc:new_end_loc + 1]
+
+    # Calculate daily error for the entire image
+    daily_error = np.nanmean(np.abs(y - y_pred), axis=(1, 2))  # Shape: [s]
+
+    # Group errors by calendar day or month
+    df = pd.DataFrame({'date': range_dates, 'error': daily_error})
+    if aggregate_by == "day":
+        df['time_key'] = df['date'].dt.strftime('%m-%d')  # Day of the year
+        average_error_by_time = df.groupby('time_key')['error'].mean()
+    elif aggregate_by == "month":
+        df['time_key'] = df['date'].dt.month_name()  # Month name
+        df['month_order'] = df['date'].dt.month  # Month number for sorting
+        average_error_by_time = df.groupby(['time_key', 'month_order'])['error'].mean().reset_index()
+        average_error_by_time = average_error_by_time.sort_values('month_order')
+        average_error_by_time = average_error_by_time.set_index('time_key')['error']
+    else:
+        raise ValueError("Invalid value for 'aggregate_by'. Choose 'day' or 'month'.")
+
+    return average_error_by_time
+
+
+
+def plot_multiple_aggregations(data_dict, model_name, aggregate_by="day"):
+    """
+    Plot multiple aggregated error series on a single plot.
+
+    Parameters:
+        data_dict (dict): Dictionary where keys are labels (e.g., years) and values are pd.Series
+                          with aggregated errors (indexed by time keys).
+        aggregate_by (str): Aggregation level ("day" or "month").
+    """
+    plt.figure(figsize=(14, 7))
+
+    # Loop through the data dictionary to plot each series
+    for label, data in data_dict.items():
+        plt.plot(data.index, data.values, label=label, linestyle='-', marker='.')
+
+    # Adjust the x-axis ticks and labels
+    if aggregate_by == "day":
+        # Show every 15th day for clarity
+        tick_indices = np.arange(0, len(list(data_dict.values())[0]), 15)
+        tick_labels = pd.to_datetime(
+            list(data_dict.values())[0].index[tick_indices], format='%m-%d'
+        ).strftime('%d-%b')
+        plt.xticks(ticks=tick_indices, labels=tick_labels, rotation=45)
+        plt.xlabel('Day of the Year', fontsize=14)
+    elif aggregate_by == "month":
+        # Use all months for clarity
+        tick_indices = np.arange(len(list(data_dict.values())[0]))
+        tick_labels = list(data_dict.values())[0].index
+        plt.xticks(ticks=tick_indices, labels=tick_labels, rotation=45)
+        plt.xlabel('Month', fontsize=14)
+    else:
+        raise ValueError("Invalid value for 'aggregate_by'. Choose 'day' or 'month'.")
+
+    # Final plot settings
+    plt.title(f"{model_name} Average Error Aggregation by {aggregate_by.capitalize()}", fontsize=16)
+    plt.ylabel('Average Error', fontsize=14)
+    plt.legend(fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
+def plot_error_time(y, y_pred, start, new_start=None, new_end=None):
+    """
+    Plot yearly mean error from daily data.
+
+    Parameters:
+        y (np.ndarray): Ground truth data with shape [s, h, w].
+        y_pred (np.ndarray): Predicted data with shape [s, h, w].
+        start (str): Starting date in the format 'YYYY-MM-DD'.
+        new_start (str): Optional. Start of the subset range in 'YYYY-MM-DD'.
+        new_end (str): Optional. End of the subset range in 'YYYY-MM-DD'.
+    """
+    # Create a date range corresponding to the days in the dataset
+    days = y.shape[0]
+    start_pd = pd.to_datetime(start)
+    end_pd = start_pd + timedelta(days=days - 1)
+    range_dates = pd.date_range(start_pd, end_pd)
+
+    # Subset the data if a range is specified
+    if new_start is not None and new_end is not None:
+        new_st_loc = range_dates.get_loc(pd.to_datetime(new_start))
+        new_end_loc = range_dates.get_loc(pd.to_datetime(new_end))
+        y = y[new_st_loc:new_end_loc + 1]
+        y_pred = y_pred[new_st_loc:new_end_loc + 1]
+        range_dates = range_dates[new_st_loc:new_end_loc + 1]
+
+    # Calculate daily error for the entire image
+    daily_error = np.nanmean(np.abs(y - y_pred), axis=(1, 2))  # Shape: [s]
+
+    # Group errors by year
+    df = pd.DataFrame({'date': range_dates, 'error': daily_error})
+    df['year'] = df['date'].dt.year
+    yearly_mean_error = df.groupby('year')['error'].mean()
+
+    # Plot yearly mean error
+    plt.figure(figsize=(10, 6))
+    plt.plot(yearly_mean_error.index, yearly_mean_error.values, marker='o', linestyle='-', color='b')
+    plt.title('Yearly Mean Error', fontsize=14)
+    plt.xlabel('Year', fontsize=12)
+    plt.ylabel('Mean Error', fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.xticks(yearly_mean_error.index, rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+def plot_models_errors_overtime(results, model_name):
+    """
+    Plot yearly mean errors for multiple models stored in a dictionary with custom date ranges.
+
+    Parameters:
+        results (dict): Dictionary containing ground truth, predictions, masks, and custom start/end dates.
+                        Keys for each model day are:
+                        - 'y_<day>', 'y_pred_<day>', 'mask_<day>', 'start_<day>', 'end_<day>'.
+        model_name (str): The name of the model being plotted, for use in the plot title.
+    """
+    plt.figure(figsize=(10, 6))
+
+    for model_day in [10, 15, 30]:
+        # Extract data and custom date range for the current model day
+        y = results.get(f'y_{model_day}')
+        y_pred = results.get(f'y_pred_{model_day}')
+        start = results.get(f'start_{model_day}')
+        end = results.get(f'end_{model_day}')
+
+        # Ensure all required data exists
+        if y is None or y_pred is None or start is None or end is None:
+            print(f"Missing data for model day {model_day}. Skipping.")
+            continue
+
+        # Create a date range corresponding to the days in the dataset
+        start_pd = pd.to_datetime(start)
+        end_pd = pd.to_datetime(end)
+        range_dates = pd.date_range(start_pd, end_pd, periods=y.shape[0])
+
+        # Calculate daily error for the entire image
+        daily_error = np.nanmean(np.abs(y - y_pred), axis=(1, 2))  # Shape: [s]
+
+        # Group errors by year
+        df = pd.DataFrame({'date': range_dates, 'error': daily_error})
+        df['year'] = df['date'].dt.year
+        yearly_mean_error = df.groupby('year')['error'].mean()
+
+        # Plot yearly mean error for the current model day
+        plt.plot(
+            yearly_mean_error.index,
+            yearly_mean_error.values,
+            marker='o',
+            linestyle='-',
+            label=f'Model Day {model_day}'
+        )
+
+    # Finalize the plot
+    plt.title(f"Yearly Mean Errors for Model {model_name} at Different Steps", fontsize=14)
+    plt.xlabel('Year', fontsize=12)
+    plt.ylabel('Mean Error', fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.xticks(rotation=45)
+    plt.legend(fontsize=12)
+    plt.tight_layout()
     plt.show()

@@ -34,16 +34,17 @@ parser.add_argument('--auto_days',type=int,default=os.getenv("auto_days", 180))
 
 parser.add_argument('--feature_days',type=int,default=os.getenv("feature_days", 90))
 parser.add_argument('--auto_ep',type=int,default=os.getenv("auto_ep", 80))
-parser.add_argument('--gen_sample',type=int,default=os.getenv("gen_sample", 2))
+parser.add_argument('--gen_samples',type=int,default=os.getenv("gen_samples", 1))
 
 ### diffusion parameters
 parser.add_argument('--diff_schedule',type=str,default=os.getenv("diff_schedule", "sigmoid"))
-parser.add_argument('--diff_sample',type=str,default="ddpm")
+parser.add_argument('--diff_sample', type=str, default=os.getenv("diff_sample", "ddim"))
 parser.add_argument('--epoch',type=int,default=os.getenv("epoch", 0), help="diffusion model trained epochs")
 parser.add_argument('--conditioning', type=str, choices=["none", "all", "autoenc","climate"], default=os.getenv("conditioning",'all'))
 parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
 parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
+parser.add_argument("--ensamble", type=bool, default=False, help="if making ensamble predictions")
 
 args = parser.parse_args()
 
@@ -63,14 +64,15 @@ _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
 checkpoint_path  = checkpoint_dir + f"/checkpoint_epoch_{args.epoch}.pth.tar"
 
 logger = init_logging(log_file=os.path.join(log_path, 
-                                            f"dime_days_{args.step_length}_"  \
-                                            f"features_{args.feature_days}"
-                                            f"{args.mode}.log"))
-writer = init_tb(log_path)
+    f"dime_days_{args.step_length}_"  \
+    f"features_{args.feature_days}"
+    f"{args.mode}.log"))
+# writer = init_tb(log_path)
 
 train_data, val_data, train_label, val_label, \
     test_data, test_label = CNN_split(data, target, 
-    split_percentage=config["MODELS"]["split"])
+    split_percentage=0.9375,
+    val_split=0) #config["MODELS"]["split"]
 
 # create a CustomDataset object using the reshaped input data
 datagenrator_train = DataGenerator(model_config, 
@@ -78,25 +80,26 @@ datagenrator_train = DataGenerator(model_config,
     train_data, 
     train_label, 
     autoencoder, 
-    data_split="train"
+    # data_split="train"
 )
 
 dataloader_train = DataLoader(datagenrator_train, 
     shuffle=True, 
     batch_size=model_config.batch_size)
 
-datagenrator_test= DataGenerator(model_config, 
-    args,
-    test_data, 
-    test_label, 
-    autoencoder, 
-    data_split="test"
-)
+if test_data is not None:
+    datagenrator_test= DataGenerator(model_config, 
+        args,
+        test_data, 
+        test_label, 
+        autoencoder, 
+        # data_split="test"
+    )
 
-dataloader_test = DataLoader(datagenrator_test, 
-    shuffle=True, 
-    batch_size=model_config.batch_size
-)
+    dataloader_test = DataLoader(datagenrator_test, 
+        shuffle=False, 
+        batch_size=model_config.batch_size
+    )
 
 ########################### Models and training functions #######################
 
@@ -115,7 +118,7 @@ else:
         out_dim=model_config.output_channels).to(model_config.device)
     weight_decay = 1e-3
 
-model = DataParallel(model)
+model = DataParallel(model)    
 
 optimizer = torch.optim.AdamW(model.parameters(), 
     lr=model_config.learning_rate, 
@@ -163,8 +166,8 @@ if args.mode == "train":
     diffusion_train_loop(args, 
                          model_config, 
                          fdp, 
-                         dataloader_train,
-                         writer, checkpoint_dir, 
+                         dataloader_train, 
+                         checkpoint_dir, 
                          start_epoch)
     
 elif args.mode == "generate":

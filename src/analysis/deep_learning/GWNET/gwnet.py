@@ -10,6 +10,8 @@ class nconv(nn.Module):
         super(nconv,self).__init__()
 
     def forward(self,x, A):
+        device = x.device  # Get the device of `x`
+        A = A.to(device)
         x = torch.einsum('ncvl,vw->ncwl',(x,A))
         return x.contiguous()
 

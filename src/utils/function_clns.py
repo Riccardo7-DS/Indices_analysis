@@ -533,51 +533,78 @@ def find_checkpoint_path(model_config, args, return_latest:bool=False):
         return checkp_path
 
 
-def CNN_split(data:np.array, 
-              target:np.array, 
-              split_percentage:float=0.7,
-              val_split:float=0.5,
-              print_actual_days:bool=True):
-    tot_perc_val = (1 - split_percentage) * val_split
-    tot_perc_test = 1 - tot_perc_val - split_percentage 
-    logger.info(f"Data is divided as {split_percentage :.0%} train," 
-                f" {tot_perc_val :.0%} validation and {tot_perc_test :.0%} independent test")
-    ###splitting test and train
-    n_samples = data.shape[0]
-    train_samples = int(round(split_percentage*n_samples, 0))
-    test_samples = int(round(tot_perc_test*n_samples, 0))
-    val_samples = n_samples - (train_samples + test_samples)
+def CNN_split(data: np.array, 
+              target: np.array, 
+              split_percentage: float = 0.7, 
+              val_split: float = 0.5, 
+              print_actual_days: bool = True):
+    """
+    Splits the data into train, validation, and optionally test sets.
 
+    Args:
+        data (np.array): Input data array.
+        target (np.array): Target labels array.
+        split_percentage (float): Percentage of data to use for training.
+        val_split (float): Fraction of non-training data to allocate to validation (0 to 1).
+        print_actual_days (bool): Whether to print the date ranges for each split.
+
+    Returns:
+        tuple: Train, validation, and optionally test splits for both data and target.
+    """
+    # Adjust validation and test proportions
+    tot_perc_val = (1 - split_percentage) * val_split
+    tot_perc_test = 1 - tot_perc_val - split_percentage
+
+    # Ensure valid splits
+    if tot_perc_val + split_percentage > 1 or tot_perc_test < 0:
+        raise ValueError("Invalid split percentages: ensure val_split and split_percentage are correctly configured.")
+
+    logger.info(f"Data is divided as {split_percentage:.0%} train, "
+                f"{tot_perc_val:.0%} validation, and {tot_perc_test:.0%} independent test")
+
+    # Calculate sample counts
+    n_samples = data.shape[0]
+    train_samples = int(round(split_percentage * n_samples, 0))
+    val_samples = int(round(tot_perc_val * n_samples, 0))
+    test_samples = n_samples - (train_samples + val_samples)
+
+    # Perform the split
     train_data = data[:train_samples]
-    val_data =  data[train_samples:train_samples+val_samples]
-    test_data= data[train_samples+ val_samples:]
+    val_data = data[train_samples:train_samples + val_samples]
+    test_data = None if test_samples <= 0 else data[train_samples + val_samples:]
 
     train_label = target[:train_samples]
-    val_label =  target[train_samples:train_samples+val_samples]
-    test_label = target[train_samples+ val_samples:]
+    val_label = target[train_samples:train_samples + val_samples]
+    test_label = None if test_samples <= 0 else target[train_samples + val_samples:]
 
     if print_actual_days:
         from utils.function_clns import config
         import pandas as pd
         from datetime import timedelta, datetime
+
         start_data = config["DEFAULT"]["date_start"]
         end_data = config["DEFAULT"]["date_end"]
         start_pd = pd.to_datetime(start_data, format='%Y-%m-%d')
         end_pd = pd.to_datetime(end_data, format='%Y-%m-%d')
-        date_range = pd.date_range(start_pd, end_pd)
+        # date_range = pd.date_range(start_pd, end_pd)
 
-        end_1 = start_pd + timedelta(days = train_samples-1)
-        new_start = end_1 + timedelta(days = 1)
+        end_1 = start_pd + timedelta(days=train_samples - 1)
+        new_start = end_1 + timedelta(days=1)
 
-        end_2 = new_start + timedelta(days = val_samples-1)
-        new_start_2 = end_2 + timedelta(days = 1)
+        if test_samples > 0:
+            end_2 = new_start + timedelta(days=val_samples - 1)
+            new_start_2 = end_2 + timedelta(days=1)
+            final_end = new_start_2 + timedelta(days=test_samples - 1)
 
-        final_end = new_start_2 + timedelta(days=test_samples-1)
+            logger.info(f"Training is from {start_data} to {datetime.strftime(end_1, '%Y-%m-%d')}, "
+                        f"validation from {datetime.strftime(new_start, '%Y-%m-%d')} to {datetime.strftime(end_2, '%Y-%m-%d')}, "
+                        f"testing from {datetime.strftime(new_start_2, '%Y-%m-%d')} to {datetime.strftime(final_end, '%Y-%m-%d')}")
+        else:
+            end_2 = new_start + timedelta(days=val_samples - 1)
+            logger.info(f"Training is from {start_data} to {datetime.strftime(end_1, '%Y-%m-%d')}, "
+                        f"validation from {datetime.strftime(new_start, '%Y-%m-%d')} to {datetime.strftime(end_2, '%Y-%m-%d')}")
 
-        logger.info(f"Training is from {start_data} to {datetime.strftime(end_1, '%Y-%m-%d')}, "
-            f"validation from {datetime.strftime(new_start, '%Y-%m-%d')} to {datetime.strftime(end_2, '%Y-%m-%d')}, "
-            f"testing from {datetime.strftime(new_start_2, '%Y-%m-%d')} to {datetime.strftime(final_end, '%Y-%m-%d')}")
-
+    
     return train_data, val_data, train_label, val_label, test_data, test_label
 
 

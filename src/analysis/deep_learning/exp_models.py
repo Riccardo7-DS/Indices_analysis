@@ -5,6 +5,9 @@ if __name__=="__main__":
     import os
     import pyproj
     import torch
+    import matplotlib
+    matplotlib.use('Agg')
+
     from analysis.configs.config_models import config_gwnet as model_config
 
     parser = argparse.ArgumentParser(description='test', conflict_handler="resolve")
@@ -13,6 +16,8 @@ if __name__=="__main__":
     parser.add_argument('--mode', default=os.environ.get('mode', "train"))
 
     parser.add_argument('--loglevel', default=os.environ.get('loglevel',False))
+    parser.add_argument('--save_output', default=os.environ.get('save_output',True))
+
 
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',default=True,help='whether to add graph convolution layer')
@@ -43,7 +48,7 @@ if __name__=="__main__":
         raise ValueError("Please chose a checkpoint if in evaluate mode")  
 
     for feature_days in [90]: 
-        for window in [10]:
+        for window in [args.step_length]:
             if args.checkpoint > 0 :
                 checkpoint_path =  model_config.output_dir + f"/{(args.model).lower()}" \
                 f"/days_{window}/features_{feature_days}" \
@@ -63,7 +68,7 @@ if __name__=="__main__":
                         load_local_precipitation=True,
                         precipitation_only=False,
                         checkpoint_path=checkpoint_path,
-                        add_extra_data=True
+                        add_extra_data=False
                     )
                     
             except RuntimeError as e:

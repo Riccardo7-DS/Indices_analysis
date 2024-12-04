@@ -7,6 +7,8 @@ from analysis import tensor_corr, EarlyStopping
 import logging
 import pickle
 import pandas as pd
+from torch.func import functional_call
+
 logger = logging.getLogger(__name__)
 
 # Define a custom unpickler that will remap the old module to the new one
@@ -21,6 +23,90 @@ class CustomUnpickler(pickle.Unpickler):
 def load_with_custom_unpickler(file_path):
     with open(file_path, "rb") as handle:
         return CustomUnpickler(handle).load()
+    
+class ModelEnsamble():
+    def __init__(self, config, model):
+        self.num_ensambles = config.num_ensambles
+        self.models = torch.nn.ModuleList([model for _ in range(config.num_ensambles)])
+
+    @torch.no_grad()    
+    def make_predictions(self, x_t, batched_times, x_cond):
+        """
+        Perform predictions using an ensemble of models wrapped in DataParallel.
+        
+        :param x_t: Tensor at timestep t (B x C x H x W)
+        :param batched_times: Current timestep for each batch (B,)
+        :param x_cond: Conditioning input (optional)
+        :return: Aggregated predictions from the ensemble
+        """
+        # Collect predictions from all models
+        predictions = [model(x_t, batched_times, x_cond) for model in self.models]
+
+        # Aggregate predictions (e.g., mean)
+        # predictions = torch.stack(predictions, dim=0).mean(dim=0)  # Adjust aggregation logic if needed
+        return predictions
+
+    def vectorized_predictions(self, config, model):
+        from torch.func import stack_module_state
+        self.models = [model for _ in range(self.num_ensambles)]
+        self.params, self.buffers = stack_module_state(self.models)
+        import copy
+        base_model = copy.deepcopy(self.models[0])
+        self.base_model = base_model.to('meta')
+
+def vectorized_ensemble_predictions(ensemble_model, x_t, batched_times, x_cond):
+    """
+    Vectorize predictions for the ensemble models and aggregate the results.
+
+    :param ensemble_model: Instance of ModelEnsamble
+    :param x_t: Tensor at timestep t (B x C x H x W)
+    :param batched_times: Current timestep for each batch (B,)
+    :param x_cond: Conditioning input (optional)
+    :return: Aggregated predictions from the ensemble
+    """
+    from torch.func import functional_call
+    from torch import vmap
+
+    # Prepare inputs for the model
+    inputs = (x_t, batched_times, x_cond)
+
+    # Use `vmap` to efficiently evaluate the ensemble models
+    predictions = vmap(
+        lambda params, buffers: functional_call(ensemble_model.base_model, (params, buffers), inputs),
+        in_dims=(0, 0)
+    )(ensemble_model.params, ensemble_model.buffers)
+
+    # Aggregate ensemble predictions (e.g., mean)
+    # aggregated_predictions = predictions.mean(dim=0)  # Change aggregation logic if needed
+    return predictions
+
+def initialize_process_group():
+    import torch.distributed as dist
+    # Set environment variables for single-node multi-GPU
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+    os.environ["WORLD_SIZE"] = "1"  # Number of nodes (1 for single node)
+    os.environ["RANK"] = "0"  # Rank of this node (0 for single node)
+    os.environ["LOCAL_RANK"] = "0" 
+
+    # Initialize the process group
+    dist.init_process_group(backend="nccl",  init_method="env://")
+
+
+
+def load_model_in_DDP(state_dict):
+    from collections import OrderedDict
+    # Remove `module.` prefix
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        if k.startswith("module."):
+            new_state_dict[k[7:]] = v  # Remove `module.` prefix
+        else:
+            new_state_dict[k] = v
+    return new_state_dict
+
+def fmodel(base_model,params, buffers, x):
+    return functional_call(base_model, (params, buffers), (x,))
 
 def load_stored_data(model_config, data_name = "data_convlstm_full" ):
     import pickle
@@ -67,7 +153,7 @@ def custom_subset_data(
     end_pd = pd.to_datetime(end_data, format='%Y-%m-%d')
     date_range = pd.date_range(start_pd, end_pd)
 
-    extra_days =  args.auto_days + model_config.num_frames_output + model_config.output_channels if autoencoder else 0
+    extra_days =  args.auto_days if autoencoder else 0 #+ model_config.num_frames_output 
 
     new_start = pd.to_datetime( start, format='%Y-%m-%d') - timedelta(days=extra_days)
     new_end = pd.to_datetime( end, format='%Y-%m-%d')
@@ -78,7 +164,7 @@ def custom_subset_data(
         data = np.nan_to_num(data, nan=-1)
         target = np.nan_to_num(target, nan=-1)
     
-    return data[i:e], target[i:e], scaler, mask
+    return data[i:e+1], target[i:e+1], scaler, mask
 
 def plot_noisy_images(image, imgs, with_orig=False, row_title=None, **imshow_kwargs):
     if not isinstance(imgs[0], list):
@@ -110,10 +196,16 @@ def plot_noisy_images(image, imgs, with_orig=False, row_title=None, **imshow_kwa
     plt.close()
 
 
-def load_checkpoint(checkpoint_path, model, optimizer, scheduler):
+def load_checkpoint(args, checkpoint_path, model, optimizer, scheduler):
+    from analysis import load_model_in_DDP
     if checkpoint_path is not None:
         checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint['state_dict'])
+        # if args.ensamble is True:
+        #     state_dict = load_model_in_DDP(checkpoint['state_dict'])
+        # else:
+        #     state_dict = checkpoint['state_dict']
+        
+        model.load_state_dict( checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['lr_sched'])
         checkp_epoch = checkpoint['epoch']
@@ -139,8 +231,8 @@ def saveImage(image, image_size, epoch, step, folder):
 
 def diffusion_train_loop(args, 
                          model_config, fdp, 
-                         dataloader, 
-                         writer, checkpoint_dir, 
+                         dataloader,  
+                         checkpoint_dir, 
                          start_epoch=0):
 
     early_stopping = EarlyStopping(model_config, verbose=True)
@@ -181,10 +273,8 @@ def diffusion_train_loop(args,
             sample_im = fdp.p_sample_loop(args, 
                 fdp.model, 
                 dataloader, 
-                img_shape, 
-                model_config.timesteps, 
-                samples=1,
-                random_enabled=True
+                img_shape,
+                samples=1
             )
             saveImage(sample_im, model_config.image_size, epoch, step, results_folder)
 
@@ -195,10 +285,10 @@ def diffusion_train_loop(args,
         noise_loss_records.append(noise_loss.item())
         corr_records.append(corr.item())
         r_records.append(rsq.item())
-        writer.add_scalar('Loss/train', np.mean(noise_loss.item()), epoch)  #Logging average loss per epoch to tensorboard
-        writer.add_scalar("Learning rate", fdp.optimizer.param_groups[0]["lr"], epoch)
-        writer.add_scalar("Correlation", np.mean(corr.item()), epoch)
-        writer.add_scalar("R squared", np.mean(rsq.item()), epoch)
+        # writer.add_scalar('Loss/train', np.mean(noise_loss.item()), epoch)  #Logging average loss per epoch to tensorboard
+        # writer.add_scalar("Learning rate", fdp.optimizer.param_groups[0]["lr"], epoch)
+        # writer.add_scalar("Correlation", np.mean(corr.item()), epoch)
+        # writer.add_scalar("R squared", np.mean(rsq.item()), epoch)
 
         model_dict = {
             'epoch': epoch,
@@ -230,9 +320,7 @@ def diffusion_sampling(args, model_config, fdp, dataloader, samples=1, random_en
         fdp.model, 
         dataloader, 
         img_shape, 
-        model_config.timesteps, 
-        samples,
-        random_enabled 
+        samples
     )
     return sample_im
 

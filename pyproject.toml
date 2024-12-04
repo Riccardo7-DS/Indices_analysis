@@ -55,6 +55,7 @@ torchvision = "^0.20.0"
 torchaudio = "^2.5.0"
 scikit-image = "^0.24.0"
 pytorch-ignite = "^0.5.1"
+ema-pytorch = "^0.7.7"
 
 
 [build-system]

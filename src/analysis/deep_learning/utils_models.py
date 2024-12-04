@@ -768,7 +768,8 @@ def get_train_valid_loader(model_config,
         test_valid, test_label = CNN_split(data, 
                                            labels, 
                                            split_percentage=train_split,
-                                           val_split=0.333)
+                                           val_split=0.5)
+                                           #val_split=0.333)
     
     train_dataset = CustomConvLSTMDataset(model_config, args, 
                                           train_data, train_label, 
@@ -1228,7 +1229,7 @@ def mask_mape(preds, labels, mask, return_value=True):
         full_mask = np.broadcast_to(mask, loss.shape)
         null_loss = (loss * full_mask)
         null_loss = np.where(np.isnan(mask), 0, null_loss)
-    if not mask:
+    elif not mask:
         full_mask = torch.ones(loss.shape)
 
     if return_value:
@@ -1412,11 +1413,11 @@ class GWNETtrainer():
             layers=model_config.layers
         )
 
-        # self.model = DataParallel(self.model)
+        self.model = DataParallel(self.model)
         
         self.learning_rate = model_config.learning_rate
         self.model.to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), 
+        self.optimizer = optim.AdamW(self.model.parameters(), 
                                     lr=self.learning_rate,
                                     weight_decay=model_config.weight_decay)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -1490,18 +1491,18 @@ class GWNETtrainer():
                 output_scaled = scaler.inverse_transform(output)
                 real_scaled = scaler.inverse_transform(real)
 
-            if draw_scatter is True:
+            if args.scatterplot is True:
                 img_pred = output_scaled.cpu().detach().numpy().flatten()
                 img_real = real_scaled.cpu().detach().numpy().flatten()
                 h, xed, yed = evaluate_hist2d(img_real, img_pred, nbins= 200)
                 n = n+h
 
-            loss = self.loss(output_scaled,real_scaled)
+            loss = self.loss(output_scaled, real_scaled)
             if all_metrics is True:
                 mape = masked_mape(output_scaled,real_scaled).item()
                 rmse = masked_rmse(output_scaled,real_scaled).item()
 
-            return loss.item(), mape, rmse, output, real, n
+            return loss.item(), mape, rmse, output_scaled, real_scaled, n
         
     def schedule_learning_rate(self, mean_loss):
         self.scheduler.step(mean_loss)
@@ -1552,7 +1553,6 @@ class GWNETtrainer():
     def gwnet_test_loop(self, 
             args, 
             config, 
-            engine, 
             test_dl, 
             scaler, 
             draw_scatter:bool=False
@@ -1583,6 +1583,9 @@ class GWNETtrainer():
                 n=n, 
                 draw_scatter=draw_scatter
             )
+
+            output = torch.clamp(output, -1, 1)
+            real = torch.clamp(real, -1, 1)
             outputs.append(output)
             target.append(real)
            

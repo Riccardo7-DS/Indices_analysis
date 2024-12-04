@@ -97,7 +97,7 @@ def training_convlstm(args:dict,
         f"features_{args.feature_days}.log"),
         verbose=verbose)
     
-    writer = init_tb(log_path)
+    # writer = init_tb(log_path)
 
     ####################################################################################
 
@@ -204,7 +204,7 @@ def training_convlstm(args:dict,
             early_stopping(np.mean(val_records['loss']), 
                            model_dict, epoch, checkpoint_dir)
 
-            update_tensorboard_scalars(writer, metrics_recorder)
+            # update_tensorboard_scalars(writer, metrics_recorder)
             learning_rate = print_lr_change(learning_rate, scheduler)
 
             plt.plot(range(epoch - start_epoch + 1), train_loss_records, label='train')
@@ -269,6 +269,13 @@ def training_convlstm(args:dict,
                                np.mean(test_records["rmse"]),
                                np.mean(test_records["mape"]),
                                np.mean(test_records["loss"])))
+        
+        if args.save_output is True:
+            out_path = os.path.join(img_path, "output_data")
+            if not os.path.exists(out_path):
+                os.makedirs(out_path)
+            for d, name in zip([y_corr, y_true, mask], ['pred_data_dr', 'true_data_dr', 'mask_dr']):
+                np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu())
 
 
 def pipeline_convlstm(args:dict,

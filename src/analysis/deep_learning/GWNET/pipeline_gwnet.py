@@ -57,7 +57,7 @@ def training_weatherGCNet(args,
     logger = init_logging(log_file=os.path.join(log_path, 
                             f"pipeline_{(args.model).lower()}_"
                             f"features_{args.feature_days}.log"), verbose=False)
-    writer = init_tb(log_path)
+    # writer = init_tb(log_path)
 
     if data is None:
         logger.info(f"Starting training WeatherGCNet model for {args.step_length}"
@@ -159,7 +159,7 @@ def training_weatherGCNet(args,
             early_stopping( np.mean(epoch_records['loss']), 
                            model_dict, epoch, checkpoint_dir)
 
-            update_tensorboard_scalars(writer, metrics_recorder)
+            # update_tensorboard_scalars(writer, metrics_recorder)
             learning_rate = print_lr_change(learning_rate, scheduler)
 
             if early_stopping.early_stop:
@@ -220,6 +220,14 @@ def training_weatherGCNet(args,
                             ssim_metric,
                             rmse,
                             losses))
+        
+        if args.save_output is True:
+            out_path = os.path.join(img_path, "output_data")
+            if not os.path.exists(out_path):
+                os.makedirs(out_path)
+            for d, name in zip([corr_output, corr_real, mask], ['pred_data_dr', 'true_data_dr', 'mask_dr']):
+                np.save(os.path.join(out_path, f"{name}.npy"), d)
+
 
 # # # # # # # # # #
 
@@ -243,7 +251,7 @@ def training_wavenet(args,
     logger = init_logging(log_file=os.path.join(log_path, 
                             f"pipeline_{(args.model).lower()}_"
                             f"features_{args.feature_days}.log"), verbose=False)
-    writer = init_tb(log_path)
+    # writer = init_tb(log_path)
 
     if data is None:
         
@@ -344,7 +352,7 @@ def training_wavenet(args,
             }
 
             early_stopping(mvalid_loss, model_dict, epoch, checkpoint_dir)
-            update_tensorboard_scalars(writer, metrics_recorder)
+            # update_tensorboard_scalars(writer, metrics_recorder)
 
             if early_stopping.early_stop:
                 logger.info("Early stopping")
@@ -358,7 +366,6 @@ def training_wavenet(args,
         logger.info("Starting evaluation on independent dataset")
         test_records, outputs, y_real = engine.gwnet_test_loop(args,
             model_config, 
-            engine, 
             test_dl, 
             ndvi_scaler,
             draw_scatter=args.scatterplot)
@@ -378,10 +385,18 @@ def training_wavenet(args,
         log = 'The prediction for {} days ahead: Test loss: {:.4f}, ' \
             'Test MAPE: {:.4f}, Test RMSE: {:.4f}, Test SSIM: {:.4f}'
         logger.info(log.format(args.step_length, 
-                               mean_loss, 
-                               mean_mape, 
-                               mean_rmse, 
-                               ssim_metric))
+            mean_loss, 
+            mean_mape, 
+            mean_rmse, 
+            ssim_metric)
+        )
+        
+        if args.save_output is True:
+            out_path = os.path.join(img_path, "output_data")
+            if not os.path.exists(out_path):
+                os.makedirs(out_path)
+            for d, name in zip([corr_output, corr_real, mask], ['pred_data_dr', 'true_data_dr', 'mask_dr']):
+                np.save(os.path.join(out_path, f"{name}.npy"), d)
 
 
 

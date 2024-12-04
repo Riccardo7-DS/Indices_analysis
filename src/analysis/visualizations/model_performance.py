@@ -231,9 +231,7 @@ def compute_coefficients(y_pred, y_true):
 
     return shift_data(y_pred, intercept, coefficient)
 
-logger = init_logging()
 
-basepath = model_config.output_dir + '/dime/days_{}/features_90/images/output_data'
 
 class MetricCollection():
     def __init__(self):
@@ -258,65 +256,71 @@ class MetricCollection():
             })
             self.percentile_metrics = pd.concat([self.percentile_metrics, new_row], ignore_index=True)
 
+
+
+def pipeline_compute_metrics():
 # Example usage:
-metrics = MetricCollection()
+    metrics = MetricCollection()
+    logger = init_logging()
+
+    basepath = model_config.output_dir + '/dime/days_{}/features_90/images/output_data'
 
 
-for days in [10, 15, 30]:
-    path = basepath.format(days)
-    sample_image = np.load(os.path.join(path,"pred_data.npy"))
-    mask = np.load(os.path.join(path,"mask.npy"))
-    y_true = np.load(os.path.join(path,"true_data.npy"))
-    img_path = os.path.join(path, "../")
+    for days in [10, 15, 30]:
+        path = basepath.format(days)
+        sample_image = np.load(os.path.join(path,"pred_data.npy"))
+        mask = np.load(os.path.join(path,"mask.npy"))
+        y_true = np.load(os.path.join(path,"true_data.npy"))
+        img_path = os.path.join(path, "../")
 
-    y_bias_corr = compute_coefficients(sample_image, y_true)
-    
-    ### Compute MSE spatially-wise and scatterplot
-    loss = MSELoss(reduction="none")
-    mse = compute_image_loss_plot(y_bias_corr, y_true, mask_mse, mask, False, img_path, cmap, False)
-    metrics.gather_metric(days, 'rmse', np.sqrt(mse))
+        y_bias_corr = compute_coefficients(sample_image, y_true)
 
-    ### compute mean NSE, SSIM
-    img1 = torch.from_numpy(y_bias_corr).unsqueeze(1)
-    img2 = torch.from_numpy(y_true).unsqueeze(1)
-    ssim_value = ssim(img1, img2)
-    nse_value = nse_error(img1, img2)
+        ### Compute MSE spatially-wise and scatterplot
+        loss = MSELoss(reduction="none")
+        mse = compute_image_loss_plot(y_bias_corr, y_true, mask_mse, mask, False, img_path, cmap, False)
+        metrics.gather_metric(days, 'rmse', np.sqrt(mse))
 
-    print("SSIM for :", round(ssim_value, 4))
-    print("NSE:", round(nse_value,4))
+        ### compute mean NSE, SSIM
+        img1 = torch.from_numpy(y_bias_corr).unsqueeze(1)
+        img2 = torch.from_numpy(y_true).unsqueeze(1)
+        ssim_value = ssim(img1, img2)
+        nse_value = nse_error(img1, img2)
 
-    metrics.gather_metric(days, 'ssim', ssim_value)
-    metrics.gather_metric(days, 'nse', nse_value)
+        print("SSIM for :", round(ssim_value, 4))
+        print("NSE:", round(nse_value,4))
 
-    ### Compute metrics by percentiles
+        metrics.gather_metric(days, 'ssim', ssim_value)
+        metrics.gather_metric(days, 'nse', nse_value)
+
+        ### Compute metrics by percentiles
+
+        for metric in ['rmse', 'nse',"bias"]:
+            metric_values, percentile_ranges, boundary_values = calculate_performance_metrics(y_true, 
+                                                                                              y_bias_corr, 
+                                                                                              metric)
+            metrics.gather_percentile_metrics(days, 
+                                              metric, 
+                                              metric_values, 
+                                              percentile_ranges, 
+                                              boundary_values)
+            # Print results
+            # for i, (value, percentile, boundary) in enumerate(zip(metric_values, percentile_ranges, boundary_values)):
+            #     print(f"For percentile range {percentile:.1f} to {percentile+0.1:.1f} (value <= {boundary:.2f}), the {metric.upper()} is {value:.4f}")
+
+            # Plot the results
+            # plot_performance_vs_percentile(metric_values, percentile_ranges, boundary_values, metric, cmap)
+
+
+
+    # At the end, you can access the stored data
+    print("Single metrics:\n", metrics.single_metrics)
+    print("Percentile metrics:\n", metrics.percentile_metrics)
+    print(metrics.single_metrics.sort_values("metric").to_string(index=False))
+
 
     for metric in ['rmse', 'nse',"bias"]:
-        metric_values, percentile_ranges, boundary_values = calculate_performance_metrics(y_true, 
-                                                                                          y_bias_corr, 
-                                                                                          metric)
-        metrics.gather_percentile_metrics(days, 
-                                          metric, 
-                                          metric_values, 
-                                          percentile_ranges, 
-                                          boundary_values)
-        # Print results
-        # for i, (value, percentile, boundary) in enumerate(zip(metric_values, percentile_ranges, boundary_values)):
-        #     print(f"For percentile range {percentile:.1f} to {percentile+0.1:.1f} (value <= {boundary:.2f}), the {metric.upper()} is {value:.4f}")
-
-        # Plot the results
-        # plot_performance_vs_percentile(metric_values, percentile_ranges, boundary_values, metric, cmap)
-
-
-
-# At the end, you can access the stored data
-print("Single metrics:\n", metrics.single_metrics)
-print("Percentile metrics:\n", metrics.percentile_metrics)
-print(metrics.single_metrics.sort_values("metric").to_string(index=False))
-
-
-for metric in ['rmse', 'nse',"bias"]:
-    plot_performance_vs_percentile_multi_days(metrics.percentile_metrics, 
-                                              metric=metric, 
-                                              prediction_days_list=[10, 15, 30],
-                                              cmap=cmap,
-                                              path=img_path)
+        plot_performance_vs_percentile_multi_days(metrics.percentile_metrics, 
+                                                  metric=metric, 
+                                                  prediction_days_list=[10, 15, 30],
+                                                  cmap=cmap,
+                                                  path=img_path)

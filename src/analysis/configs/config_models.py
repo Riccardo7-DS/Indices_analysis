@@ -43,6 +43,7 @@ class ConfigDDIM(BaseConfig):
     num_frames = 1
     output_channels = 1
     num_frames_output = 1
+    num_ensambles = 10
 
     save_and_sample_every = 10
 
@@ -70,7 +71,7 @@ class ConfigDDIM(BaseConfig):
 
     # optimization
 
-    batch_size =  32
+    batch_size = 32
     ema = 0.999
     learning_rate = 1e-4
     epochs = 500
@@ -137,7 +138,7 @@ class ConfigGWNET(BaseConfig):
     epochs = 300
     patience = 10
     learning_rate = 1e-4
-    batch_size= 4
+    batch_size= 16
     dim = 64
 
     null_value = -1
@@ -150,7 +151,7 @@ class ConfigGWNET(BaseConfig):
     in_dim = 10
     out_dim = 1
     dropout = 0.3
-    nhid = 16
+    nhid = 32
     blocks = 6
     layers = 4
     print_every = 100

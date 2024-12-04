@@ -227,7 +227,7 @@ class Forward_diffussion_process():
         self.sampling_timesteps = config.sampling_steps if args.diff_sample=="ddim" else None
         self.device = config.device
         self.loss_fn = loss
-        self.eta = 0.
+        self.eta = 0. if args.diff_sample=="ddim" else 1
         self._set_alphas_betas(args)
         self._set_post_variance()
         self.model = model
@@ -360,45 +360,56 @@ class Forward_diffussion_process():
         return x_t_minus_one
     
     @torch.no_grad()
-    def p_sample_ddim(self, model, x_t, t:int, prev_t:int, x_cond=None, clip=True):
+    def p_sample_ddim(self, model, x_t, t, prev_t, x_cond=None, epsilon_theta_t=None, clip=True):
+        """
+        Sample x_(t-1) given x_t and noise predicted by model or ensemble.
 
-        r""" Sample x_(t-1) given x_t and noise predicted
-             by model.
-             
-             :param xt: Image tensor at timestep t of shape -> B x C x H x W
-             :param noise_pred: Noise Predicted by model of shape -> B x C x H x W
-             :param t: Current time step
-
+        :param epsilon_theta_t: Precomputed noise prediction (optional)
         """
         epsilon_t = torch.randn_like(x_t)
-
         b = x_t.shape[0]
 
         batched_times = torch.full((b,), t, device=self.device, dtype=torch.long)
-        batched_prev_t =  torch.full((b,), prev_t, device=self.device, dtype=torch.long)
+        batched_prev_t = torch.full((b,), prev_t, device=self.device, dtype=torch.long)
 
-        # get current and previous alpha_cumprod
+        # Get current and previous alpha_cumprod
         alpha_t = self._extract(self.alpha_bars, batched_times, x_t.shape)
         alpha_t_prev = self._extract(self.alpha_bars, batched_prev_t, x_t.shape)
 
-        epsilon_theta_t = model(x_t, batched_times, x_cond)
+        # Calculate epsilon_theta_t if not precomputed
+        if epsilon_theta_t is None:
+            epsilon_theta_t = model(x_t, batched_times, x_cond)
+
         sigma_t = self.eta * torch.sqrt((1 - alpha_t_prev) / (1 - alpha_t) * (1 - alpha_t / alpha_t_prev))
-        
+
         # Original Image Prediction at timestep t
         x_t_minus_one = (
-                torch.sqrt(alpha_t_prev / alpha_t) * x_t +
-                (torch.sqrt(1 - alpha_t_prev - sigma_t ** 2) - torch.sqrt(
-                    (alpha_t_prev * (1 - alpha_t)) / alpha_t)) * epsilon_theta_t +
-                sigma_t * epsilon_t
+            torch.sqrt(alpha_t_prev / alpha_t) * x_t +
+            (torch.sqrt(1 - alpha_t_prev - sigma_t**2) - 
+             torch.sqrt((alpha_t_prev * (1 - alpha_t)) / alpha_t)) * epsilon_theta_t +
+            sigma_t * epsilon_t
         )
-        if clip is True:
+
+        if clip:
             x_t_minus_one = torch.clip(x_t_minus_one, -1, 1)
+
         return x_t_minus_one
+
 
         # Algorithm 2 (including returning all images)
     @torch.no_grad()
     def p_sample(self, args, model, x_start, time_steps, prev_steps, x_cond):
-        if args.diff_sample == "ddpm":
+        if args.ensamble:
+            b, c, w, h = x_start.size()
+            results = torch.empty((model.num_ensambles, b, c, w, h), device=self.device)
+            batched_times = torch.full((b,), time_steps, device=self.device, dtype=torch.long)
+            preds = model.make_predictions(x_start, batched_times, x_cond)
+            for idx, theta_pred in enumerate(preds): 
+                pred = self.p_sample_ddim(model, x_start, time_steps, prev_steps, x_cond, theta_pred)
+                results[idx] = pred
+            return torch.mean(results, dim=0)
+        
+        elif args.diff_sample == "ddpm":
             return self.p_sample_ddpm( model, x_start, time_steps, x_cond)
         elif args.diff_sample =="ddim":
             return self.p_sample_ddim( model, x_start, time_steps, prev_steps, x_cond)
@@ -424,7 +435,7 @@ class Forward_diffussion_process():
         return imgs[-1]
 
     @torch.no_grad()
-    def p_sample_loop(self, args, model, dataloader, img_shape, timesteps, samples, random_enabled):
+    def p_sample_loop(self, args, model, dataloader, img_shape, samples):
         
         def generate_random_samples(shape, to_gpu=True):
             x_cond, y_true = [], []
@@ -448,7 +459,7 @@ class Forward_diffussion_process():
             time_steps_list = np.asarray(list(range(0, self.timesteps, 1)))
             n_timesteps = self.timesteps
 
-        if random_enabled:
+        if args.gen_samples > 0:
             tot_samples = samples * img_shape[0]
         else:
             tot_samples =  len(dataloader.dataset.data)
@@ -459,7 +470,7 @@ class Forward_diffussion_process():
         imgs = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
         y = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
 
-        if random_enabled:
+        if args.gen_samples > 0:
             for s in range(samples):
                 x_cond, y_true = generate_random_samples(img_shape[0])
                 if args.conditioning == "none":
