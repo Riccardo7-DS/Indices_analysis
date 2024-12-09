@@ -10,7 +10,7 @@ from utils.xarray_functions import ndvi_colormap
 from analysis import (
     load_stored_data, DataGenerator, UNET, load_checkpoint,
     custom_subset_data, create_runtime_paths, autoencoder_wrapper,
-    diffusion_sampling, CustomConvLSTMDataset, TwoResUNet,
+    CustomConvLSTMDataset, TwoResUNet,
     Forward_diffussion_process, mask_mse, compute_image_loss_plot,
     tensor_ssim, CustomMetrics
 )
@@ -38,6 +38,7 @@ def diffusion_arguments():
     parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
     parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
     parser.add_argument("--ensamble", type=bool, default=os.getenv("ensamble", False), help="if making ensamble predictions")
+    parser.add_argument("--ema", type=bool, default=os.getenv("ema", False), help="if using ema")
 
     args = parser.parse_args()
     return args
@@ -45,7 +46,7 @@ def diffusion_arguments():
 def diffusion_evaluation(args):
 
     from analysis.configs.config_models import config_ddim as model_config, config_autodime as auto_config
-
+    from timm.utils import ModelEmaV3
     cmap = ndvi_colormap("diverging")
 
     autoencoder = autoencoder_wrapper(args, auto_config, generate_output=False)
@@ -63,7 +64,7 @@ def diffusion_evaluation(args):
 
     data, target, scaler, mask = custom_subset_data(args, model_config, data_name, start, end, True, True)
 
-    datagenerator = DataGenerator(model_config, args, data, target, autoencoder) #past_data=dataset_auto.data[:, :, -1]
+    datagenerator = DataGenerator(model_config, args, data, target, autoencoder, data_split="ema_test") #past_data=dataset_auto.data[:, :, -1]
     dataloader = DataLoader(datagenerator, shuffle=False, batch_size=model_config.batch_size)
     input_channels = datagenerator.data.shape[1] if args.conditioning != "none" else 0
 
@@ -75,33 +76,32 @@ def diffusion_evaluation(args):
     
     model = DataParallel(model)
 
-    # if args.ensamble:
-    #     from analysis import initialize_process_group
-    #     initialize_process_group()
+    ema = ModelEmaV3(model, 
+        decay = model_config.ema_decay, 
+        update_after_step= model_config.ema_update_every
+    ).to(model_config.device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=model_config.learning_rate, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=model_config.scheduler_factor, patience=model_config.scheduler_patience)
     loss_fn = MSELoss()
 
     if os.path.exists(checkpoint_path):
-        model, optimizer, scheduler, start_epoch = load_checkpoint(args, checkpoint_path, model, optimizer, scheduler)
+        model, optimizer, scheduler, start_epoch, ema = load_checkpoint(checkpoint_path, model, optimizer, scheduler, ema)
     else:
         start_epoch = 0
 
+    if args.ema is True:
+        model = ema.module.eval()
+
     if args.ensamble is True:
         from analysis import ModelEnsamble
-        # local_rank = int(os.environ["LOCAL_RANK"])
-        # torch.cuda.set_device(local_rank)
-        # model = model.to(local_rank)
-        # model = DDP(model, device_ids=[local_rank])
         model = ModelEnsamble(model_config, model)
-        
 
-    fdp = Forward_diffussion_process(args, model_config, model, optimizer, scheduler, loss_fn)
+    fdp = Forward_diffussion_process(args, model_config, model, optimizer, scheduler, loss_fn, ema)
     logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
                 f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs")
 
-    y_pred, y_true = diffusion_sampling(args, model_config, fdp, dataloader, samples=args.gen_samples)
+    y_pred, y_true = fdp.diffusion_sampling(args, model_config, model, dataloader, samples=args.gen_samples)
 
     if args.normalize:
         y_pred = scaler.inverse_transform(y_pred)

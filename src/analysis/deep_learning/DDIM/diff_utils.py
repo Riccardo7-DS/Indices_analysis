@@ -196,7 +196,7 @@ def plot_noisy_images(image, imgs, with_orig=False, row_title=None, **imshow_kwa
     plt.close()
 
 
-def load_checkpoint(args, checkpoint_path, model, optimizer, scheduler):
+def load_checkpoint(checkpoint_path, model, optimizer, scheduler, ema):
     from analysis import load_model_in_DDP
     if checkpoint_path is not None:
         checkpoint = torch.load(checkpoint_path)
@@ -208,12 +208,13 @@ def load_checkpoint(args, checkpoint_path, model, optimizer, scheduler):
         model.load_state_dict( checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['lr_sched'])
+        ema.load_state_dict(checkpoint["ema"])
         checkp_epoch = checkpoint['epoch']
         logger.info(f"Resuming training from epoch {checkp_epoch}")
 
     start_epoch = 0 if checkpoint_path is None else checkp_epoch
 
-    return model, optimizer, scheduler, start_epoch
+    return model, optimizer, scheduler, start_epoch, ema
 
 def saveImage(image, image_size, epoch, step, folder):
     import torchvision.transforms as T
@@ -229,8 +230,10 @@ def saveImage(image, image_size, epoch, step, folder):
     # Save the image as a PNG file in the specified directory
     image.save(save_path)
 
+
 def diffusion_train_loop(args, 
-                         model_config, fdp, 
+                         model_config, 
+                         fdp, 
                          dataloader,  
                          checkpoint_dir, 
                          start_epoch=0):
@@ -246,6 +249,7 @@ def diffusion_train_loop(args,
 
     for epoch in range(start_epoch, model_config.epochs):
         for step, (batch, target) in enumerate(dataloader):
+            
             t = torch.randint(0, model_config.timesteps, (batch.shape[0],)).long().to(model_config.device)  # The integers are sampled uniformly from the range [0, timesteps),
             batch = batch.to(model_config.device)
             target = target.squeeze(1).to(model_config.device)
@@ -253,8 +257,8 @@ def diffusion_train_loop(args,
             noise = torch.randn_like(target, dtype=torch.float32)
             # Sampling noise from a gaussian distribution for every training example in batch
             noisy_images = fdp.forward_process(target, t, noise)
+            
             fdp.optimizer.zero_grad()
-
             if args.conditioning == "none":
                 batch = None
             # Forward pass
@@ -267,11 +271,15 @@ def diffusion_train_loop(args,
             noise_loss.backward()
             fdp.optimizer.step()
 
+            fdp.optimizer.zero_grad()
+            if args.ema:
+                fdp.ema.update(fdp.model)
+
         if epoch != 0 and epoch % model_config.save_and_sample_every == 0:
             # logger.info(f"Loss: {noise_loss}")
             img_shape = (1, 1, model_config.image_size, model_config.image_size)
             sample_im = fdp.p_sample_loop(args, 
-                fdp.model, 
+                fdp.ema.module.eval() if args.ema else fdp.model, 
                 dataloader, 
                 img_shape,
                 samples=1
@@ -294,8 +302,8 @@ def diffusion_train_loop(args,
             'epoch': epoch,
             'state_dict': fdp.model.state_dict(),
             'optimizer': fdp.optimizer.state_dict(),
-            "lr_sched": fdp.scheduler.state_dict()
-        }
+            "lr_sched": fdp.scheduler.state_dict(),
+            "ema": fdp.ema.state_dict()}
 
         early_stopping(np.mean(noise_loss.item()), 
                         model_dict, epoch, checkpoint_dir)
@@ -314,15 +322,7 @@ def diffusion_train_loop(args,
                                  f'{args.step_length}.png'))
         plt.close()
 
-def diffusion_sampling(args, model_config, fdp, dataloader, samples=1, random_enabled=False):
-    img_shape = (model_config.batch_size, 1, model_config.image_size, model_config.image_size)
-    sample_im = fdp.p_sample_loop(args, 
-        fdp.model, 
-        dataloader, 
-        img_shape, 
-        samples
-    )
-    return sample_im
+
 
 def compute_image_loss_plot(sample_image, 
                             y_true, 

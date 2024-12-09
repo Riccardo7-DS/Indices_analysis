@@ -217,7 +217,8 @@ class Forward_diffussion_process():
         model,  
         optimizer, 
         scheduler, 
-        loss
+        loss,
+        ema = None
     ):
         self.start = config.beta_start
         self.end = config.beta_end
@@ -231,6 +232,7 @@ class Forward_diffussion_process():
         self._set_alphas_betas(args)
         self._set_post_variance()
         self.model = model
+        self.ema = ema
 
     def _set_schedule(self, args, timesteps):
         if args.diff_schedule == "linear":
@@ -425,7 +427,7 @@ class Forward_diffussion_process():
             for t in sampling_steps:
                 x_start = z_t if x_start is None else x_start
                 x_start = self.p_sample(args, 
-                    model, 
+                    model,
                     x_start, 
                     time_steps_list[t], 
                     time_steps_prev[t],
@@ -516,6 +518,17 @@ class Forward_diffussion_process():
                     y[start:end] = targets.squeeze().float().to(self.device)                
 
         return imgs, y
+    
+    def diffusion_sampling(self, args, model_config, model, dataloader, samples=1):
+        img_shape = (model_config.batch_size, 1, model_config.image_size, model_config.image_size)
+        sample_im = self.p_sample_loop(args, 
+            model, 
+            dataloader, 
+            img_shape, 
+            samples
+        )
+        return sample_im
+
 
 '''
 

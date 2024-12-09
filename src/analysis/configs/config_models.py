@@ -47,6 +47,9 @@ class ConfigDDIM(BaseConfig):
 
     save_and_sample_every = 10
 
+    ema_decay = 0.995
+    ema_update_every = 50
+
     scheduler_patience = 3
     scheduler_factor = 0.7
 

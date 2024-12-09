@@ -768,8 +768,8 @@ def get_train_valid_loader(model_config,
         test_valid, test_label = CNN_split(data, 
                                            labels, 
                                            split_percentage=train_split,
-                                           val_split=0.5)
-                                           #val_split=0.333)
+                                        #    val_split=0.5)
+                                           val_split=0.333)
     
     train_dataset = CustomConvLSTMDataset(model_config, args, 
                                           train_data, train_label, 

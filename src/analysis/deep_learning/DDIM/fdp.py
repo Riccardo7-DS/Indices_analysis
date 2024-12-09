@@ -1,5 +1,5 @@
 from analysis import Forward_diffussion_process, TwoResUNet, UNET, plot_noisy_images, load_stored_data, DataGenerator, tensor_corr, UNET, create_runtime_paths, init_tb, EarlyStopping
-from analysis import diffusion_train_loop, diffusion_sampling, compute_image_loss_plot, autoencoder_wrapper
+from analysis import diffusion_train_loop, compute_image_loss_plot, autoencoder_wrapper
 from analysis.configs.config_models import config_ddim as model_config
 from torch.nn import L1Loss, MSELoss, DataParallel
 import numpy as np
@@ -12,6 +12,7 @@ import logging
 from torch.utils.data import DataLoader
 from utils.function_clns import config, CNN_split, init_logging
 from utils.xarray_functions import ndvi_colormap
+from timm.utils import ModelEmaV3
 import matplotlib.pyplot as plt
 import torch
 import matplotlib
@@ -44,7 +45,8 @@ parser.add_argument('--conditioning', type=str, choices=["none", "all", "autoenc
 parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
 parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
 parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
-parser.add_argument("--ensamble", type=bool, default=False, help="if making ensamble predictions")
+parser.add_argument("--ensamble", type=bool, default=os.getenv("ensamble", False), help="if making ensamble predictions")
+parser.add_argument("--ema", type=bool, default=os.getenv("ema", False), help="if using ema")
 
 args = parser.parse_args()
 
@@ -71,8 +73,8 @@ logger = init_logging(log_file=os.path.join(log_path,
 
 train_data, val_data, train_label, val_label, \
     test_data, test_label = CNN_split(data, target, 
-    split_percentage=0.9375,
-    val_split=0) #config["MODELS"]["split"]
+    split_percentage = config["MODELS"]["split"]) #0.9375,
+    #val_split=0) 
 
 # create a CustomDataset object using the reshaped input data
 datagenrator_train = DataGenerator(model_config, 
@@ -80,7 +82,7 @@ datagenrator_train = DataGenerator(model_config,
     train_data, 
     train_label, 
     autoencoder, 
-    # data_split="train"
+    data_split="train"
 )
 
 dataloader_train = DataLoader(datagenrator_train, 
@@ -93,7 +95,7 @@ if test_data is not None:
         test_data, 
         test_label, 
         autoencoder, 
-        # data_split="test"
+        data_split="test"
     )
 
     dataloader_test = DataLoader(datagenrator_test, 
@@ -118,7 +120,12 @@ else:
         out_dim=model_config.output_channels).to(model_config.device)
     weight_decay = 1e-3
 
-model = DataParallel(model)    
+model = DataParallel(model)
+
+ema = ModelEmaV3(model, 
+    decay = model_config.ema_decay, 
+    update_after_step= model_config.ema_update_every
+    ).to(model_config.device)
 
 optimizer = torch.optim.AdamW(model.parameters(), 
     lr=model_config.learning_rate, 
@@ -130,22 +137,24 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 )
 
 if args.epoch > 0:
-    model, optimizer, scheduler, start_epoch = load_checkpoint(checkpoint_path, 
+    model, optimizer, scheduler, start_epoch, ema = load_checkpoint(checkpoint_path, 
         model, 
         optimizer, 
-        scheduler
+        scheduler,
+        ema
     )
 else:
     start_epoch = 0
 
 loss_fn = MSELoss()
-fdp = Forward_diffussion_process(args, model_config, 
+fdp = Forward_diffussion_process(args, 
+    model_config, 
     model,  
     optimizer, 
     scheduler, 
-    loss_fn
+    loss_fn,
+    ema
 )
-
 
 ################### test image ############################
 
@@ -164,19 +173,22 @@ if args.mode == "train":
             f"with conditioning option {args.conditioning} and attention {args.attention}"  
             f" sampling technique {args.diff_sample} at epoch {start_epoch}") 
     diffusion_train_loop(args, 
-                         model_config, 
-                         fdp, 
-                         dataloader_train, 
-                         checkpoint_dir, 
-                         start_epoch)
+        model_config, 
+        fdp, 
+        dataloader_train, 
+        checkpoint_dir, 
+        start_epoch
+    )
     
 elif args.mode == "generate":
     logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
            f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs") 
-    sample_image, y_true = diffusion_sampling(args, model_config, fdp, 
-                                              dataloader_test, 
-                                              samples=args.gen_sample,
-                                              random_enabled=True)
+    sample_image, y_true = fdp.diffusion_sampling(args, 
+        model_config, 
+        model, 
+        dataloader_test, 
+        samples=args.gen_samples
+    )
     if args.normalize is True:
         sample_image = scaler.inverse_transform(sample_image)
         y_true = scaler.inverse_transform(y_true)   

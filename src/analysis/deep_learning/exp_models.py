@@ -44,7 +44,7 @@ if __name__=="__main__":
     args = parser.parse_args()
     os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
 
-    if (args.mode == "eval") and (args.checkpoint==0):
+    if (args.mode == "test") and (args.checkpoint==0):
         raise ValueError("Please chose a checkpoint if in evaluate mode")  
 
     for feature_days in [90]: 
@@ -68,7 +68,7 @@ if __name__=="__main__":
                         load_local_precipitation=True,
                         precipitation_only=False,
                         checkpoint_path=checkpoint_path,
-                        add_extra_data=False
+                        add_extra_data=True
                     )
                     
             except RuntimeError as e:
