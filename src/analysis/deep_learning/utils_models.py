@@ -16,6 +16,7 @@ import pickle
 import matplotlib.pyplot as plt
 import pandas as pd
 import logging
+
 logger = logging.getLogger(__name__)
 
 def init_tb(log_path):
@@ -23,6 +24,39 @@ def init_tb(log_path):
     writer = SummaryWriter(log_dir=log_path)
     print("Tensorboard:  tensorboard --logdir="+ log_path)
     return writer
+
+
+def remove_file_with_timeout(file, timeout=5):
+    """
+    Attempts to remove a file with a timeout.
+    
+    Args:
+        file (str): Path to the file to be removed.
+        timeout (int): Maximum time to wait in seconds.
+    
+    Returns:
+        bool: True if the file was removed successfully, False otherwise.
+    """
+    success = []
+
+    def remove():
+        try:
+            os.remove(file)
+            success.append(True)
+        except Exception as e:
+            logger.error(f"Failed to remove {file}: {e}")
+            success.append(False)
+
+    thread = threading.Thread(target=remove)
+    thread.start()
+    thread.join(timeout)
+
+    if thread.is_alive():
+        logger.error(f"Timeout reached while trying to remove {file}")
+        thread.join()  # Cleanup the thread
+        return False
+
+    return success[0] if success else False
 
 def create_runtime_paths(args:dict):
     from definitions import ROOT_DIR
@@ -671,6 +705,12 @@ def test_loop(config,
             # logger.info("Label tensor GPU memory: {:.2f} GB".format(get_tensor_memory(targets)/ (1024**3)))
             outputs = torch.squeeze(model(inputs))
 
+            if len(outputs.shape) == 2:
+                outputs = outputs.unsqueeze(0)
+            
+            if len(targets.shape) == 2:
+                targets = targets.unsqueeze(0)
+
             if args.normalize is True:  
                 outputs = scaler.inverse_transform(outputs)
                 targets = scaler.inverse_transform(targets)
@@ -745,6 +785,41 @@ def persistence_baseline(train_label):
         batch_rmse.append(rmse)
     logger.info("The baseline is a RMSE of {}".format(np.mean(batch_rmse)))
 
+
+def compute_metric_results(results:dict, 
+                            metric_list:list, 
+                            mask:np.ndarray, 
+                            days:list= [10, 15, 30]):
+
+    metrics_results = {}
+    # Iterate through each model
+    for model_name, model_data in results.items():
+        metrics_results[model_name] = {}
+        # Iterate through each prediction horizon
+        for horizon in days:
+            y_key = f"y_{horizon}"
+            y_pred_key = f"y_pred_{horizon}"
+            # mask_key = f"mask_{horizon}"
+
+            # Extract the relevant arrays
+            y_true = model_data[y_key]
+            y_pred = model_data[y_pred_key]
+            # mask = model_data.get(mask_key, None)  # Optional if no mask
+
+            # Calculate SSIM
+            ssim = tensor_ssim(y_true, y_pred)
+
+            # Calculate RMSE using CustomMetrics
+            metric_list = ["rmse"]
+            custom_metrics = CustomMetrics(y_pred, y_true, metric_list, mask, True)
+            rmse = custom_metrics.losses[0]
+
+            # Store the metrics
+            metrics_results[model_name][horizon] = {
+                "rmse": rmse,
+                "ssim": ssim
+            }
+    return metrics_results
 
 def get_train_valid_loader(model_config, 
                            args, 
@@ -1429,13 +1504,20 @@ class GWNETtrainer():
         self.scaler = scaler
         self.clip = 5
 
+    
         if checkpoint_path is not None:
-            checkpoint = torch.load(checkpoint_path)
-            self.model.load_state_dict(checkpoint['state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer'])
-            self.scheduler.load_state_dict(checkpoint['lr_sched'])
-            self.checkp_epoch = checkpoint['epoch']
-            logger.info(f"Resuming training from epoch {self.checkp_epoch}")
+            try:
+                checkpoint = torch.load(checkpoint_path)
+                self.model.load_state_dict(checkpoint['state_dict'])
+                self.optimizer.load_state_dict(checkpoint['optimizer'])
+                self.scheduler.load_state_dict(checkpoint['lr_sched'])
+                self.checkp_epoch = checkpoint['epoch']
+                logger.info(f"Resuming training from epoch {self.checkp_epoch}")
+
+            except FileNotFoundError:
+                from analysis import load_checkp_metadata
+                checkpoint_path = checkpoint_path.removesuffix(".pth.tar")
+                self.model, self.optimizer, self.scheduler, self.checkp_epoch, _ = load_checkp_metadata(checkpoint_path, self.model, self.optimizer, self.scheduler, None)   
 
     def train(self, input, real_val):
         self.model.train()

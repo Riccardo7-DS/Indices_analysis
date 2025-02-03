@@ -402,14 +402,19 @@ class Forward_diffussion_process():
     @torch.no_grad()
     def p_sample(self, args, model, x_start, time_steps, prev_steps, x_cond):
         if args.ensamble:
-            b, c, w, h = x_start.size()
+            if len(x_start.size()) == 4:
+                b, c, w, h = x_start.size()
+            else:
+                m, b, c, w, h = x_start.size()
+
             results = torch.empty((model.num_ensambles, b, c, w, h), device=self.device)
             batched_times = torch.full((b,), time_steps, device=self.device, dtype=torch.long)
-            preds = model.make_predictions(x_start, batched_times, x_cond)
-            for idx, theta_pred in enumerate(preds): 
-                pred = self.p_sample_ddim(model, x_start, time_steps, prev_steps, x_cond, theta_pred)
+            z_t, preds = model.make_predictions(x_start, batched_times, x_cond)
+
+            for idx, (theta_pred, z_t_val) in enumerate(zip(preds, z_t)): 
+                pred = self.p_sample_ddim(model, z_t_val, time_steps, prev_steps, x_cond, theta_pred)
                 results[idx] = pred
-            return torch.mean(results, dim=0)
+            return results
         
         elif args.diff_sample == "ddpm":
             return self.p_sample_ddpm( model, x_start, time_steps, x_cond)
@@ -433,8 +438,12 @@ class Forward_diffussion_process():
                     time_steps_prev[t],
                     x)
                 imgs.append(x_start)
-    
-        return imgs[-1]
+
+        if args.ensamble:
+            return torch.mean(imgs[-1], 0)
+
+        else:
+            return imgs[-1]
 
     @torch.no_grad()
     def p_sample_loop(self, args, model, dataloader, img_shape, samples):
@@ -505,6 +514,7 @@ class Forward_diffussion_process():
                         x_cond=None
                     else:
                         x_cond = inputs.squeeze(0).float().to(self.device)
+
                     img = self.reverse_diffusion(
                         args, 
                         model, 
@@ -521,6 +531,7 @@ class Forward_diffussion_process():
     
     def diffusion_sampling(self, args, model_config, model, dataloader, samples=1):
         img_shape = (model_config.batch_size, 1, model_config.image_size, model_config.image_size)
+        
         sample_im = self.p_sample_loop(args, 
             model, 
             dataloader, 

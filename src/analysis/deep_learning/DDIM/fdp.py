@@ -1,11 +1,11 @@
-from analysis import Forward_diffussion_process, TwoResUNet, UNET, plot_noisy_images, load_stored_data, DataGenerator, tensor_corr, UNET, create_runtime_paths, init_tb, EarlyStopping
-from analysis import diffusion_train_loop, compute_image_loss_plot, autoencoder_wrapper
+from analysis import EMAWithLogging, Forward_diffussion_process, TwoResUNet, UNET, plot_noisy_images, load_stored_data, DataGenerator, tensor_corr, UNET, create_runtime_paths, init_tb, EarlyStopping
+from analysis import diffusion_train_loop,load_checkp_metadata, compute_image_loss_plot, autoencoder_wrapper
 from analysis.configs.config_models import config_ddim as model_config
 from torch.nn import L1Loss, MSELoss, DataParallel
 import numpy as np
 import os
-import argparse
-from analysis import load_autoencoder, load_checkpoint
+import argparse 
+from analysis import load_checkpoint
 import torch
 import matplotlib.pyplot as plt
 import logging
@@ -63,7 +63,7 @@ parser.add_argument('--model',type=str,default="DIME",help='DL model training')
 args = parser.parse_args()
 
 _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
-checkpoint_path  = checkpoint_dir + f"/checkpoint_epoch_{args.epoch}.pth.tar"
+checkpoint_path  = checkpoint_dir + f"/checkpoint_epoch_{args.epoch}"
 
 logger = init_logging(log_file=os.path.join(log_path, 
     f"dime_days_{args.step_length}_"  \
@@ -73,7 +73,7 @@ logger = init_logging(log_file=os.path.join(log_path,
 
 train_data, val_data, train_label, val_label, \
     test_data, test_label = CNN_split(data, target, 
-    split_percentage = config["MODELS"]["split"]) #0.9375,
+    split_percentage = 0.75) #0.9375,
     #val_split=0) 
 
 # create a CustomDataset object using the reshaped input data
@@ -122,10 +122,19 @@ else:
 
 model = DataParallel(model)
 
-ema = ModelEmaV3(model, 
-    decay = model_config.ema_decay, 
-    update_after_step= model_config.ema_update_every
-    ).to(model_config.device)
+# ema = ModelEmaV3(model, 
+#     decay = model_config.ema_decay, 
+#     update_after_step= model_config.ema_update_every
+#     ).to(model_config.device)
+
+if args.ema:
+    ema = EMAWithLogging(model, 
+        beta = model_config.ema_decay, 
+        update_every= model_config.ema_update_every,
+        update_after_step = model_config.update_after_step
+        ).to(model_config.device)
+else:
+    ema = None
 
 optimizer = torch.optim.AdamW(model.parameters(), 
     lr=model_config.learning_rate, 
@@ -137,7 +146,7 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 )
 
 if args.epoch > 0:
-    model, optimizer, scheduler, start_epoch, ema = load_checkpoint(checkpoint_path, 
+    model, optimizer, scheduler, start_epoch, ema = load_checkp_metadata(checkpoint_path, 
         model, 
         optimizer, 
         scheduler,

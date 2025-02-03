@@ -4,12 +4,44 @@ import os
 import torch
 from torch.nn import MSELoss
 from analysis import tensor_corr, EarlyStopping
+from ema_pytorch import EMA
 import logging
+import threading
 import pickle
+import torch.profiler as profiler
 import pandas as pd
 from torch.func import functional_call
 
 logger = logging.getLogger(__name__)
+
+
+class EMAWithLogging(EMA):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.step_count = 0
+        self.logging_triggered = False  # Ensure logging is only done once
+
+    def update(self):
+        self.step_count += 1
+        if self.step_count >= self.update_after_step and not self.logging_triggered:
+            logger.info(f"EMA is now active and will start updating after step {self.update_after_step}.")
+            self.logging_triggered = True
+        super().update()
+
+    def state_dict(self):
+        # Extend the state dict to include step_count and logging_triggered
+        state = super().state_dict()
+        state.update({
+            "step_count": self.step_count,
+            "logging_triggered": self.logging_triggered,
+        })
+        return state
+
+    def load_state_dict(self, state_dict):
+        # Restore step_count and logging_triggered
+        self.step_count = state_dict.pop("step_count", 0)
+        self.logging_triggered = state_dict.pop("logging_triggered", False)
+        super().load_state_dict(state_dict)
 
 # Define a custom unpickler that will remap the old module to the new one
 class CustomUnpickler(pickle.Unpickler):
@@ -39,12 +71,27 @@ class ModelEnsamble():
         :param x_cond: Conditioning input (optional)
         :return: Aggregated predictions from the ensemble
         """
-        # Collect predictions from all models
-        predictions = [model(x_t, batched_times, x_cond) for model in self.models]
+        
+        if len(x_t.size()) == 4:
+            #model_indices = torch.arange(len(self.models), device=x_t.device, dtype=torch.float32).view(-1, 1, 1, 1)
+            # Initialize z_all_t with random values
+            z_all_t = torch.randn(
+                (len(self.models), *x_t.shape),  # Shape matches x_t for dims 1 to the last
+                device=x_t.device,
+                dtype=torch.float32
+            )
+        else:
+            z_all_t = x_t
+
+        # Collect predictions from all models iteratively
+        predictions = []
+        for model, z_t in zip(self.models, z_all_t):
+            prediction = model(z_t, batched_times, x_cond)
+            predictions.append(prediction)
 
         # Aggregate predictions (e.g., mean)
-        # predictions = torch.stack(predictions, dim=0).mean(dim=0)  # Adjust aggregation logic if needed
-        return predictions
+        predictions = torch.stack(predictions, dim=0) # Adjust aggregation logic if needed
+        return z_all_t, predictions
 
     def vectorized_predictions(self, config, model):
         from torch.func import stack_module_state
@@ -195,11 +242,37 @@ def plot_noisy_images(image, imgs, with_orig=False, row_title=None, **imshow_kwa
     plt.pause(10)
     plt.close()
 
+def load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, ema):    # Load metadata
+    
+    if checkpoint_path is not None:
+        import re
+        basepath = os.path.basename(checkpoint_path)
+        epoch = int(re.search(r"checkpoint_epoch_(\d+)", basepath).group(1))
+        metadata_path = os.path.join(checkpoint_path, f"metadata_epoch_{epoch}.pth")
+        metadata = torch.load(metadata_path, weights_only=True)
 
-def load_checkpoint(checkpoint_path, model, optimizer, scheduler, ema):
+        # Load each component
+        for key, file_path in metadata['components'].items():
+            if key == 'state_dict':
+                model.load_state_dict(torch.load(file_path, weights_only=True))
+            elif key == 'optimizer':
+                optimizer.load_state_dict(torch.load(file_path, weights_only=True))
+            elif key == 'lr_sched':
+                scheduler.load_state_dict(torch.load(file_path, weights_only=True))
+            elif key == 'ema':
+                ema.load_state_dict(torch.load(file_path, weights_only=True))
+
+        # Load epoch if needed
+        
+    start_epoch = 0 if checkpoint_path is None else epoch
+
+    return model, optimizer, scheduler, start_epoch, ema
+
+
+def load_checkpoint(checkpoint_path, model, optimizer, scheduler):
     from analysis import load_model_in_DDP
     if checkpoint_path is not None:
-        checkpoint = torch.load(checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, weights_only=True)
         # if args.ensamble is True:
         #     state_dict = load_model_in_DDP(checkpoint['state_dict'])
         # else:
@@ -208,13 +281,13 @@ def load_checkpoint(checkpoint_path, model, optimizer, scheduler, ema):
         model.load_state_dict( checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['lr_sched'])
-        ema.load_state_dict(checkpoint["ema"])
+        #ema.load_state_dict(checkpoint["ema"])
         checkp_epoch = checkpoint['epoch']
         logger.info(f"Resuming training from epoch {checkp_epoch}")
 
     start_epoch = 0 if checkpoint_path is None else checkp_epoch
 
-    return model, optimizer, scheduler, start_epoch, ema
+    return model, optimizer, scheduler, start_epoch#, ema
 
 def saveImage(image, image_size, epoch, step, folder):
     import torchvision.transforms as T
@@ -232,11 +305,12 @@ def saveImage(image, image_size, epoch, step, folder):
 
 
 def diffusion_train_loop(args, 
-                         model_config, 
-                         fdp, 
-                         dataloader,  
-                         checkpoint_dir, 
-                         start_epoch=0):
+    model_config, 
+    fdp, 
+    dataloader,  
+    checkpoint_dir, 
+    start_epoch=0
+):
 
     early_stopping = EarlyStopping(model_config, verbose=True)
 
@@ -244,20 +318,19 @@ def diffusion_train_loop(args,
     corr_records, r_records = [], []
     
     results_folder = model_config.output_dir + "/dime/temp_images_fdp"
-    if not os.path.exists(results_folder):
-        os.makedirs(results_folder)
+    
+    for path in [results_folder]:    
+        if not os.path.exists(path):
+            os.makedirs(path)
 
     for epoch in range(start_epoch, model_config.epochs):
         for step, (batch, target) in enumerate(dataloader):
-            
             t = torch.randint(0, model_config.timesteps, (batch.shape[0],)).long().to(model_config.device)  # The integers are sampled uniformly from the range [0, timesteps),
             batch = batch.to(model_config.device)
             target = target.squeeze(1).to(model_config.device)
-
             noise = torch.randn_like(target, dtype=torch.float32)
             # Sampling noise from a gaussian distribution for every training example in batch
             noisy_images = fdp.forward_process(target, t, noise)
-            
             fdp.optimizer.zero_grad()
             if args.conditioning == "none":
                 batch = None
@@ -266,30 +339,39 @@ def diffusion_train_loop(args,
             noise_loss = fdp.loss_fn(predicted_noise, noise)
             corr = tensor_corr(predicted_noise, noise)
             rsq = 1 - noise_loss
-
             # image_loss = fdp.get_images_denoised(target, t, predicted_noise)
             noise_loss.backward()
             fdp.optimizer.step()
+            
+            if args.ema:
+                fdp.ema.update()
 
             fdp.optimizer.zero_grad()
-            if args.ema:
-                fdp.ema.update(fdp.model)
 
+        #### Sampling every 10 steps
         if epoch != 0 and epoch % model_config.save_and_sample_every == 0:
             # logger.info(f"Loss: {noise_loss}")
             img_shape = (1, 1, model_config.image_size, model_config.image_size)
             sample_im = fdp.p_sample_loop(args, 
-                fdp.ema.module.eval() if args.ema else fdp.model, 
+                fdp.ema.ema_model if args.ema else fdp.model, 
                 dataloader, 
                 img_shape,
                 samples=1
             )
             saveImage(sample_im, model_config.image_size, epoch, step, results_folder)
+                # Log EMA weights (e.g., after every batch)
+        
+        # ####### Checking weights 
+        # if step % 2 == 0:  # Log every 2 batches
+        #     for name, param in fdp.model.named_parameters():
+        #         ema_param = fdp.ema.ema_model.state_dict()[name]
+        #         logger.info(f"Epoch {epoch}, Batch {step}, Layer {name}")
+        #         logger.info(f"Model Weight: {param.data.mean():.6f}, EMA Weight: {ema_param.mean():.6f}")
+
 
         log = 'Epoch: {:03d}, Noise Loss: {:.4f}, Noise correlation: {:.4f}'
         logger.info(log.format(epoch, np.mean(noise_loss.item()),
                                np.mean(corr.item())))
-
         noise_loss_records.append(noise_loss.item())
         corr_records.append(corr.item())
         r_records.append(rsq.item())
@@ -297,21 +379,28 @@ def diffusion_train_loop(args,
         # writer.add_scalar("Learning rate", fdp.optimizer.param_groups[0]["lr"], epoch)
         # writer.add_scalar("Correlation", np.mean(corr.item()), epoch)
         # writer.add_scalar("R squared", np.mean(rsq.item()), epoch)
-
-        model_dict = {
-            'epoch': epoch,
-            'state_dict': fdp.model.state_dict(),
-            'optimizer': fdp.optimizer.state_dict(),
-            "lr_sched": fdp.scheduler.state_dict(),
-            "ema": fdp.ema.state_dict()}
-
+        
+        ###### Model checkpoints
+        if args.ema:
+            model_dict = {
+                'epoch': epoch,
+                'state_dict': fdp.model.state_dict(),
+                'optimizer': fdp.optimizer.state_dict(),
+                "lr_sched": fdp.scheduler.state_dict(),
+                "ema": fdp.ema.state_dict()}
+        else:
+            model_dict = {
+                'epoch': epoch,
+                'state_dict': fdp.model.state_dict(),
+                'optimizer': fdp.optimizer.state_dict(),
+                "lr_sched": fdp.scheduler.state_dict()}
+        
         early_stopping(np.mean(noise_loss.item()), 
                         model_dict, epoch, checkpoint_dir)
-
         if early_stopping.early_stop:
             logger.info("Early stopping")
             break
-        
+
         # image_loss_records.append(np.mean(image_loss.item()))
         mean_loss = sum(noise_loss_records) / len(noise_loss_records)
         fdp.scheduler.step(mean_loss)
@@ -321,7 +410,6 @@ def diffusion_train_loop(args,
         plt.savefig(os.path.join(results_folder, f'learning_curve_feat_'
                                  f'{args.step_length}.png'))
         plt.close()
-
 
 
 def compute_image_loss_plot(sample_image, 

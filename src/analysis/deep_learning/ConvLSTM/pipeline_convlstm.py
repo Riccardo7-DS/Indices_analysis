@@ -147,15 +147,22 @@ def training_convlstm(args:dict,
 
     train_loss_records, valid_loss_records, test_loss_records = [], [], []
 
-    if checkpoint_path is not None:
-        checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        scheduler.load_state_dict(checkpoint['lr_sched'])
-        checkp_epoch = checkpoint['epoch']
-        logger.info(f"Resuming training from epoch {checkp_epoch}")
+    try:
+        if checkpoint_path is not None:
+            checkpoint = torch.load(checkpoint_path)
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            scheduler.load_state_dict(checkpoint['lr_sched'])
+            checkp_epoch = checkpoint['epoch']
+            logger.info(f"Resuming training from epoch {checkp_epoch}")
+        
+        start_epoch = 0 if checkpoint_path is None else checkp_epoch
+
+    except IsADirectoryError:
+        from analysis import load_checkp_metadata
+        checkpoint_path = checkpoint_path.removesuffix(".pth.tar")
+        model, optimizer, scheduler, checkp_epoch, _ = load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, None) 
     
-    start_epoch = 0 if checkpoint_path is None else checkp_epoch
 
     #################################  Training  ################################## 
 
@@ -221,6 +228,7 @@ def training_convlstm(args:dict,
     elif args.mode == "test":
         from analysis import test_loop, masked_custom_loss, tensor_ssim, mask_rmse, masked_custom_loss
         from utils.function_clns import bias_correction
+        
 
         mask = mask.float().to(model_config.device)
 

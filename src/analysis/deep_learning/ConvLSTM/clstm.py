@@ -157,7 +157,13 @@ class ConvLSTM(nn.Module):
             # (t, b, c, h, w) -> (b, t, c, h, w)
             input_tensor = input_tensor.permute(1, 0, 2, 3, 4)
 
-        b, _, _, h, w = input_tensor.size()
+        if len(input_tensor.size()) == 4:
+            b = 1 
+            _, _, h, w = input_tensor.size()
+            input_tensor = input_tensor.unsqueeze(0)
+
+        else:
+            b, _, _, h, w = input_tensor.size()
 
         # Implement stateful ConvLSTM
         if hidden_state is not None:

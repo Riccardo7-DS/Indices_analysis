@@ -34,7 +34,7 @@ if __name__=="__main__":
     parser.add_argument('--fillna',type=bool,default=False)
     parser.add_argument("--interpolate", type=bool, default=False, help="Input data interpolation over time")
     parser.add_argument("--normalize", type=bool, default=True, help="normalization")
-    parser.add_argument("--scatterplot", type=bool, default=True, help="scatterplot")
+    parser.add_argument("--scatterplot", type=bool, default=os.environ.get("scatterplot", False), help="scatterplot")
     parser.add_argument('--crop_area',type=bool,default=False)
     parser.add_argument('--plotheatmap', default=False, help="Save adjacency matrix heatmap")
 

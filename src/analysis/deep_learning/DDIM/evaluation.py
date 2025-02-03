@@ -8,13 +8,14 @@ from torch.utils.data import DataLoader
 from utils.function_clns import init_logging, find_checkpoint_path, bias_correction
 from utils.xarray_functions import ndvi_colormap
 from analysis import (
-    load_stored_data, DataGenerator, UNET, load_checkpoint,
+    load_stored_data, DataGenerator, UNET, load_checkpoint, load_checkp_metadata,
     custom_subset_data, create_runtime_paths, autoencoder_wrapper,
     CustomConvLSTMDataset, TwoResUNet,
     Forward_diffussion_process, mask_mse, compute_image_loss_plot,
-    tensor_ssim, CustomMetrics
+    tensor_ssim, CustomMetrics, EMAWithLogging
 )
 import argparse
+from ema_pytorch import EMA
 import logging
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def diffusion_arguments():
     parser.add_argument('--auto_days', type=int, default=os.getenv("auto_days", 180))
     parser.add_argument('--feature_days', type=int, default=os.getenv("feature_days", 90))
     parser.add_argument('--auto_ep', type=int, default=os.getenv("auto_ep", 80))
-    parser.add_argument('--gen_samples', type=int, default=os.getenv("gen_sample", 0))
+    parser.add_argument('--gen_samples', type=int, default=os.getenv("gen_samples", 0))
     parser.add_argument('--diff_schedule', type=str, default=os.getenv("diff_schedule", "cosine"))
     parser.add_argument('--diff_sample', type=str, default=os.getenv("diff_sample", "ddim"))
     parser.add_argument('--epoch', type=int, default=os.getenv("epoch", 0), help="diffusion model trained epochs")
@@ -50,17 +51,18 @@ def diffusion_evaluation(args):
     cmap = ndvi_colormap("diverging")
 
     autoencoder = autoencoder_wrapper(args, auto_config, generate_output=False)
-    start, end = "2017-01-01", "2022-12-31"
+    start, end = "2019-01-01", "2022-12-31"
     data_name = "data_gnn_drought"
     _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
 
     checkpoint_path = (find_checkpoint_path(model_config, args, True) if args.epoch == 0 else
-                       os.path.join(checkpoint_dir, f"checkpoint_epoch_{args.epoch}.pth.tar"))
+        os.path.join(checkpoint_dir, f"checkpoint_epoch_{args.epoch}"))
     
     logger = init_logging(log_file=os.path.join(log_path, 
-                                                f"dime_days_{args.step_length}_"  \
-                                                f"features_{args.feature_days}"
-                                                f"{args.mode}.log"))
+        f"dime_days_{args.step_length}_"  \
+        f"features_{args.feature_days}"
+        f"{args.mode}.log")
+    )
 
     data, target, scaler, mask = custom_subset_data(args, model_config, data_name, start, end, True, True)
 
@@ -70,28 +72,33 @@ def diffusion_evaluation(args):
 
     model_class = TwoResUNet if args.attention else UNET
     model = model_class(dim=model_config.widths[0]*2, 
-                        channels=input_channels + 1, 
-                        dim_mults=(1, 2, 4, 8, 16),
-                        out_dim=model_config.output_channels).to(model_config.device)
+        channels=input_channels + 1, 
+        dim_mults=(1, 2, 4, 8, 16),
+        out_dim=model_config.output_channels).to(model_config.device)
     
     model = DataParallel(model)
 
-    ema = ModelEmaV3(model, 
-        decay = model_config.ema_decay, 
-        update_after_step= model_config.ema_update_every
-    ).to(model_config.device)
+    if args.ema:
+        ema = EMAWithLogging(model, 
+            beta = model_config.ema_decay, 
+            update_every= model_config.ema_update_every,
+            update_after_step = model_config.update_after_step
+        ).to(model_config.device)
+    else:
+        ema = None
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=model_config.learning_rate, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=model_config.scheduler_factor, patience=model_config.scheduler_patience)
     loss_fn = MSELoss()
 
-    if os.path.exists(checkpoint_path):
-        model, optimizer, scheduler, start_epoch, ema = load_checkpoint(checkpoint_path, model, optimizer, scheduler, ema)
-    else:
-        start_epoch = 0
+    try:
+        model, optimizer, scheduler, start_epoch, ema = load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, ema)    
+    except IsADirectoryError as e:
+        logger.error(e)
+        model, optimizer, scheduler, start_epoch = load_checkpoint(checkpoint_path, model, optimizer, scheduler)
 
     if args.ema is True:
-        model = ema.module.eval()
+        model = ema.ema_model.eval()
 
     if args.ensamble is True:
         from analysis import ModelEnsamble
@@ -100,7 +107,10 @@ def diffusion_evaluation(args):
     fdp = Forward_diffussion_process(args, model_config, model, optimizer, scheduler, loss_fn, ema)
     logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
                 f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs")
-
+    
+    if args.mode == "test_model":
+        return model
+    
     y_pred, y_true = fdp.diffusion_sampling(args, model_config, model, dataloader, samples=args.gen_samples)
 
     if args.normalize:
@@ -133,6 +143,8 @@ def diffusion_evaluation(args):
         for d, name in zip([y_corr, y_true, mask], ['pred_data_dr', 'true_data_dr', 'mask_dr']):
             np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu())
 
+
+
 def main():
     args = diffusion_arguments()
     try:
@@ -142,8 +154,6 @@ def main():
         # if args.ensamble:
         #     logger.info("Destroying process group due to an exception.")
         #     dist.destroy_process_group()
-    finally:
-        logger.info("Execution complete. Cleaning up resources if necessary.")
 
 if __name__ == "__main__":
     main()

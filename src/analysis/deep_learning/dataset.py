@@ -5,6 +5,8 @@ from torch.utils.data import Dataset, DataLoader
 import xarray as xr
 from typing import Union
 import torch.nn.functional as F
+import glob
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import logging
 logger = logging.getLogger(__name__)
 
@@ -435,12 +437,20 @@ class MyDataset(Dataset):
 """
 Dataset classes for training
 """
+import os
+import numpy as np
+import torch
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EarlyStopping:
     """
     Early stops the training if validation loss doesn't improve after a given patience.
     """
-    def __init__(self, config, patience=None, verbose=False,):
+    def __init__(self, config, patience=None, verbose=False):
         """
         Args:
             patience (int): How long to wait after last time validation loss improved.
@@ -448,43 +458,147 @@ class EarlyStopping:
             verbose (bool): If True, prints a message for each validation loss improvement. 
                             Default: False
         """
-        if patience is None:
-            self.patience = config.patience
-        else:
-            self.patience = patience
+        self.patience = patience if patience is not None else config.patience
         self.verbose = verbose
         self.counter = 0
         self.best_score = None
         self.early_stop = False
         self.val_loss_min = np.Inf
+        self.current_checkpoint = None
 
-    def __call__(self, val_loss, model, epoch, save_path):
-    
+    def __call__(self, val_loss, model_dict, epoch, save_path):
         score = -val_loss
 
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint(val_loss, model, epoch, save_path)
-            
         elif score < self.best_score:
             self.counter += 1
             logger.info(
                 f'EarlyStopping counter: {self.counter} out of {self.patience}'
-            )            
+            )
             if self.counter >= self.patience:
                 self.early_stop = True
+                # self._cleanup_checkpoints(save_path)
         else:
             self.best_score = score
-            self.save_checkpoint(val_loss, model, epoch, save_path)
+            self.save_checkpoint(val_loss, model_dict, epoch, save_path)
             self.counter = 0
+    
+    def find_checkpoints(self, directory, pattern):
+        """Finds files matching the given pattern."""
+        try:
+            directories = [
+                os.path.join(directory, entry) 
+                for entry in os.listdir(directory)
+            ]
+            files = [
+                os.path.join(directory, file) 
+                for directory in directories 
+                for file in os.listdir(directory) 
+                if pattern in file
+            ]
+            return files
+        except Exception as e:
+            logger.error(f"Error while scanning directory: {e}")
+            return []
+        
+    def save_checkpoint(self, val_loss, model_dict, epoch, save_path, n_save=3):
+        """Saves model when validation loss decreases and removes older checkpoints."""
+        
+        checkpoint_path = os.path.join(save_path, f"checkpoint_epoch_{epoch}")
+        os.makedirs(checkpoint_path, exist_ok=True)
 
-    def save_checkpoint(self, val_loss, model, epoch, save_path):
-        '''Saves model when validation loss decrease.'''
         if self.verbose:
             logger.info(
-                f'Validation loss change: ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...'
+                f"Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}). "
+                f"Saving model trained with {epoch} epochs..."
             )
-        torch.save(
-            model, save_path + "/" +
-            "checkpoint_epoch_{}.pth.tar".format(epoch, val_loss))
         self.val_loss_min = val_loss
+        
+        
+        for key, value in model_dict.items():
+            if key == "epoch":
+                continue
+            temp_save_path = os.path.join(checkpoint_path, f"{key}_epoch_{model_dict['epoch']}.pth")
+            torch.save(value, temp_save_path)
+
+        metadata = {
+            'epoch': model_dict['epoch'],
+            'components': {
+                key: os.path.join(checkpoint_path, f"{key}_epoch_{model_dict['epoch']}.pth")
+                for key in model_dict if key != 'epoch'
+            }
+        }
+        dest_path = os.path.join(checkpoint_path, f"metadata_epoch_{model_dict['epoch']}.pth")
+        self.current_checkpoint = dest_path
+        torch.save(metadata, dest_path)
+        
+        # Cleanup old checkpoints
+        # self._cleanup_checkpoints(save_path, n_save)
+
+    def remove_file_with_timeout(self, file, timeout=5):
+        """
+        Attempts to remove a file with a timeout.   
+        Args:
+            file (str): Path to the file to be removed.
+            timeout (int): Maximum time to wait in seconds. 
+        Returns:
+            bool: True if the file was removed successfully, False otherwise.
+        """
+        success = []    
+        def remove():
+            try:
+                os.remove(file)
+                success.append(True)
+            except Exception as e:
+                logger.error(f"Failed to remove {file}: {e}")
+                success.append(False)   
+
+        thread = threading.Thread(target=remove)
+        thread.start()
+        thread.join(timeout)    
+        if thread.is_alive():
+            logger.error(f"Timeout reached while trying to remove {file}")
+            thread.join()  # Cleanup the thread
+            return False    
+        return success[0] if success else False
+
+
+    def _cleanup_checkpoints(self, checkpoint_dir, n_save=3):
+        """Keeps only the n most recent checkpoints in the directory."""
+        # Find all metadata files (primary references for checkpoints)
+        metadata_files = self.find_checkpoints(checkpoint_dir, "metadata_epoch_")
+
+        # Exclude the current checkpoint's metadata file
+        metadata_files = [
+            metadata for metadata in metadata_files if metadata != self.current_checkpoint
+        ]
+        logger.info(f"Found metadata files: {[os.path.basename(f) for f in metadata_files]}")
+
+        if len(metadata_files) > n_save:
+            # Sort metadata files by creation time (oldest first)
+            metadata_files.sort(key=os.path.getctime)
+
+            # Remove older checkpoints and associated files
+            for metadata in metadata_files[:-n_save]:
+                # Load metadata to find related component files
+                try:
+                    metadata_content = torch.load(metadata)
+                    related_files = list(metadata_content['components'].values()) + [metadata]
+                    for file in related_files:
+                        if os.path.exists(file):
+                            if self.remove_file_with_timeout(file):
+                                logger.info(f"Removed: {os.path.basename(file)}")
+                            else:
+                                logger.error(f"Could not remove: {os.path.basename(file)}")
+
+                    parent_dir = os.path.dirname(metadata)
+                    if os.path.exists(parent_dir) and not os.listdir(parent_dir):
+                        os.rmdir(parent_dir)
+                        logger.info(f"Removed empty directory: {parent_dir}")
+                            
+                except Exception as e:
+                    logger.error(f"Error while cleaning up checkpoint {metadata}: {e}")
+
+
+                    

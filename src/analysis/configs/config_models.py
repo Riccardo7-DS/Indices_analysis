@@ -46,9 +46,10 @@ class ConfigDDIM(BaseConfig):
     num_ensambles = 10
 
     save_and_sample_every = 10
+    update_after_step = 425
 
-    ema_decay = 0.995
-    ema_update_every = 50
+    ema_decay = 0.999
+    ema_update_every = 10
 
     scheduler_patience = 3
     scheduler_factor = 0.7
@@ -75,7 +76,6 @@ class ConfigDDIM(BaseConfig):
     # optimization
 
     batch_size = 32
-    ema = 0.999
     learning_rate = 1e-4
     epochs = 500
     patience = 20
@@ -98,7 +98,7 @@ class ConfigConvLSTM(BaseConfig):
     epochs = 100
     patience = 10
     learning_rate = 1e-3
-    batch_size= 16 #52
+    batch_size= 52#16 
     null_value = -1
     max_value = 1
 
