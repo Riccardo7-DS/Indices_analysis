@@ -61,7 +61,7 @@ if __name__=="__main__":
             args = parser.parse_args()
             try:
                 if args.model == "CONVLSTM":
-                    pipeline_convlstm(args, precipitation_only=False)
+                    pipeline_convlstm(args, precipitation_only=False, checkpoint_path=checkpoint_path)
                 elif (args.model == "WNET") or (args.model == "GWNET"):
                     pipeline_gnn(args,
                         use_water_mask=True,

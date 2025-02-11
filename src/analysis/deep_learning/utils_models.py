@@ -786,31 +786,56 @@ def persistence_baseline(train_label):
     logger.info("The baseline is a RMSE of {}".format(np.mean(batch_rmse)))
 
 
-def compute_metric_results(results:dict, 
-                            metric_list:list, 
-                            mask:np.ndarray, 
-                            days:list= [10, 15, 30]):
+from datetime import datetime, timedelta
+import numpy as np
+
+def compute_metric_results(results: dict, 
+                           metric_list: list, 
+                           mask: np.ndarray, 
+                           days: list = [10, 15, 30], 
+                           start_date: str = None, 
+                           end_date: str = None):
 
     metrics_results = {}
+
+    # Convert start_date and end_date to datetime objects if provided
+    start_date = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
+    end_date = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
+
     # Iterate through each model
     for model_name, model_data in results.items():
         metrics_results[model_name] = {}
+
+        # Convert y_start and y_end to datetime objects
+        y_start = datetime.strptime(model_data[f"start_{days[0]}"], "%Y-%m-%d").date()
+        y_end = datetime.strptime(model_data[f"end_{days[0]}"], "%Y-%m-%d").date()
+
+        # Determine start and end indices
+        date_range = [y_start + timedelta(days=i) for i in range((y_end - y_start).days + 1)]
+        
+        if start_date:
+            start_idx = max(0, (start_date - y_start).days)
+        else:
+            start_idx = 0
+
+        if end_date:
+            end_idx = min(len(date_range), (end_date - y_start).days + 1)
+        else:
+            end_idx = None  # Slice till the end
+
         # Iterate through each prediction horizon
         for horizon in days:
             y_key = f"y_{horizon}"
             y_pred_key = f"y_pred_{horizon}"
-            # mask_key = f"mask_{horizon}"
 
-            # Extract the relevant arrays
-            y_true = model_data[y_key]
-            y_pred = model_data[y_pred_key]
-            # mask = model_data.get(mask_key, None)  # Optional if no mask
+            # Extract the relevant arrays and subset if needed
+            y_true = model_data[y_key][start_idx:end_idx]
+            y_pred = model_data[y_pred_key][start_idx:end_idx]
 
             # Calculate SSIM
             ssim = tensor_ssim(y_true, y_pred)
 
             # Calculate RMSE using CustomMetrics
-            metric_list = ["rmse"]
             custom_metrics = CustomMetrics(y_pred, y_true, metric_list, mask, True)
             rmse = custom_metrics.losses[0]
 
@@ -819,6 +844,7 @@ def compute_metric_results(results:dict,
                 "rmse": rmse,
                 "ssim": ssim
             }
+
     return metrics_results
 
 def get_train_valid_loader(model_config, 

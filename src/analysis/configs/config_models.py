@@ -46,7 +46,8 @@ class ConfigDDIM(BaseConfig):
     num_ensambles = 10
 
     save_and_sample_every = 10
-    update_after_step = 425
+    update_after_step = 1300 # 130*10
+    sigma_rel = 0.15
 
     ema_decay = 0.999
     ema_update_every = 10
@@ -79,6 +80,7 @@ class ConfigDDIM(BaseConfig):
     learning_rate = 1e-4
     epochs = 500
     patience = 20
+    min_patience = 70
 
     include_lag = True
     squared = True

@@ -47,8 +47,8 @@ def load_ndvi_output(config, model, days, features=90, basemask:Union[int, None]
         # print(y.shape, y_pred.shape)
 
     if "dime" in model:
-        y = y[:-17]
-        y_pred = y_pred[:-17]
+        y = y[:-11]
+        y_pred = y_pred[:-11]
     return y, y_pred, mask
 
 
@@ -308,7 +308,7 @@ def plot_multiple_aggregations(data_dict, model_name, aggregate_by="day"):
                           with aggregated errors (indexed by time keys).
         aggregate_by (str): Aggregation level ("day" or "month").
     """
-    plt.figure(figsize=(14, 7))
+    plt.figure(figsize=(10, 6))
 
     # Loop through the data dictionary to plot each series
     for label, data in data_dict.items():
@@ -376,7 +376,7 @@ def plot_error_time(y, y_pred, start, new_start=None, new_end=None):
     yearly_mean_error = df.groupby('year')['error'].mean()
 
     # Plot yearly mean error
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(6, 4))
     plt.plot(yearly_mean_error.index, yearly_mean_error.values, marker='o', linestyle='-', color='b')
     plt.title('Yearly Mean Error', fontsize=14)
     plt.xlabel('Year', fontsize=12)
@@ -397,7 +397,7 @@ def plot_models_errors_overtime(results:dict, model_name:str, days:Union[list, N
                         - 'y_<day>', 'y_pred_<day>', 'mask_<day>', 'start_<day>', 'end_<day>'.
         model_name (str): The name of the model being plotted, for use in the plot title.
     """
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(6, 3))
 
     for model_day in days:
         # Extract data and custom date range for the current model day

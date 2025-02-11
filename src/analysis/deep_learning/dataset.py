@@ -459,6 +459,7 @@ class EarlyStopping:
                             Default: False
         """
         self.patience = patience if patience is not None else config.patience
+        self.min_patience =  getattr(config, "min_patience", 0)
         self.verbose = verbose
         self.counter = 0
         self.best_score = None
@@ -476,9 +477,9 @@ class EarlyStopping:
             logger.info(
                 f'EarlyStopping counter: {self.counter} out of {self.patience}'
             )
-            if self.counter >= self.patience:
+            if (self.counter >= self.patience) & (epoch > self.min_patience):
                 self.early_stop = True
-                # self._cleanup_checkpoints(save_path)
+                self._cleanup_checkpoints(save_path)
         else:
             self.best_score = score
             self.save_checkpoint(val_loss, model_dict, epoch, save_path)
@@ -564,7 +565,7 @@ class EarlyStopping:
         return success[0] if success else False
 
 
-    def _cleanup_checkpoints(self, checkpoint_dir, n_save=3):
+    def _cleanup_checkpoints(self, checkpoint_dir, n_save=5):
         """Keeps only the n most recent checkpoints in the directory."""
         # Find all metadata files (primary references for checkpoints)
         metadata_files = self.find_checkpoints(checkpoint_dir, "metadata_epoch_")

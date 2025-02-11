@@ -259,7 +259,7 @@ def load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, ema):    
                 optimizer.load_state_dict(torch.load(file_path, weights_only=True))
             elif key == 'lr_sched':
                 scheduler.load_state_dict(torch.load(file_path, weights_only=True))
-            elif key == 'ema':
+            elif (key == 'ema') and (ema is not None):
                 ema.load_state_dict(torch.load(file_path, weights_only=True))
 
         # Load epoch if needed
@@ -343,7 +343,7 @@ def diffusion_train_loop(args,
             noise_loss.backward()
             fdp.optimizer.step()
             
-            if args.ema:
+            if args.ema != "none":
                 fdp.ema.update()
 
             fdp.optimizer.zero_grad()
@@ -353,21 +353,12 @@ def diffusion_train_loop(args,
             # logger.info(f"Loss: {noise_loss}")
             img_shape = (1, 1, model_config.image_size, model_config.image_size)
             sample_im = fdp.p_sample_loop(args, 
-                fdp.ema.ema_model if args.ema else fdp.model, 
+                fdp.model, 
                 dataloader, 
                 img_shape,
                 samples=1
             )
             saveImage(sample_im, model_config.image_size, epoch, step, results_folder)
-                # Log EMA weights (e.g., after every batch)
-        
-        # ####### Checking weights 
-        # if step % 2 == 0:  # Log every 2 batches
-        #     for name, param in fdp.model.named_parameters():
-        #         ema_param = fdp.ema.ema_model.state_dict()[name]
-        #         logger.info(f"Epoch {epoch}, Batch {step}, Layer {name}")
-        #         logger.info(f"Model Weight: {param.data.mean():.6f}, EMA Weight: {ema_param.mean():.6f}")
-
 
         log = 'Epoch: {:03d}, Noise Loss: {:.4f}, Noise correlation: {:.4f}'
         logger.info(log.format(epoch, np.mean(noise_loss.item()),
@@ -381,7 +372,7 @@ def diffusion_train_loop(args,
         # writer.add_scalar("R squared", np.mean(rsq.item()), epoch)
         
         ###### Model checkpoints
-        if args.ema:
+        if args.ema != "none":
             model_dict = {
                 'epoch': epoch,
                 'state_dict': fdp.model.state_dict(),

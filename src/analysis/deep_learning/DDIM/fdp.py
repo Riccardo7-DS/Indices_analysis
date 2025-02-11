@@ -1,7 +1,8 @@
-from analysis import EMAWithLogging, Forward_diffussion_process, TwoResUNet, UNET, plot_noisy_images, load_stored_data, DataGenerator, tensor_corr, UNET, create_runtime_paths, init_tb, EarlyStopping
+from analysis import Forward_diffussion_process, TwoResUNet, UNET, plot_noisy_images, load_stored_data, DataGenerator, tensor_corr, UNET, create_runtime_paths, init_tb, EarlyStopping
 from analysis import diffusion_train_loop,load_checkp_metadata, compute_image_loss_plot, autoencoder_wrapper
 from analysis.configs.config_models import config_ddim as model_config
 from torch.nn import L1Loss, MSELoss, DataParallel
+from ema_pytorch import EMA, PostHocEMA
 import numpy as np
 import os
 import argparse 
@@ -46,7 +47,7 @@ parser.add_argument("--normalize", type=bool, default=True, help="Input data nor
 parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
 parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
 parser.add_argument("--ensamble", type=bool, default=os.getenv("ensamble", False), help="if making ensamble predictions")
-parser.add_argument("--ema", type=bool, default=os.getenv("ema", False), help="if using ema")
+parser.add_argument("--ema", type=str,choices=["none", "ema", "posthoc"], default=os.getenv("ema", "none"), help="if using ema")
 
 args = parser.parse_args()
 
@@ -122,17 +123,21 @@ else:
 
 model = DataParallel(model)
 
-# ema = ModelEmaV3(model, 
-#     decay = model_config.ema_decay, 
-#     update_after_step= model_config.ema_update_every
-#     ).to(model_config.device)
-
-if args.ema:
-    ema = EMAWithLogging(model, 
+if args.ema == "ema":
+    ema = EMA(model, 
         beta = model_config.ema_decay, 
         update_every= model_config.ema_update_every,
         update_after_step = model_config.update_after_step
         ).to(model_config.device)
+    
+elif args.ema == "posthoc":
+     post_dir = os.path.join(checkpoint_dir, "posthoc_checkpoints")
+     os.makedirs(post_dir, exist_ok=True) 
+     ema = PostHocEMA(model, 
+        sigma_rels = (0.05, 0.28), 
+        update_every= model_config.ema_update_every,
+        checkpoint_every_num_steps = 130,
+        checkpoint_folder=post_dir)
 else:
     ema = None
 

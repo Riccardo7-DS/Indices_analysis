@@ -158,10 +158,10 @@ def training_convlstm(args:dict,
         
         start_epoch = 0 if checkpoint_path is None else checkp_epoch
 
-    except IsADirectoryError:
+    except FileNotFoundError:
         from analysis import load_checkp_metadata
         checkpoint_path = checkpoint_path.removesuffix(".pth.tar")
-        model, optimizer, scheduler, checkp_epoch, _ = load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, None) 
+        model, optimizer, scheduler, start_epoch, _ = load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, None) 
     
 
     #################################  Training  ################################## 

@@ -12,10 +12,10 @@ from analysis import (
     custom_subset_data, create_runtime_paths, autoencoder_wrapper,
     CustomConvLSTMDataset, TwoResUNet,
     Forward_diffussion_process, mask_mse, compute_image_loss_plot,
-    tensor_ssim, CustomMetrics, EMAWithLogging
+    tensor_ssim, CustomMetrics
 )
+from ema_pytorch import EMA, PostHocEMA
 import argparse
-from ema_pytorch import EMA
 import logging
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,8 @@ def diffusion_arguments():
     parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
     parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
     parser.add_argument("--ensamble", type=bool, default=os.getenv("ensamble", False), help="if making ensamble predictions")
-    parser.add_argument("--ema", type=bool, default=os.getenv("ema", False), help="if using ema")
+    parser.add_argument("--ema", type=str,choices=["none", "ema", "posthoc"], default=os.getenv("ema", "none"), help="if using ema")
+    parser.add_argument("--sigma_rel", type=float, default=os.getenv("sigma_rel", 0.15), help="sigma value for ema")
 
     args = parser.parse_args()
     return args
@@ -78,12 +79,20 @@ def diffusion_evaluation(args):
     
     model = DataParallel(model)
 
-    if args.ema:
-        ema = EMAWithLogging(model, 
+    if args.ema == "ema":
+        ema = EMA(model, 
             beta = model_config.ema_decay, 
             update_every= model_config.ema_update_every,
             update_after_step = model_config.update_after_step
         ).to(model_config.device)
+
+    elif args.ema == "posthoc":
+        post_dir = os.path.join(checkpoint_dir, "posthoc_checkpoints")
+        ema = PostHocEMA(model, 
+            sigma_rels = (0.05, 0.28), 
+            update_every= model_config.ema_update_every,
+            checkpoint_every_num_steps = 130,
+            checkpoint_folder=post_dir)
     else:
         ema = None
 
@@ -97,8 +106,11 @@ def diffusion_evaluation(args):
         logger.error(e)
         model, optimizer, scheduler, start_epoch = load_checkpoint(checkpoint_path, model, optimizer, scheduler)
 
-    if args.ema is True:
+    if args.ema == "ema":
         model = ema.ema_model.eval()
+    elif args.ema == "posthoc":
+        model = ema.synthesize_ema_model(sigma_rel=args.sigma_rel)
+        model.eval()
 
     if args.ensamble is True:
         from analysis import ModelEnsamble
@@ -142,8 +154,6 @@ def diffusion_evaluation(args):
             os.makedirs(out_path)
         for d, name in zip([y_corr, y_true, mask], ['pred_data_dr', 'true_data_dr', 'mask_dr']):
             np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu())
-
-
 
 def main():
     args = diffusion_arguments()
