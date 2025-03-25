@@ -186,6 +186,7 @@ class DataGenerator(CustomConvLSTMDataset):
         elif args.conditioning != "none":
 
             if data_split is not None:
+                
                 filepath = os.path.join(config.data_dir, f"autoencoder_output")
                 if not os.path.exists(filepath):
                     os.makedirs(filepath)
@@ -258,7 +259,7 @@ class DataGenerator(CustomConvLSTMDataset):
                 labels = labels[-n_vae:]
         
             else:
-                extra_features = data[:, :-1, -1]
+                extra_features = data[:, -1, :-1]  
 
             return extra_features, labels
         

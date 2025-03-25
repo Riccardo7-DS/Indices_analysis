@@ -22,6 +22,8 @@ class PrecipDataPreparation():
                  ndvi_data:str="seviri_full_image_smoothed.zarr",
                  load_zarr_features:bool = False,
                  load_local_precp:bool = False,
+                 precp_filename:str=None,
+                 precp_format:Literal["zarr", "nc"]="zarr",
                  interpolate:bool = False) -> None:
         
         cb = ProgressBar().register()
@@ -32,10 +34,16 @@ class PrecipDataPreparation():
         self.precp_product = precipitation_data
         self.ndvi_filename = ndvi_data
 
+        assert precp_format in ["zarr", "nc"], "Precipitation dataset must be either \"zarr\" or \"nc\"" 
+
         if load_zarr_features is False:
+            if self.model == "ERA5" and precp_filename is None:
+                raise ValueError("ERA5 not implemented in file, specify folder name")
             self.precp_ds = self.process_input_vars(variables, 
                                 load_local_precp, 
                                 interpolate=interpolate, 
+                                precp_folder=precp_filename,
+                                precp_format= precp_format,
                                 save=False)
         else:
             path = os.path.join(config["PRECIP"]["ERA5_land"]["path"],
@@ -81,7 +89,10 @@ class PrecipDataPreparation():
     def process_input_vars(self, 
                            variables:list, 
                            load_local_precp:bool, 
-                           interpolate:bool, save:bool=False):
+                           interpolate:bool, 
+                           save:bool=False,
+                           precp_folder:str="batch_final",
+                           precp_format="nc"):
         
         def save_dataset_tozarr(dataset, dest_path):
             logger.debug("Starting exporting processed data to zarr...")
@@ -90,7 +101,9 @@ class PrecipDataPreparation():
             logger.debug("Successfully saved preprocessed variables")
 
         if load_local_precp is True:
-            self._load_local_precipitation(self.precp_product, folder="batch_final")
+            self._load_local_precipitation(self.precp_product, 
+                                           folder=precp_folder,
+                                           format=precp_format)
             precp_ds = self._preprocess_array(path = self.precp_path,
                                                filename=self.precp_filename, 
                                                interpolate=interpolate)
@@ -145,7 +158,7 @@ class PrecipDataPreparation():
             ds = shift_xarray_overtime(dataset, "1D") 
             return ds.rename({"pev":"potential_evaporation", "e":"evaporation",
                          "t2m":"2m_temperature","tp":"total_precipitation"})
-        elif precp_dataset == "ERA5":
+        else:
             return dataset
 
 
@@ -198,6 +211,7 @@ class PrecipDataPreparation():
             path = get_path(config_dict,"PRECIP", precp_dataset)
             path = os.path.join(path, folder)
             filename = None
+
         elif "SPI" in precp_dataset:
             precp_dataset = precp_dataset.replace("SPI_","")
             path = get_path(config_dict, "SPI", precp_dataset)
@@ -324,9 +338,12 @@ class PrecipDataPreparation():
             #     raise error
             # else:
         # Open the precipitation file with xarray
+            tot_files = len([f for f in os.listdir(path) if f.endswith(".nc")])
             if (filename is None) and \
-                (len([f for f in os.listdir(path) if f.endswith(".nc")])>1):
+                (tot_files>1):
+                logger.info(f"Found {tot_files} files in directory, proceeding with lazy loading...")
                 dataset = xr.open_mfdataset(os.path.join(path, "*.nc"))
+                logger.info("Success")
             elif filename.endswith(".nc"):
                 dataset = xr.open_dataset(os.path.join(path, filename))
             elif filename.endswith(".zarr"):
@@ -422,6 +439,10 @@ class PrecipDataPreparation():
             idx_lat, lat_max, idx_lon, lon_min = crop_image_left(dataset, self.dim)
             sub_dataset = dataset.sel(lat=slice(lat_max, idx_lat), 
                                       lon=slice(lon_min, idx_lon))
+            
+        else:
+            from utils.function_clns import subsetting_pipeline
+            sub_dataset = subsetting_pipeline(dataset)
 
         return sub_dataset
     
@@ -431,6 +452,7 @@ class PrecipDataPreparation():
                        resampling:str = "bilinear"):
         
         from utils.xarray_functions import odc_reproject
+        logger.info(f"Proceeding with reprojection of source dataset with {resampling} resampling...")
         ds_repr = odc_reproject(resample_ds, target_ds, resampling=resampling)\
                 .rename({"longitude": "lon", "latitude": "lat"})
         ds_repr["lat"] = target_ds["lat"]

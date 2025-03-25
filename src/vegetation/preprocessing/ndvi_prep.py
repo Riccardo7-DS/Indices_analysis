@@ -16,7 +16,6 @@ import xarray
 from typing import Union
 import dask
 import numpy as np
-from modape.whittaker import ws2doptv, ws2d, ws2doptvp
 from array import array
 from dask.diagnostics import ProgressBar
 from typing import Literal
@@ -563,6 +562,8 @@ class XarrayWS(xarray.Dataset):
         return y, w
     
     def _apply_ws2doptvp(self, y, w, p, lambda_min, lambda_max):
+        from modape.whittaker import ws2doptv, ws2d, ws2doptvp
+
         w_corr = w.astype(np.double)
         y_corr = y.astype(np.double)
         z, sopt = ws2doptvp(y_corr, w_corr, 

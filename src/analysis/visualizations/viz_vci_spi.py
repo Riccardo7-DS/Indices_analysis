@@ -11,7 +11,10 @@ from matplotlib import gridspec
 import os
 import calendar
 from typing import Union
+import logging
 from tqdm.auto import tqdm
+
+logger = logging.getLogger(__name__)
 
 def get_dates(gap_year=False):
     if gap_year==False:
@@ -669,7 +672,7 @@ def plot_vci_3_years(ds:xr.Dataset, years:list, path=None):
     list_med.index=list_dates_1
     list_med_2.index=list_dates_2
     list_med_3.index=list_dates_3
-    fig = plt.figure(figsize=(22,6))
+    fig = plt.figure(figsize=(12,4))
     # set height ratios for subplots
     gs = gridspec.GridSpec(1, 3) 
 
@@ -1277,64 +1280,37 @@ def plot_whole_period_spi_veg(spi_ds:Union[xr.DataArray, xr.Dataset],
     plt.savefig(f"/media/BIFROST/N2/Riccardo/Indices_analysis/data/images/spi_{late}_vci.png")
     # Show the plot
     plt.show()
+
+
+
+
     
-def loop_soil(CONFIG_PATH, level1=True): 
-    import pandas as pd
-    from datetime import datetime
-    import time
-    from p_drought_indices.analysis.visualizations.viz_vci_spi import get_subplot_year, adjust_full_list, str_month
-
-    import xarray as xr
-    from p_drought_indices.functions.function_clns import load_config, prepare, subsetting_pipeline
+    
+def loop_soil(ndvi_ds:xr.DataArray, 
+              spi_ds:xr.DataArray=None,
+              precp_ds:xr.DataArray=None, 
+              ndvi_var:str=None, 
+              precp_var:str=None, 
+              spi_var:str=None, 
+              level1=True,
+              one_forest:bool=False): 
+    
+    from utils.function_clns import config, prepare
     import os
-    from p_drought_indices.functions.function_clns import crop_get_spi, crop_get_thresh
-    from p_drought_indices.analysis.visualizations.viz_vci_spi import box_plot_year, get_xarray_time_subset, multiple_spi_boxplots, get_subplot_year, subsetting_whole
     import numpy as np
-    import warnings
-    from matplotlib import gridspec
-    import matplotlib.patches as mpatches
-    from matplotlib import gridspec
-    import calendar
     import matplotlib.pyplot as plt
-    from p_drought_indices.analysis.visualizations.viz_vci_spi import plot_precp_2009_event,plot_veg_2009_event, plot_spi_2009_event
-    from p_drought_indices.ancillary_vars.esa_landuse import get_level_colors, get_cover_dataset
+    from analysis.visualizations.viz_vci_spi import plot_precp_2009_event,plot_veg_2009_event, plot_spi_2009_event, plot_veg_event, plot_veg_3_years
+    from ancillary.esa_landuse import get_level_colors, get_cover_dataset, create_copernicus_covermap
 
-
-    warnings.filterwarnings('ignore')
-
-
-    config = load_config(CONFIG_PATH)
-    ds_ndvi = xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], 'smoothed_ndvi_1.nc'))
-    vci = xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], 'vci_1D.nc'))
-    res_ds = xr.open_dataset(os.path.join(config['NDVI']['ndvi_path'], 'percentage_ndvi.nc'))
-
-    config_directories = [config['SPI']['IMERG']['path'], config['SPI']['GPCC']['path'], config['SPI']['CHIRPS']['path'], config['SPI']['ERA5']['path'], config['SPI']['MSWEP']['path'] ]
-    config_dir_precp = [config['PRECIP']['IMERG']['path'],config['PRECIP']['CHIRPS_05']['path'], config['PRECIP']['GPCC']['path'], config['PRECIP']['CHIRPS']['path'], config['PRECIP']['ERA5']['path'],  config['PRECIP']['TAMSTAT']['path'],config['PRECIP']['MSWEP']['path']]
-
-
-    prod = "ERA5"
-    late = 60
-    product_dir = [f for f in config_dir_precp if prod in f][0]
-    list_files = [f for f in os.listdir(product_dir) if (f.endswith(".nc")) and ("merged" in f)]
-    precp_ds = xr.open_dataset(os.path.join(product_dir, list_files[0]))
-    variable = [var for var in precp_ds.data_vars if var!= "spatial_ref"][0]
-
-    spi_dir = [f for f in config_directories if prod in f][0]
-    var_target = f"spi_gamma_{late}"
-    files = [f for f in os.listdir(spi_dir) if var_target in f ]
-    spi_ds = xr.open_dataset(os.path.join(spi_dir, files[0]))
-
-
-    from p_drought_indices.ancillary_vars.esa_landuse import get_level_colors, get_cover_dataset
-
-    ndvi_res =prepare(ds_ndvi)
+    # ndvi_res = prepare(ndvi_ds)
     path = config["DEFAULT"]["images"]
     img_path = os.path.join(path, 'chirps_esa')
-    ds_cover = get_cover_dataset(CONFIG_PATH, ndvi_res["ndvi"], img_path, level1=True)
-    
-
-    cmap, levels = get_level_colors(ds_cover["Band1"].isel(time=0), level1=True)
-    ds_cover.isel(time=0)["Band1"].plot(colors=cmap, levels=levels)
+    if not os.path.exists(img_path):
+        os.makedirs(img_path)
+    ds_cover = create_copernicus_covermap(ndvi_ds, export=False, level1=level1, one_forest=one_forest)
+    ndvi_ds = ndvi_ds.to_dataset(name="ndvi").assign(Band1 = ds_cover)
+    cmap, levels, values_land_cover = get_level_colors(ds_cover, level1=level1, one_forest=one_forest)
+    ds_cover.plot(colors=cmap, levels=levels)
 
     def clean_multi_nulls(ds):
         # Create a MultiIndex
@@ -1344,51 +1320,60 @@ def loop_soil(CONFIG_PATH, level1=True):
         ds = ds.unstack(["pixel"]).sortby(["lat","lon"])
         return ds
 
-    base_path = os.path.join(path, 'soil_type')
-    soil_types = np.unique(ds_cover["Band1"].values)[:-1]
-
-    if level1 == True:
+    to_discard = ['Snow and ice', 'Permanent water bodies','Moss and lichen', "Oceans, seas", 'Unknown'] 
+    soil_types =[f for f in levels if f not in to_discard] #np.unique(ds_cover.values)[:-1]
+    logger.info(soil_types)
     
-        values_land_cover = {0	:'Unknown', 20:	'Shrubland',30:'Herbaceous vegetation',40:	'Cropland',
-                        50:	'Built-up',60:	'Bare sparse vegetation',70:'Snow and ice', 80:	'Permanent water bodies',
-                        90:'Herbaceous wetland',100: 'Moss and lichen', 11:"Closed forest", 
-                        12: "Open forest,", 200: "Oceans, seas"}
+    # soil_types = list(set(values_land_cover.keys()) - set(to_discard))
+
+
+    # if level1 == True:
     
-    else:
-        values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
-                            50:	'Urban',60:	'Bare',70:	'Snow and ice',80:	'Permanent water bodies',90:	'Herbaceous wetland',100: 'Moss and lichen',111: 'Closed forest, evergreen needle leaf',
-                            112: 'Closed forest, evergreen broad leaf',115: 'Closed forest, mixed',125: 'Open forest, mixed',113: 'Closed forest, deciduous needle leaf',
-                            114: 'Closed forest, deciduous broad leaf',116: 'Closed forest, not matching any of the others',121: 'Open forest, evergreen needle leaf',122: 'Open forest, evergreen broad leaf',
-                            123: 'Open forest, deciduous needle leaf',124: 'Open forest, deciduous broad leaf',126: 'Open forest, not matching any of the others',200: 'Oceans, seas'}
+    #     values_land_cover = {0	:'Unknown', 20:	'Shrubland',30:'Herbaceous vegetation',40:	'Cropland',
+    #                     50:	'Built-up',60:	'Bare sparse vegetation',70:'Snow and ice', 80:	'Permanent water bodies',
+    #                     90:'Herbaceous wetland', 100: 'Moss and lichen', 11:"Closed forest", 
+    #                     12: "Open forest,", 200: "Oceans, seas"}
+    
+    # else:
+    #     values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
+    #                         50:	'Urban',60:	'Bare',70:	'Snow and ice',80:	'Permanent water bodies',90:	'Herbaceous wetland',100: 'Moss and lichen',111: 'Closed forest, evergreen needle leaf',
+    #                         112: 'Closed forest, evergreen broad leaf',115: 'Closed forest, mixed',125: 'Open forest, mixed',113: 'Closed forest, deciduous needle leaf',
+    #                         114: 'Closed forest, deciduous broad leaf',116: 'Closed forest, not matching any of the others',121: 'Open forest, evergreen needle leaf',122: 'Open forest, evergreen broad leaf',
+    #                         123: 'Open forest, deciduous needle leaf',124: 'Open forest, deciduous broad leaf',126: 'Open forest, not matching any of the others',200: 'Oceans, seas'}
 
 
-    precp_ds =prepare(precp_ds)
-    ds_cover_precp = get_cover_dataset(CONFIG_PATH, precp_ds[variable], img_path, level1=True)
-
-    spi_ds =prepare(spi_ds).transpose("time","lat","lon")
-    ds_cover_spi = get_cover_dataset(CONFIG_PATH, spi_ds[var_target], img_path, level1=True)
-
-    ds_ndvi =prepare(ds_ndvi)
-    ds_cover_ndvi = get_cover_dataset(CONFIG_PATH, ndvi_res["ndvi"], img_path, level1=True)
-
-    for soil_type in soil_types[1:]:
+    for soil_type in soil_types:
         soil_name = values_land_cover[soil_type].replace(" ","_").replace("/","_")
         print(f"Starting analysis for {soil_name}")
 
         ### Raw precipitation
-        ds_soil = ds_cover_precp[variable].where(ds_cover_precp["Band1"]==soil_type).to_dataset()
-        ds_soil = clean_multi_nulls(ds_soil)
-        path = os.path.join(base_path,"precp" + "_" + soil_name)
-        plot_precp_2009_event(ds_soil,variable=variable, path=path)
-
+        if precp_ds is not None:
+            precp_ds = prepare(precp_ds)
+            ds_cover_precp = create_copernicus_covermap(precp_ds, export=False, level1=level1, one_forest=one_forest).to_dataset(name="Band1") 
+            ds_cover_precp = ds_cover_precp.assign(precp_var= precp_ds)
+            ds_soil = ds_cover_precp[precp_var].where(ds_cover_precp["Band1"]==soil_type).to_dataset()
+            ds_soil = clean_multi_nulls(ds_soil)
+            path = os.path.join(img_path,"precp" + "_" + soil_name)
+            plot_precp_2009_event(ds_soil,variable=precp_var, path=path)
+        
+        if spi_ds is not None:
         ### SPI
-        ds_soil = ds_cover_spi[var_target].where(ds_cover_spi["Band1"]==soil_type).to_dataset()
-        ds_soil = clean_multi_nulls(ds_soil)    
-        path = os.path.join(base_path,"spi" + "_" + soil_name)
-        plot_spi_2009_event(ds_soil,variable=var_target, path=path)
-
-        ### NDVI   
-        ds_soil = ds_cover_ndvi["ndvi"].where(ds_cover_ndvi["Band1"]==soil_type).to_dataset()
-        ds_soil = clean_multi_nulls(ds_soil)
-        path = os.path.join(base_path,"ndvi" + "_" + soil_name)
-        plot_veg_2009_event(ds_soil, path=path)
+            spi_ds = prepare(spi_ds)#.transpose("time","lat","lon")
+            ds_cover_spi = create_copernicus_covermap(spi_ds, export=False, level1=level1, one_forest=one_forest).to_dataset(name="Band1")
+            ds_cover_spi = ds_cover_spi.assign(spi_var= spi_ds)
+            ds_soil = ds_cover_spi[spi_var].where(ds_cover_spi["Band1"]==soil_type).to_dataset()
+            ds_soil = clean_multi_nulls(ds_soil)    
+            path = os.path.join(img_path,"spi" + "_" + soil_name)
+            plot_spi_2009_event(ds_soil,variable=spi_var, path=path)
+    
+        if ndvi_ds is not None:
+            ### NDVI
+            ds_soil = ndvi_ds[ndvi_var].where(ndvi_ds["Band1"]==soil_type).to_dataset()
+            ds_soil = clean_multi_nulls(ds_soil)
+            
+            # months = [i for i in np.arange(1, 13)] 
+            if ds_soil.isnull().all() == False:
+                for year in [2009]:   
+                    path = os.path.join(img_path,"ndvi" + "_" + soil_name + "_" + str(year))
+                    plot_veg_3_years(ds_soil, years=[year, year+1, year+2], path=path)
+                    logger.info(f"Saved file in path {path}")

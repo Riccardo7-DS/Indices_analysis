@@ -37,28 +37,35 @@ def gather_coordinate_dimensions(group: zarr.Group) -> List[str]:
     return set(
         itertools.chain(*(group[var].attrs.get("_ARRAY_DIMENSIONS", []) for var in group)))
 
-def gather_vars(store:zarr.hierarchy.Group):
+def gather_vars(store):
     coords = gather_coordinate_dimensions(store)
     data_vars = list(set(store.keys()) - coords)
     return coords, data_vars
 
-def get_variable_dims(store:zarr.hierarchy.Group, var:str):
+def get_variable_dims(store, var:str):
     return store[var].attrs.get("_ARRAY_DIMENSIONS", [])
 
-def load_zarr_arrays(store:zarr.hierarchy.Group,
+def load_zarr_arrays(store,
                      arrays:list,
                      min_time:Union[int, str],
                      max_time:Union[int, str],
                      bounding_box:list,
+                     freq:str="1h",
                      ds: xr.Dataset=None):
     
     import pandas as pd
     import numpy as np
-    from utils.function_clns import config, create_xarray_datarray
+    from utils.function_clns import create_xarray_datarray
     
     logger.debug("Loading coordinates from zarr file...")
-    lat = store["latitude"][:]
-    lon = store["longitude"][:]
+
+    if "latitude" in store.keys():
+        lat = store["latitude"][:]
+        lon = store["longitude"][:]
+    elif "lat" in store.keys():
+        lat = store["lat"][:]
+        lon = store["lon"][:]
+        
     time = store["time"][:]
 
     lat_condition = np.where(((lat>=bounding_box[1]) & (lat<=bounding_box[3])),True, False)
@@ -70,7 +77,7 @@ def load_zarr_arrays(store:zarr.hierarchy.Group,
         file_time_max = ds["time"].max()
         time_vector = pd.date_range(file_time_min.values, 
                                     file_time_max.values, 
-                                    freq="1h")
+                                    freq=freq)
         time_condition = np.where((time_vector>=pd.to_datetime(min_time))
               & (time_vector<=pd.to_datetime(max_time)),True, False)
         valid_times = time_vector[time_condition]

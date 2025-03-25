@@ -123,26 +123,27 @@ def diffusion_evaluation(args):
     if args.mode == "test_model":
         return model
     
-    y_pred, y_true = fdp.diffusion_sampling(args, model_config, model, dataloader, samples=args.gen_samples)
+    y_pred, y_true, std = fdp.diffusion_sampling(args, model_config, model, dataloader, samples=args.gen_samples)
 
     if args.normalize:
         y_pred = scaler.inverse_transform(y_pred)
         y_true = scaler.inverse_transform(y_true)
+        std = scaler.inverse_transform(std)
 
     y_pred = torch.clamp(y_pred, -1, 1)
     y_true = torch.clamp(y_true, -1, 1)
     mask = torch.from_numpy(mask).to(model_config.device)
 
-    y_corr, _, _ = bias_correction(y_true.detach().cpu(), y_pred.detach().cpu())
-    y_corr = y_corr.to(model_config.device)
+    # y_corr, _, _ = bias_correction(y_true.detach().cpu(), y_pred.detach().cpu())
+    # y_corr = y_corr.to(model_config.device)
 
-    y_pred_null = torch.where(torch.isnan(y_corr), torch.tensor(-1.0), y_corr)
+    y_pred_null = torch.where(torch.isnan(y_pred), torch.tensor(-1.0), y_pred)
     y_true_null = torch.where(torch.isnan(y_true), torch.tensor(-1.0), y_true)
 
     ssim_metric = tensor_ssim(y_pred_null, y_true_null, range=2.0)
     metric_list = ["rmse", "mse"]
 
-    test_metrics = CustomMetrics(y_corr, y_true, metric_list, mask, True)
+    test_metrics = CustomMetrics(y_pred, y_true, metric_list, mask, True)
     rmse, losses = test_metrics.losses[0], test_metrics.losses[1]
 
     log = 'The prediction for {} days ahead: Test SSIM: {:.4f}, Test RMSE: {:.4f}, Test MSE: {:.4f}'
@@ -152,7 +153,7 @@ def diffusion_evaluation(args):
         out_path = os.path.join(img_path, "output_data")
         if not os.path.exists(out_path):
             os.makedirs(out_path)
-        for d, name in zip([y_corr, y_true, mask], ['pred_data_dr', 'true_data_dr', 'mask_dr']):
+        for d, name in zip([y_pred, y_true, mask, std], ['pred_data_dr', 'true_data_dr', 'mask_dr', 'std_dr']):
             np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu())
 
 def main():

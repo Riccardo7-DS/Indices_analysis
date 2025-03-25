@@ -55,7 +55,7 @@ data, target, scaler, mask = load_stored_data(model_config)
 
 ################################# Autoencoder #############################
 
-autoencoder = autoencoder_wrapper(args, model_config, data, target, False)
+autoencoder = autoencoder_wrapper(args, model_config, data, target, generate_output=False)
 
 ################################# Initialize datasets #############################
 
@@ -74,7 +74,7 @@ logger = init_logging(log_file=os.path.join(log_path,
 
 train_data, val_data, train_label, val_label, \
     test_data, test_label = CNN_split(data, target, 
-    split_percentage = 0.75) #0.9375,
+    split_percentage =0.75) #0.9375,
     #val_split=0) 
 
 # create a CustomDataset object using the reshaped input data
@@ -83,7 +83,7 @@ datagenrator_train = DataGenerator(model_config,
     train_data, 
     train_label, 
     autoencoder, 
-    data_split="train"
+    data_split=f"train"
 )
 
 dataloader_train = DataLoader(datagenrator_train, 
@@ -96,7 +96,7 @@ if test_data is not None:
         test_data, 
         test_label, 
         autoencoder, 
-        data_split="test"
+        data_split=f"test"
     )
 
     dataloader_test = DataLoader(datagenrator_test, 
@@ -197,7 +197,7 @@ if args.mode == "train":
 elif args.mode == "generate":
     logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
            f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs") 
-    sample_image, y_true = fdp.diffusion_sampling(args, 
+    sample_image, y_true, std = fdp.diffusion_sampling(args, 
         model_config, 
         model, 
         dataloader_test, 

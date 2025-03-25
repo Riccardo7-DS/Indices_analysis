@@ -80,7 +80,7 @@ class ConfigDDIM(BaseConfig):
     learning_rate = 1e-4
     epochs = 500
     patience = 20
-    min_patience = 70
+    min_patience = 60
 
     include_lag = True
     squared = True

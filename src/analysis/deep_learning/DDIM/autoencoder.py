@@ -116,7 +116,7 @@ def pipeline_autoencoder(args,
     ################################# Initialize datasets #############################
     train_data, val_data, train_label, val_label, \
         test_data, test_label = CNN_split(data, target, 
-                                           split_percentage=config["MODELS"]["split"])
+                                           split_percentage=0.5)
     # create a CustomDataset object using the reshaped input data
     train_dataset = CustomConvLSTMDataset(model_config, args, 
                                           train_data, train_label)

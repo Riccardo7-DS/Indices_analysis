@@ -439,11 +439,7 @@ class Forward_diffussion_process():
                     x)
                 imgs.append(x_start)
 
-        if args.ensamble:
-            return torch.mean(imgs[-1], 0)
-
-        else:
-            return imgs[-1]
+        return imgs[-1]
 
     @torch.no_grad()
     def p_sample_loop(self, args, model, dataloader, img_shape, samples):
@@ -479,6 +475,7 @@ class Forward_diffussion_process():
 
         # Preallocate tensors
         imgs = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+        std = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
         y = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
 
         if args.gen_samples > 0:
@@ -493,7 +490,14 @@ class Forward_diffussion_process():
                     n_timesteps, 
                     time_steps_list
                 )
+                
                 start, end = s * img_shape[0], (s + 1) * img_shape[0]
+
+                if args.ensamble:
+                    std_dev = torch.std(img, 0)
+                    img = torch.mean(img, 0)
+                    std[start:end] = std_dev.squeeze()
+
                 imgs[start:end] = img.squeeze()
                 y[start:end] = y_true.squeeze()
 
@@ -523,22 +527,29 @@ class Forward_diffussion_process():
                         n_timesteps, 
                         time_steps_list
                     )
+
                     start, end = batch_idx * img_shape[0], (batch_idx + 1) * img_shape[0]
+
+                    if args.ensamble:
+                        std_dev = torch.std(img, 0)
+                        img = torch.mean(img, 0)
+                        std[start:end] = std_dev.squeeze()
+
                     imgs[start:end] = img.squeeze()
                     y[start:end] = targets.squeeze().float().to(self.device)                
 
-        return imgs, y
+        return imgs, y, std
     
     def diffusion_sampling(self, args, model_config, model, dataloader, samples=1):
         img_shape = (model_config.batch_size, 1, model_config.image_size, model_config.image_size)
         
-        sample_im = self.p_sample_loop(args, 
+        sample_im, y, std = self.p_sample_loop(args, 
             model, 
             dataloader, 
             img_shape, 
             samples
         )
-        return sample_im
+        return sample_im, y, std
 
 
 '''

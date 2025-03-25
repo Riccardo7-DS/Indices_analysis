@@ -838,11 +838,13 @@ def compute_metric_results(results: dict,
             # Calculate RMSE using CustomMetrics
             custom_metrics = CustomMetrics(y_pred, y_true, metric_list, mask, True)
             rmse = custom_metrics.losses[0]
+            bias =  custom_metrics.losses[1]
 
             # Store the metrics
             metrics_results[model_name][horizon] = {
                 "rmse": rmse,
-                "ssim": ssim
+                "ssim": ssim,
+                "bias": bias
             }
 
     return metrics_results
@@ -1280,7 +1282,7 @@ class CustomMetrics():
         if metric == "rmse":
             loss = torch.sqrt((preds-labels)**2)
         elif metric == "bias":
-            loss = labels - preds
+            loss = preds - labels
         
         elif metric == "mse":
             loss = (preds-labels)**2

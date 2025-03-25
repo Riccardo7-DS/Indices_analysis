@@ -10,22 +10,33 @@ from utils.function_clns import load_config
 import seaborn as sns
 from typing import Union
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-def load_ndvi_output(config, model, days, features=90, basemask:Union[int, None]=None):
+def load_ndvi_output(config, model, days, features=90, vars:str=None, basemask:Union[int, None]=None):
     """
-    Function to load the output of the DL models 
+    Function to load the output of the DL models
     """
     assert model in ["dime", "gwnet", "wnet", "convlstm", "dime_attn"]
-    basepath = config.output_dir + "/{m}/days_{d}/features_{f}/images/output_data"
-    path = basepath.format(m=model, d=days, f=features)
+    if vars is None:
+        basepath = config.output_dir + "/{m}/days_{d}/features_{f}/images/output_data"
+        path = basepath.format(m=model, d=days, f=features)
+    else:
+        assert vars in ["autoenc", "climate"] 
+        basepath = config.output_dir + "/{m}/{v}/days_{d}/features_{f}/images/output_data"
+        path = basepath.format(v=vars, m=model, d=days, f=features)
 
     if basemask:
-        maskpath = basepath.format(m=basemask["model"], d=basemask["days"], f=features)
-        glob_mask = np.load(os.path.join(maskpath,"mask_dr.npy" ))[:64, :64].astype(bool)
+        if vars is None:
+            maskpath = basepath.format(m=basemask["model"], d=basemask["days"], f=features)
+        else:
+            maskpath = basepath.format(v=vars, m=basemask["model"], d=basemask["days"], f=features)
+    
+        glob_mask = np.load(os.path.join(maskpath, "mask_dr.npy"))[:64, :64].astype(bool)
         lat, lon = glob_mask.shape[0], glob_mask.shape[1]
-        # print(glob_mask.shape)
-        
+
     y = np.load(os.path.join(path, "true_data_dr.npy"))#results_dime["y_15"]
     y_pred = np.load(os.path.join(path, "pred_data_dr.npy"))#[:-17]
     # print(y_pred.shape)
@@ -43,13 +54,14 @@ def load_ndvi_output(config, model, days, features=90, basemask:Union[int, None]
         y_pred = y_pred[:, :lat, :lon]
         # print(y.shape, y_pred.shape)
         y[:, ~glob_mask] = -1
+
         y_pred[:, ~glob_mask] = -1
         # print(y.shape, y_pred.shape)
 
     if "dime" in model:
         y = y[:-11]
         y_pred = y_pred[:-11]
-    return y, y_pred, mask
+    return y, y_pred, mask, glob_mask
 
 
 def select_random_points(mask: Union[xr.DataArray, xr.Dataset, None] = None,
@@ -58,17 +70,17 @@ def select_random_points(mask: Union[xr.DataArray, xr.Dataset, None] = None,
     valid_indices = np.where(mask == 1)
 
     # Step 2: Generate random indices
-    random_indices = np.random.choice(len(valid_indices[0]), 
+    random_indices = np.random.choice(len(valid_indices[0]),
                                       size=n_points, replace=False)
-    
+
     return valid_indices, random_indices
 
 def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
-                                 valid_indices:tuple, 
+                                 valid_indices:tuple,
                                  random_indices:np.ndarray,
                                  date_min:str = None,
                                  date_max:str = None):
-    
+
     if date_max and date_max is not None:
         data_array1 = data_array1.sel(time=slice(date_min, date_max))
 
@@ -85,7 +97,7 @@ def plot_random_masked_over_time(data_array1: Union[xr.DataArray, xr.Dataset],
     plt.figure(figsize=(10, 6))
     for i in range(n_points):
         plt.plot(time_axis, data_array1.sel(lat=selected_lats[i], lon=selected_lons[i]),
-                 label=f'Lat: {selected_lats[i]}, Lon: {selected_lons[i]}', 
+                 label=f'Lat: {selected_lats[i]}, Lon: {selected_lons[i]}',
                  color=plt.cm.viridis(i / n_points), linestyle='-', marker='o', markersize=4, alpha=0.7)
 
     plt.xlabel('Time')
@@ -112,7 +124,7 @@ class VizNC():
             self.name = [f for f in os.listdir(root) if f.endswith('.nc') and data in f][0]
             data_dir = os.path.join(root, self.name)
             ds = xr.open_dataset(data_dir)
-        
+
         vars_ = list(ds.data_vars)
         print(f"There are {len(vars_)} variables in the dataset: {vars_}")
 
@@ -181,7 +193,7 @@ def plot_ndvi_days(dataset:xr.DataArray,
         print(f"Given that no day has been specified chosing sample day {start_day}")
 
     # Select the desired number of timesteps to plot
-    date_end = pd.to_datetime(start_day) 
+    date_end = pd.to_datetime(start_day)
     new_end = date_end + timedelta(days = num_timesteps - 1)
     end = new_end.strftime('%Y-%m-%d')
 
@@ -201,7 +213,7 @@ def plot_ndvi_days(dataset:xr.DataArray,
 
     # Iterate over the timesteps and plot each one
     for i, ds in enumerate(ndvi_subset):
-        ts = pd.to_datetime(str(ds["time"].values)) 
+        ts = pd.to_datetime(str(ds["time"].values))
         d = ts.strftime('%Y-%m-%d')
         # Assuming the time coordinate is named 'time'
         ax = axes[i]
@@ -209,7 +221,7 @@ def plot_ndvi_days(dataset:xr.DataArray,
         p = ax.pcolormesh(ds, vmin=vmin, vmax=vmax, cmap=cmap,
                             transform=ccrs.PlateCarree())
         ax.set_title(f'Day {d}')
-        
+
         # Adding latitude and longitude labels
         ax.set_xlabel('Longitude')
         ax.set_ylabel('Latitude')
@@ -308,7 +320,7 @@ def plot_multiple_aggregations(data_dict, model_name, aggregate_by="day"):
                           with aggregated errors (indexed by time keys).
         aggregate_by (str): Aggregation level ("day" or "month").
     """
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(6, 4))
 
     # Loop through the data dictionary to plot each series
     for label, data in data_dict.items():
@@ -335,11 +347,108 @@ def plot_multiple_aggregations(data_dict, model_name, aggregate_by="day"):
         raise ValueError("Invalid value for 'aggregate_by'. Choose 'day' or 'month'.")
 
     # Final plot settings
-    plt.title(f"{model_name} Average Error Aggregation by {aggregate_by.capitalize()}", fontsize=16)
-    plt.ylabel('Average Error', fontsize=14)
-    plt.legend(fontsize=12)
+    plt.title(f"{model_name} RMSE by {aggregate_by.capitalize()}", fontsize=16)
+    plt.ylabel('RMSE', fontsize=14)
+    plt.legend(fontsize=12, loc="upper left")
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.tight_layout()
+    plt.show()
+
+
+import matplotlib.pyplot as plt
+from typing import Dict, List
+
+def plot_error_time_multimodel(model_results: Dict[str, Dict], 
+                               days: List[int] = [10, 15, 30],
+                               new_start=None, new_end=None):
+    """
+    Plot yearly mean errors for multiple models in a single figure, considering different start dates.
+
+    Parameters:
+        model_results (dict): Dictionary with model names as keys and sub-dictionaries containing:
+                              - 'y_<day>': Ground truth [s, h, w] for the given day
+                              - 'y_pred_<day>': Predictions [s, h, w] for the given day
+                              - 'start_<day>': Start date for that forecast horizon ('YYYY-MM-DD')
+        days (list): List of forecast days to include (e.g., [10, 15, 30]).
+        new_start (str): Optional. Start of the subset range ('YYYY-MM-DD').
+        new_end (str): Optional. End of the subset range ('YYYY-MM-DD').
+    """
+
+    fig, axes = plt.subplots(1, len(days), figsize=(15, 5), sharey=True)  # Standardized y-axis
+    colors = ['b', 'g', 'r', 'c', 'm', 'y']  # Colors for different models
+    min_y, max_y = float('inf'), float('-inf')  # For standardizing y-axis
+    yearly_errors = {day: {} for day in days}  # Store errors per forecast day
+
+    # Compute yearly mean errors for each model and forecast step
+    for model_name, model_data in model_results.items():
+        for day in days:
+            y_key, y_pred_key, start_key = f'y_{day}', f'y_pred_{day}', f'start_{day}'
+            if y_key not in model_data or y_pred_key not in model_data or start_key not in model_data:
+                print(f"Skipping {model_name} at {day} days: Missing data.")
+                continue
+
+            y, y_pred = model_data[y_key], model_data[y_pred_key]
+            start = model_data[start_key]  # Get specific start date for this forecast horizon
+            start_pd = pd.to_datetime(start)
+            days_length = y.shape[0]
+            end_pd = start_pd + timedelta(days=days_length - 1)
+            range_dates = pd.date_range(start_pd, end_pd)
+
+            # Subset if new date range is specified
+            if new_start and new_end:
+                new_start_dt, new_end_dt = pd.to_datetime(new_start), pd.to_datetime(new_end)
+                valid_dates = (range_dates >= new_start_dt) & (range_dates <= new_end_dt)
+
+                if valid_dates.any():
+                    y = y[valid_dates]
+                    y_pred = y_pred[valid_dates]
+                    range_dates = range_dates[valid_dates]
+                else:
+                    print(f"Skipping {model_name} at {day} days: No data in range {new_start} to {new_end}.")
+                    continue
+
+            # Compute daily and yearly errors
+            daily_error = np.nanmean(np.abs(y - y_pred), axis=(1, 2))
+            df = pd.DataFrame({'date': range_dates, 'error': daily_error})
+            df['year'] = df['date'].dt.year
+            yearly_mean_error = df.groupby('year')['error'].mean()
+
+            # Store errors
+            yearly_errors[day][model_name] = yearly_mean_error
+            min_y = min(min_y, yearly_mean_error.min())
+            max_y = max(max_y, yearly_mean_error.max())
+
+    model_labels = {"dime": "Diffusion", "gwnet": "WaveNet", "convlstm": "ConvLSTM"}
+
+    # Plot each forecast day in a separate subplot
+    for idx, day in enumerate(days):
+        ax = axes[idx]
+
+        for model_idx, (model_name, yearly_mean_error) in enumerate(yearly_errors[day].items()):
+            label = model_labels.get(model_name, model_name)
+            ax.plot(
+                yearly_mean_error.index, yearly_mean_error.values,
+                marker='o', linestyle='-', color=colors[model_idx % len(colors)], label=label
+            )
+
+        ax.set_title(f'Forecast {day} Days', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Year', fontsize=12)
+        ax.grid(True, linestyle='--', alpha=0.6)
+        ax.set_xticks(yearly_mean_error.index)
+        ax.set_xticklabels(yearly_mean_error.index, rotation=45)
+
+    # Standardize y-axis
+    for ax in axes:
+        ax.set_ylim(min_y, max_y)
+
+    # Set common y-label
+    fig.text(0.04, 0.5, 'Mean Absolute Error', va='center', rotation='vertical', fontsize=12)
+
+    # Move legend outside
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 1.05), ncol=3, fontsize=12)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout
     plt.show()
 
 def plot_error_time(y, y_pred, start, new_start=None, new_end=None):
@@ -378,16 +487,21 @@ def plot_error_time(y, y_pred, start, new_start=None, new_end=None):
     # Plot yearly mean error
     plt.figure(figsize=(6, 4))
     plt.plot(yearly_mean_error.index, yearly_mean_error.values, marker='o', linestyle='-', color='b')
-    plt.title('Yearly Mean Error', fontsize=14)
+    plt.title('Yearly RMSE', fontsize=14)
     plt.xlabel('Year', fontsize=12)
-    plt.ylabel('Mean Error', fontsize=12)
+    plt.ylabel('RMSE', fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.xticks(yearly_mean_error.index, rotation=45)
     plt.tight_layout()
     plt.show()
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from typing import Union
 
-def plot_models_errors_overtime(results:dict, model_name:str, days:Union[list, None]=[10, 15, 30]
-    ):
+def plot_models_errors_overtime(
+    results: dict, model_name: str, days: Union[list, None] = [10, 15, 30]
+):
     """
     Plot yearly mean errors for multiple models stored in a dictionary with custom date ranges.
 
@@ -396,10 +510,14 @@ def plot_models_errors_overtime(results:dict, model_name:str, days:Union[list, N
                         Keys for each model day are:
                         - 'y_<day>', 'y_pred_<day>', 'mask_<day>', 'start_<day>', 'end_<day>'.
         model_name (str): The name of the model being plotted, for use in the plot title.
+        days (list): List of forecast days to plot.
     """
-    plt.figure(figsize=(6, 3))
 
-    for model_day in days:
+    plt.figure(figsize=(8, 5))  # Increase figure size for clarity
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']  # Scientific color scheme
+    markers = ['o', 's', '^', 'D', 'x']  # Different markers for distinct lines
+
+    for idx, model_day in enumerate(days):
         # Extract data and custom date range for the current model day
         y = results.get(f'y_{model_day}')
         y_pred = results.get(f'y_pred_{model_day}')
@@ -428,21 +546,29 @@ def plot_models_errors_overtime(results:dict, model_name:str, days:Union[list, N
         plt.plot(
             yearly_mean_error.index,
             yearly_mean_error.values,
-            marker='o',
+            marker=markers[idx % len(markers)],  # Cycle through markers
             linestyle='-',
-            label=f'Model Day {model_day}'
+            color=colors[idx % len(colors)],  # Cycle through colors
+            label=f'{model_day}-Day Forecast'
         )
 
-    # Finalize the plot
+    # Improve plot aesthetics
     plt.xticks(np.arange(yearly_mean_error.index.min(), yearly_mean_error.index.max() + 1, step=1))
-    plt.title(f"Yearly Mean Errors for Model {model_name} at Different Steps", fontsize=14)
+    plt.title(f"Yearly Mean Errors for {model_name}", fontsize=14, fontweight='bold')
     plt.xlabel('Year', fontsize=12)
-    plt.ylabel('Mean Error', fontsize=12)
+    plt.ylabel('RMSE', fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.xticks(rotation=45)
-    plt.legend(fontsize=12)
-    plt.tight_layout()
+
+    # Move legend outside the plot
+    plt.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize=12, frameon=True)
+
+    # Adjust layout to prevent overlap
+    plt.tight_layout(rect=[0, 0, 0.85, 1])  # Leaves space for the legend
+
+    # Show the plot
     plt.show()
+
 
 import numpy as np
 import pandas as pd
@@ -457,15 +583,15 @@ from datetime import timedelta
 from typing import Union
 
 def plot_yearly_error_by_month(
-        y: np.ndarray, 
-        y_pred: np.ndarray, 
-        start: str, 
-        aggregate_by: str = "day", 
-        new_start: Union[None, str] = None, 
-        new_end: Union[None, str] = None, 
+        y: np.ndarray,
+        y_pred: np.ndarray,
+        start: str,
+        aggregate_by: str = "day",
+        new_start: Union[None, str] = None,
+        new_end: Union[None, str] = None,
         mask: Union[None, np.ndarray] = None,
         plot: bool = False):
-    
+
     """
     Plot average error aggregated by calendar day or month across multiple years.
 
@@ -508,20 +634,20 @@ def plot_yearly_error_by_month(
 
     # Group errors by calendar day or month
     df = pd.DataFrame({'date': range_dates, 'error': daily_error})
-    
+
     if aggregate_by == "day":
         df['time_key'] = df['date'].dt.strftime('%m-%d')  # Day of the year
         average_error_by_time = df.groupby('time_key')['error'].mean()
-    
+
     elif aggregate_by == "month":
         df['time_key'] = df['date'].dt.month_name()  # Month name
         df['month_order'] = df['date'].dt.month  # Month number for sorting
         average_error_by_time = df.groupby(['time_key', 'month_order'])['error'].mean().reset_index()
         average_error_by_time = average_error_by_time.sort_values('month_order')
         average_error_by_time = average_error_by_time.set_index('time_key')['error']
-        
+
         # Ensure all months are represented, even if missing in data
-        all_months = ["January", "February", "March", "April", "May", "June", 
+        all_months = ["January", "February", "March", "April", "May", "June",
                       "July", "August", "September", "October", "November", "December"]
         average_error_by_time = average_error_by_time.reindex(all_months)
 
@@ -532,7 +658,7 @@ def plot_yearly_error_by_month(
     if aggregate_by == "day":
         tick_indices = np.arange(0, len(average_error_by_time), max(1, len(average_error_by_time) // 12))
         tick_labels = pd.to_datetime(average_error_by_time.index[tick_indices], format='%m-%d').strftime('%d-%b')
-    
+
     elif aggregate_by == "month":
         tick_indices = np.arange(len(average_error_by_time))  # Months are fewer; show all
         tick_labels = average_error_by_time.index
@@ -553,7 +679,7 @@ def plot_yearly_error_by_month(
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.xticks(ticks=tick_indices, labels=tick_labels, rotation=45)
         plt.tight_layout()
-    
+
     return average_error_by_time
 
 
@@ -725,7 +851,7 @@ def plot_masked_pixel_subset_prediction_vs_real(y, y_pred, start, model_name, ma
         # Plot for each selected pixel
         ax.plot(range_dates, y[:, row, col], label='Real', linestyle='-', linewidth=1, color="green")
         ax.plot(range_dates, y_pred[:, row, col], label='Prediction', linestyle='--', linewidth=1, color="grey")
-        
+
         # Customize y-axis and add legend
         ax.set_ylabel('Value', fontsize=10)
         ax.legend(fontsize=8, loc='upper left', frameon=True)
@@ -821,6 +947,98 @@ def plot_predicted_vs_real_maps(
     plt.suptitle("Real vs Predicted Maps", fontsize=16, weight="bold")
     plt.show()
 
+
+def plot_model_maps(date, results, target_model, models, days, cmap="viridis"):
+    """
+    Plot maps for real values and predictions for all models on a specific date for each forecast day.
+
+    Parameters:
+        date (str): Reference date for plotting (e.g., '2017-01-01').
+        results (dict): Dictionary containing prediction data for all models.
+        target_model (str): The model whose real values will be plotted (e.g., 'convlstm').
+        models (list): List of models to include in the plot for predictions.
+        days (list): List of forecast days to plot (e.g., [10, 15, 30]).
+        cmap (str): Colormap to use for plots (e.g., 'viridis').
+    """
+    sns.set_theme(style="whitegrid")
+
+    # Define number of rows (models) and columns (forecast days) + 1 for the first column
+    n_models = len(models) + 1  # First row is for real values
+    n_days = len(days)  # Columns correspond to different forecast days
+
+    # Add 1 column for model labels
+    fig, axes = plt.subplots(n_models, n_days + 1,
+                             figsize=(2 * (n_days + 1), 2 * n_models),
+                             squeeze=False,
+                             gridspec_kw={'width_ratios': [1] + [1] * n_days})
+
+    # Model names for labeling
+    model_labels = {
+        "dime": "Diffusion",
+        "gwnet": "WaveNet",
+        "convlstm": "ConvLSTM"
+    }
+
+    # Iterate over models (rows)
+    for model_idx, model in enumerate([target_model] + models):
+        for day_idx, day in enumerate(days):
+            col_idx = day_idx + 1  # Offset by 1 due to model label column
+
+            # Retrieve the correct keys
+            key_y = f"y_{day}" if model_idx == 0 else f"y_pred_{day}"
+            key_start = f"start_{day}"
+            key_end = f"end_{day}"
+
+            # Extract the real or predicted values
+            y_data = results[model][key_y]
+            start = pd.to_datetime(results[model][key_start])
+            end = pd.to_datetime(results[model][key_end])
+
+            # Convert input date to index
+            ref_date = pd.to_datetime(date)
+            if not (start <= ref_date <= end):
+                raise ValueError(f"The date {date} is out of range for {model} at {day}-day prediction.")
+
+            date_idx = (ref_date - start).days
+            map_data = y_data[date_idx]  # Extract the specific day’s map
+
+            # Plot
+            ax = axes[model_idx, col_idx]
+            im = ax.imshow(map_data, cmap=cmap, aspect="auto", vmin=-0.2, vmax=1)
+
+            # Set the first row's column titles to "Real - n Days"
+            if model_idx == 0:
+                ax.set_title(f"{day} Days", fontsize=10, pad=10)  # Increased spacing with `pad=10`
+
+            # Remove axes ticks for cleaner visualization
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            # Add colorbar only for last column
+            if day_idx == len(days) - 1:
+                plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        row_label = "Real values" if model_idx == 0 else model_labels.get(model, model)
+        # Add model label in the first column (horizontal text)
+        axes[model_idx, 0].axis("off")  # Hide axes for label column
+        axes[model_idx, 0].text(0.5, 0.5, row_label, fontsize=12, fontweight="bold",
+                                ha="center", va="center")
+
+    # Adjust layout and add external labels
+    fig.supxlabel('Days', fontsize=14, fontweight='bold', y=0.02)  # External x-axis label
+    fig.supylabel('Models', fontsize=14, fontweight='bold', x=0.02)  # External y-axis label
+
+    plt.tight_layout(rect=[0.05, 0.08, 1, 0.95])  # Adjust layout so global labels & subtitle have space
+    plt.suptitle(f"Maps for {date}", fontsize=18, weight="bold", y=1.05)  # Increased spacing above
+
+    plt.show()
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 def plot_model_predictions_all_dates_hexbin(results, models, days, cmap="viridis", min_freq=10, gridsize=50):
     """
     Plot hexbin plots for real vs. predicted values for all models and forecast days over all available dates.
@@ -829,7 +1047,7 @@ def plot_model_predictions_all_dates_hexbin(results, models, days, cmap="viridis
         results (dict): Dictionary containing prediction data for all models.
         models (list): List of models to include in the plot (e.g., ['gwnet', 'convlstm']).
         days (list): List of forecast days to plot (e.g., [10, 15, 30]).
-        colormap (str): Colormap to use for plots (e.g., 'viridis').
+        cmap (str): Colormap to use for plots (e.g., 'viridis').
         min_freq (int): Minimum frequency to display in the hexbin plot.
         gridsize (int): The size of the hexagons in the hexbin plot.
     """
@@ -838,7 +1056,10 @@ def plot_model_predictions_all_dates_hexbin(results, models, days, cmap="viridis
     # Initialize subplots
     n_models = len(models)
     n_days = len(days)
-    fig, axes = plt.subplots(n_models, n_days, figsize=(4 * n_days, 3 * n_models), squeeze=False)
+    fig, axes = plt.subplots(n_days, n_models, figsize=(3 * n_models, 2.5 * n_days), squeeze=False)
+
+    # Create a placeholder for the hexbin plot to use for the colorbar
+    hb = None
 
     # Iterate through models and days
     for model_idx, model in enumerate(models):
@@ -852,19 +1073,23 @@ def plot_model_predictions_all_dates_hexbin(results, models, days, cmap="viridis
             # Retrieve data
             y = results[model][key_y]
             y_pred = results[model][key_y_pred]
-            start = pd.to_datetime(results[model][key_start])
-            end = pd.to_datetime(results[model][key_end])
-            date_range = pd.date_range(start, end)
 
-            # Flatten arrays for all dates
+            # Flatten arrays
             y_flat = y.reshape(-1)
             y_pred_flat = y_pred.reshape(-1)
 
+            # Keep only values in range [0,1]
+            mask = (y_pred_flat >= 0) & (y_pred_flat <= 1) & (y_flat >= 0) & (y_flat <= 1)
+
+            # Apply mask to all arrays
+            y_flat_filtered = y_flat[mask]
+            y_pred_flat_filtered = y_pred_flat[mask]
+
             # Plot hexbin
-            ax = axes[model_idx, day_idx]
+            ax = axes[day_idx, model_idx]
             hb = ax.hexbin(
-                y_flat, y_pred_flat, 
-                gridsize=gridsize, cmap=cmap, mincnt=min_freq
+                y_flat_filtered, y_pred_flat_filtered,
+                gridsize=gridsize, cmap=cmap, mincnt=min_freq, bins="log"
             )
 
             # Set the plot title and labels
@@ -872,18 +1097,159 @@ def plot_model_predictions_all_dates_hexbin(results, models, days, cmap="viridis
             ax.set_xlabel("Real Values", fontsize=8)
             ax.set_ylabel("Predicted Values", fontsize=8)
 
-            # Add a red dashed line (ideal fit line)
-            ax.plot([y_flat.min(), y_flat.max()], [y_flat.min(), y_flat.max()], color="red", linestyle="--", linewidth=1)
+            # Set limits from 0 to 1
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
 
-        # Add a colorbar for the hexbin plot
-    
-    fig.colorbar(hb, ax=axes, orientation="horizontal", fraction=0.02, pad=0.1)
+            # Add tick marks every 0.2
+            ax.set_xticks(np.arange(0, 1.1, 0.2))
+            ax.set_yticks(np.arange(0, 1.1, 0.2))
 
-    # Adjust layout and show the plot
+            # Add quadrant lines
+            # ax.axhline(0.5, color='gray', linestyle='--', linewidth=0.8)
+            # ax.axvline(0.5, color='gray', linestyle='--', linewidth=0.8)
+
+            # Add red diagonal reference line
+            ax.plot([0, 1], [0, 1], color="red", linestyle="--", linewidth=1)
+
+    # Add a single colorbar for all hexbin plots
+    cbar = fig.colorbar(hb, ax=axes, orientation="vertical", fraction=0.02, pad=0.04, anchor=(0.0, 0.5))
+    cbar.set_label("Hexbin Frequency", fontsize=10)
+    # cbar.set_ticks([])  # Remove colorbar ticks
+
+    # Adjust layout to make room for the colorbar
     plt.tight_layout()
+    plt.subplots_adjust(right=0.85, top=0.90)  # Adjust the right margin for the colorbar
     plt.suptitle("Model Predictions Over All Dates - Hexbin Plots", fontsize=14, weight="bold")
-    plt.subplots_adjust(top=0.9)
     plt.show()
+
+
+def plot_drought_aggregations(results:dict,
+    model:str,
+    step:int,
+    mask:np.ndarray,
+    start_date:str,
+    n:int,
+    include_percentiles=True):
+
+    """
+    Plots median drought severity over n future days, with optional 25th and 75th percentiles.
+
+    Parameters:
+    start_date (str): The starting date in 'YYYY-MM-DD' format.
+    n (int): Number of future days to aggregate.
+    include_percentiles (bool): Whether to include 25th and 75th percentiles in the plot.
+    """
+
+    real = results[model][f"y_{step}"]
+    pred = results[model][f"y_pred_{step}"]
+
+    real_start_date = results[model][f"start_{step}"]
+    end_date =  results[model][f"end_{step}"]
+
+    # Convert string dates to datetime
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+
+    # Compute index range based on start_date and n
+    date_range = np.array([start_dt + timedelta(days=i) for i in range(n)])
+    start_idx = (start_dt - datetime.strptime(real_start_date, "%Y-%m-%d")).days
+    end_idx = min(start_idx + n, real.shape[0])
+
+    # Masking invalid values
+    real_masked = np.where(mask[None, :, :], real[start_idx:end_idx], np.nan)
+    pred_masked = np.where(mask[None, :, :], pred[start_idx:end_idx], np.nan)
+
+    # Compute statistics
+    real_median = np.nanmedian(real_masked, axis=(1, 2))
+    pred_median = np.nanmedian(pred_masked, axis=(1, 2))
+
+    if include_percentiles:
+        real_p25 = np.nanpercentile(real_masked, 25, axis=(1, 2))
+        real_p75 = np.nanpercentile(real_masked, 75, axis=(1, 2))
+        pred_p25 = np.nanpercentile(pred_masked, 25, axis=(1, 2))
+        pred_p75 = np.nanpercentile(pred_masked, 75, axis=(1, 2))
+
+    # Plot results
+    plt.figure(figsize=(7, 3))
+    plt.plot(date_range[:end_idx - start_idx], real_median, label='Real Median', color='blue')
+    plt.plot(date_range[:end_idx - start_idx], pred_median, label='Predicted Median', color='red', linestyle='dashed')
+
+    if include_percentiles:
+        plt.fill_between(date_range[:end_idx - start_idx], real_p25, real_p75, color='blue', alpha=0.2, label='Real IQR')
+        plt.fill_between(date_range[:end_idx - start_idx], pred_p25, pred_p75, color='red', alpha=0.2, label='Predicted IQR')
+
+    plt.xlabel("Date")
+    plt.ylabel("NDVI")
+    plt.title(f"NDVI Predictions {step} days in advance vs Real")
+    plt.legend(loc='upper left')
+    plt.grid()
+    plt.xticks(rotation=45)
+    plt.show()
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+
+def plot_drought_at_steps(results: dict, model: str, mask: np.ndarray, start_date: str):
+    """
+    Plots median drought severity with real values as a green line and future predictions as dots,
+    including interquartile range (IQR) shading.
+
+    Parameters:
+    results (dict): Dictionary containing real and predicted drought severity data.
+    model (str): Model name to extract data from results.
+    mask (np.ndarray): 2D mask array indicating valid regions.
+    start_date (str): The starting date in 'YYYY-MM-DD' format.
+    """
+    forecast_steps = [10, 15, 30, 45, 60]
+    plt.figure(figsize=(6, 3))
+
+    real_median = None  # Store real median to plot only once
+    real_p25 = None
+    real_p75 = None
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=forecast_steps[0])
+
+    for step in forecast_steps:
+        real = results[model][f"y_{step}"]
+        pred = results[model][f"y_pred_{step}"]
+        real_start_date = results[model][f"start_{step}"]
+
+        # Compute index range based on start_date
+        start_idx = (start_dt - datetime.strptime(real_start_date, "%Y-%m-%d")).days
+        end_idx = min(start_idx + step, real.shape[0])
+        date_range = np.array([start_dt + timedelta(days=i) for i in range(step)])
+
+        # Masking invalid values
+        real_masked = np.where(mask[None, :, :], real[start_idx:end_idx], np.nan)
+        pred_masked = np.where(mask[None, :, :], pred[start_idx:end_idx], np.nan)
+
+        # Compute statistics
+        if step == forecast_steps[-1]:
+            real_median = np.nanmedian(real_masked, axis=(1, 2))
+            real_p25 = np.nanpercentile(real_masked, 25, axis=(1, 2))
+            real_p75 = np.nanpercentile(real_masked, 75, axis=(1, 2))
+        pred_median = np.nanmedian(pred_masked[-1], axis=(0, 1))  # Last prediction point
+
+        # Plot prediction as a dot
+        plt.scatter(date_range[-1], pred_median, label=f'Predicted {step} days', marker='o')
+
+    # Plot real median as a green line
+    plt.plot(date_range[:len(real_median)], real_median, label='Real Median', color='green')
+
+    # Plot IQR as shaded area
+    plt.fill_between(date_range[:len(real_median)], real_p25, real_p75, color='green', alpha=0.2, label='Real IQR')
+
+    plt.xlabel("Date")
+    plt.ylabel("NDVI")
+    plt.title(f"Median NDVI Predictions at Multiple Forecast Steps on the {start_date} ")
+    plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
+
+    plt.grid()
+    plt.xticks(rotation=45)
+    plt.show()
+
 
 def plot_model_predictions_all_dates(results, models, days, cmap="viridis"):
     """
@@ -997,30 +1363,42 @@ def plot_model_predictions(date, results, models, days, cmap="viridis"):
                 axes[model_idx, day_idx].set_axis_off()
                 continue
 
+
             # Flatten y and y_pred for plotting
             y_flat = y[date_idx].flatten()
             y_pred_flat = y_pred[date_idx].flatten()
 
-            # Generate the color array
-            color_array = np.linspace(0, 1, len(y_flat))
+            mask = y_flat >= 0  # Keep only values >= 0
 
-            # Plot the data
+            # Apply mask to all arrays
+            y_flat_filtered = y_flat[mask]
+            y_pred_flat_filtered = y_pred_flat[mask]
+
+            # Use filtered arrays in scatter plot
             ax = axes[model_idx, day_idx]
             scatter = ax.scatter(
-                y_flat,
-                y_pred_flat,
-                c=color_array,
+                y_flat_filtered,
+                y_pred_flat_filtered,
+                c=y_flat_filtered,
                 cmap=cmap,
                 s=10,
                 alpha=0.7
             )
-            ax.plot([y_flat.min(), y_flat.max()], [y_flat.min(), y_flat.max()], color="red", linestyle="--", linewidth=1)
+
+            ax.plot([y_flat_filtered.min(), y_flat_filtered.max()],
+                    [y_flat_filtered.min(), y_flat_filtered.max()],
+                    color="red", linestyle="--", linewidth=1)
             ax.set_title(f"{model.upper()} - {day} Days", fontsize=10)
             ax.set_xlabel("Real Values", fontsize=8)
             ax.set_ylabel("Predicted Values", fontsize=8)
 
     # Adjust layout and add a colorbar
-    fig.colorbar(scatter, ax=axes, orientation="horizontal", fraction=0.02, pad=0.1)
+    # fig.colorbar(scatter, ax=axes, orientation="horizontal", fraction=0.02, pad=0.1)
+    # Create a separate axis for the colorbar
+    cbar_ax = fig.add_axes([1.05, 0.2, 0.02, 0.6])  # [left, bottom, width, height]
+    cbar = fig.colorbar(scatter, cax=cbar_ax)
+    cbar.set_label("Color Scale", fontsize=10)
+
     plt.tight_layout()
     plt.suptitle(f"Model Predictions on {date}", fontsize=14, weight="bold")
     plt.subplots_adjust(top=0.9)
@@ -1098,7 +1476,7 @@ if __name__== "__main__":
     # data_name = "data_gnn_drought"
 
     results = {}
-    basemask = {"days": 10, "model": "dime"} 
+    basemask = {"days": 10, "model": "dime"}
 
 
     for model in ["dime", "convlstm",  "gwnet"]:
