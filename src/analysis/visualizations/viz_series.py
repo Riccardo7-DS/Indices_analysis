@@ -7,7 +7,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 from utils.function_clns import load_config
-import seaborn as sns
+# import seaborn as sns
 from typing import Union
 import numpy as np
 import logging
@@ -15,7 +15,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def load_ndvi_output(config, model, days, features=90, vars:str=None, basemask:Union[int, None]=None):
+def load_ndvi_output(config, model, days, features, vars:str=None, basemask:Union[int, None]=None):
     """
     Function to load the output of the DL models
     """
@@ -30,10 +30,11 @@ def load_ndvi_output(config, model, days, features=90, vars:str=None, basemask:U
 
     if basemask:
         if vars is None:
-            maskpath = basepath.format(m=basemask["model"], d=basemask["days"], f=features)
+            maskpath = basepath.format(m=basemask["model"], d=basemask["days"], f=1)
+            
         else:
             maskpath = basepath.format(v=vars, m=basemask["model"], d=basemask["days"], f=features)
-    
+
         glob_mask = np.load(os.path.join(maskpath, "mask_dr.npy"))[:64, :64].astype(bool)
         lat, lon = glob_mask.shape[0], glob_mask.shape[1]
 
@@ -170,7 +171,7 @@ from utils.xarray_functions import ndvi_colormap
 from datetime import timedelta
 import pandas as pd
 import math
-import cartopy.crs as ccrs
+# import cartopy.crs as ccrs
 
 def plot_ndvi_days(dataset:xr.DataArray,
                    start_day:Union[str,None],
@@ -358,9 +359,12 @@ def plot_multiple_aggregations(data_dict, model_name, aggregate_by="day"):
 import matplotlib.pyplot as plt
 from typing import Dict, List
 
-def plot_error_time_multimodel(model_results: Dict[str, Dict], 
-                               days: List[int] = [10, 15, 30],
-                               new_start=None, new_end=None):
+# from skimage.metrics import structural_similarity as ssim
+
+def plot_error_time_multimodel(model_results: dict, 
+                               days: list = [10, 15, 30],
+                               new_start=None, new_end=None,
+                               metric="rmse"):
     """
     Plot yearly mean errors for multiple models in a single figure, considering different start dates.
 
@@ -372,14 +376,23 @@ def plot_error_time_multimodel(model_results: Dict[str, Dict],
         days (list): List of forecast days to include (e.g., [10, 15, 30]).
         new_start (str): Optional. Start of the subset range ('YYYY-MM-DD').
         new_end (str): Optional. End of the subset range ('YYYY-MM-DD').
+        metric (str): Error metric to use, either "rmse" or "ssim". Default is "rmse".
     """
 
-    fig, axes = plt.subplots(1, len(days), figsize=(15, 5), sharey=True)  # Standardized y-axis
-    colors = ['b', 'g', 'r', 'c', 'm', 'y']  # Colors for different models
-    min_y, max_y = float('inf'), float('-inf')  # For standardizing y-axis
-    yearly_errors = {day: {} for day in days}  # Store errors per forecast day
+    fig, axes = plt.subplots(1, len(days), figsize=(15, 5), sharey=True)
+    colors = ['b', 'g', 'r', 'c', 'm', 'y']
+    min_y, max_y = float('inf'), float('-inf')
+    yearly_errors = {day: {} for day in days}
 
-    # Compute yearly mean errors for each model and forecast step
+    def compute_error(y, y_pred):
+        """Compute error based on the selected metric."""
+        if metric == "rmse":
+            return np.sqrt(np.nanmean((y - y_pred) ** 2, axis=(1, 2)))
+        elif metric == "ssim":
+            return np.array([ssim(y[i], y_pred[i], data_range=2) for i in range(y.shape[0])])
+        else:
+            raise ValueError("Invalid metric. Choose either 'rmse' or 'ssim'.")
+
     for model_name, model_data in model_results.items():
         for day in days:
             y_key, y_pred_key, start_key = f'y_{day}', f'y_pred_{day}', f'start_{day}'
@@ -388,13 +401,12 @@ def plot_error_time_multimodel(model_results: Dict[str, Dict],
                 continue
 
             y, y_pred = model_data[y_key], model_data[y_pred_key]
-            start = model_data[start_key]  # Get specific start date for this forecast horizon
+            start = model_data[start_key]
             start_pd = pd.to_datetime(start)
             days_length = y.shape[0]
             end_pd = start_pd + timedelta(days=days_length - 1)
             range_dates = pd.date_range(start_pd, end_pd)
 
-            # Subset if new date range is specified
             if new_start and new_end:
                 new_start_dt, new_end_dt = pd.to_datetime(new_start), pd.to_datetime(new_end)
                 valid_dates = (range_dates >= new_start_dt) & (range_dates <= new_end_dt)
@@ -407,20 +419,17 @@ def plot_error_time_multimodel(model_results: Dict[str, Dict],
                     print(f"Skipping {model_name} at {day} days: No data in range {new_start} to {new_end}.")
                     continue
 
-            # Compute daily and yearly errors
-            daily_error = np.nanmean(np.abs(y - y_pred), axis=(1, 2))
+            daily_error = compute_error(y, y_pred)
             df = pd.DataFrame({'date': range_dates, 'error': daily_error})
             df['year'] = df['date'].dt.year
             yearly_mean_error = df.groupby('year')['error'].mean()
 
-            # Store errors
             yearly_errors[day][model_name] = yearly_mean_error
-            min_y = min(min_y, yearly_mean_error.min())
-            max_y = max(max_y, yearly_mean_error.max())
+            min_y = min(min_y, yearly_mean_error.min()) 
+            max_y = max(max_y, yearly_mean_error.max()) + 0.02
 
     model_labels = {"dime": "Diffusion", "gwnet": "WaveNet", "convlstm": "ConvLSTM"}
 
-    # Plot each forecast day in a separate subplot
     for idx, day in enumerate(days):
         ax = axes[idx]
 
@@ -436,19 +445,24 @@ def plot_error_time_multimodel(model_results: Dict[str, Dict],
         ax.grid(True, linestyle='--', alpha=0.6)
         ax.set_xticks(yearly_mean_error.index)
         ax.set_xticklabels(yearly_mean_error.index, rotation=45)
+    
+    
+    margin = 0.05 * max_y  # 5% margin
 
-    # Standardize y-axis
+    if metric == "ssim":
+        max_y = 1
+
     for ax in axes:
         ax.set_ylim(min_y, max_y)
 
-    # Set common y-label
-    fig.text(0.04, 0.5, 'Mean Absolute Error', va='center', rotation='vertical', fontsize=12)
+    ylabel = 'RMSE' if metric == "rmse" else 'SSIM'
 
-    # Move legend outside
+    fig.text(-0.02, 0.5, f'Yearly Mean {ylabel}', va='center', rotation='vertical', fontsize=12)
+
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 1.05), ncol=3, fontsize=12)
 
-    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.show()
 
 def plot_error_time(y, y_pred, start, new_start=None, new_end=None):
@@ -1034,10 +1048,6 @@ def plot_model_maps(date, results, target_model, models, days, cmap="viridis"):
     plt.show()
 
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 def plot_model_predictions_all_dates_hexbin(results, models, days, cmap="viridis", min_freq=10, gridsize=50):
     """
@@ -1182,7 +1192,8 @@ def plot_drought_aggregations(results:dict,
     plt.xlabel("Date")
     plt.ylabel("NDVI")
     plt.title(f"NDVI Predictions {step} days in advance vs Real")
-    plt.legend(loc='upper left')
+    plt.legend(loc='upper left', bbox_to_anchor=(1.02, 1), borderaxespad=0)
+
     plt.grid()
     plt.xticks(rotation=45)
     plt.show()
@@ -1458,81 +1469,244 @@ def plot_models_metrics_over_steps(metrics_results, days):
 
 
 if __name__== "__main__":
-    from analysis import custom_subset_data, diffusion_arguments
-    from analysis.visualizations.viz_series import load_ndvi_output
-    from analysis.configs.config_models import config_gwnet as model_config
-    import numpy as np
-    from datetime import datetime, timedelta
-    from typing import Union
-    import pandas as pd
+    # from analysis import custom_subset_data, diffusion_arguments
+    # from analysis.visualizations.viz_series import load_ndvi_output
+    # from analysis.configs.config_models import config_gwnet as model_config
+    # import numpy as np
+    # from datetime import datetime, timedelta
+    # from typing import Union
+    # import pandas as pd
+    # import os
+    # from utils.xarray_functions import ndvi_colormap
+    # import seaborn as sns
+    # import matplotlib.pyplot as plt
+    # cmap = ndvi_colormap("diverging")
+
+
+    # start, end = "2019-01-01", "2022-12-31"
+    # # data_name = "data_gnn_drought"
+
+    # results = {}
+    # basemask = {"days": 10, "model": "dime"}
+
+
+    # for model in ["dime", "convlstm",  "gwnet"]:
+    #     # Initialize the model key in the results dictionary
+    #     results[model] = {}
+
+    #     for day in [10]:
+    #         # Load the data for the current model and day
+    #         y, y_pred, mask = load_ndvi_output(model_config, model, day, basemask=basemask)
+
+    #         # Store the results in the nested dictionary
+    #         results[model][f"y_{day}"] = y
+    #         results[model][f"y_pred_{day}"] = y_pred
+    #         results[model][f"mask_{day}"] = mask
+
+    #         # Calculate the date range based on the model and day
+    #         if model == "dime":
+    #             range_dates = pd.date_range(
+    #                 pd.to_datetime(start),
+    #                 pd.to_datetime(end)
+    #             )
+    #         else:
+    #             range_dates = pd.date_range(
+    #                 pd.to_datetime(start) - timedelta(days=1) + timedelta(days=day + 90),
+    #                 pd.to_datetime(end)
+    #             )
+
+    #         # Store the start and end dates in the nested dictionary
+    #         results[model][f"start_{day}"] = range_dates[0].strftime("%Y-%m-%d")
+    #         results[model][f"end_{day}"] = range_dates[-1].strftime("%Y-%m-%d")
+
+
+    # range_dates = pd.date_range(pd.to_datetime(start) - timedelta(days=1) + timedelta(days=15+90), pd.to_datetime(end))
+    # print("For the prediction over 15 days with 90 days of features there are {} samples".format(len(range_dates)))
+
+    # print(results["convlstm"]["y_pred_10"].shape)
+    # print(results["dime"]["y_pred_10"].shape)
+    # print(results["gwnet"]["y_pred_10"].shape)
+
+    # print(results["dime"]["start_10"])
+    # print(results["dime"]["end_10"])
+
+
+    # res = results["convlstm"]
+    # model_name = "convlstm"
+
+    # mask = results["dime"]["mask_10"]
+    # y = res["y_10"]
+    # y_pred = res["y_pred_10"]
+    # start = res["start_10"]
+
+    # # Process data for different time ranges
+    # error_2019 = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month", new_start=start, new_end="2019-12-31", mask=mask)
+    # error_2020 = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month", new_start="2020-01-01", new_end="2020-12-31")
+    # error_2021 = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month", new_start="2021-01-01", new_end="2021-12-31")
+    # error_2022 = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month", new_start="2022-01-01", new_end="2022-12-30")
+    # error_tot = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month")
+
+    # plot_multiple_aggregations(data_dict = { "2019":error_2019, '2020': error_2020, '2021': error_2021, "2022":error_2022, "total": error_tot}, model_name=model_name, aggregate_by="month")
+
+
     import os
-    from utils.xarray_functions import ndvi_colormap
-    import seaborn as sns
-    import matplotlib.pyplot as plt
-    cmap = ndvi_colormap("diverging")
+    import warnings
+    import logging
+    import sys
+    import argparse
+    import pyproj
+    import xarray as xr
+    from dask.diagnostics import ProgressBar
+
+    # Import your modules
+    from utils.function_clns import config
+    from utils.function_clns import subsetting_pipeline
+    from precipitation import PrecipDataPreparation
+    from vegetation import compute_vci
+    from xclim.indices import standardized_precipitation_index as SPI
+    from analysis.visualizations.viz_vci_spi import (
+        plot_precp_multiple_years,
+        plot_spi_multiple_years, plot_whole_period_spi_veg,
+        plot_vci_multiple_years, loop_soil,
+        plot_veg_multiple_years,
+    )
+    plt.switch_backend('agg')
 
 
-    start, end = "2019-01-01", "2022-12-31"
-    # data_name = "data_gnn_drought"
+    # Setup
+    warnings.filterwarnings("ignore")
+    os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    ProgressBar().register()
 
-    results = {}
-    basemask = {"days": 10, "model": "dime"}
+    class JupyterArgParser:
+        def __init__(self):
+            self.parser = argparse.ArgumentParser()
+            self.parser.add_argument('-f')  # for Jupyter
+            self.parser.add_argument('--normalize', default=False)
+            self.parser.add_argument('--model', default="None")
+            self.parser.add_argument('--fillna', default=False)
+            self.parser.add_argument('--crop_area', default=True)
+
+        def parse_args(self, args=None):
+            if args is None:
+                args = sys.argv[1:]
+            return self.parser.parse_args(args)
+
+    # Arguments
+    arg_parser = JupyterArgParser()
+    args = arg_parser.parse_args([])
+
+    # Output directory
+    output_dir = "output/images/plots" 
+    os.makedirs(output_dir, exist_ok=True)
+
+    # ---- Load Data ----
+    variables = ["precipitation"]
+
+    precp_data = PrecipDataPreparation(
+        args,
+        precipitation_data="MSWEP",
+        variables=variables,
+        load_local_precp=True,
+        load_zarr_features=True,
+        precp_filename="mswep_precip",
+        interpolate=False,
+    )
+
+    ndvi_ds = precp_data.ndvi_ds.load()
+    precp_ds = precp_data.precp_ds.load()
+    pr = precp_ds["precipitation"]
+
+    # Compute VCI
+    vci_ds = compute_vci(ndvi_ds)
 
 
-    for model in ["dime", "convlstm",  "gwnet"]:
-        # Initialize the model key in the results dictionary
-        results[model] = {}
+    # # Compute SPIs
+    # spi_ds_60 = SPI(
+    #     pr=pr.chunk({"time": -1, "lat": "auto", "lon": "auto"}),
+    #     freq="D",
+    #     window=60,
+    #     dist="gamma",
+    #     method="APP",
+    #     fitkwargs={"floc": 0}
+    # ).isel(time=slice(60, -1)).to_dataset(name="spi_gamma_60")
 
-        for day in [10]:
-            # Load the data for the current model and day
-            y, y_pred, mask = load_ndvi_output(model_config, model, day, basemask=basemask)
+    spi_ds_90 = SPI(
+        pr=pr.chunk({"time": -1, "lat": "auto", "lon": "auto"}),
+        freq="D",
+        window=90,
+        dist="gamma",
+        method="APP",
+        fitkwargs={"floc": 0}
+    ).isel(time=slice(90, -1)).to_dataset(name="spi_gamma_90").load()
 
-            # Store the results in the nested dictionary
-            results[model][f"y_{day}"] = y
-            results[model][f"y_pred_{day}"] = y_pred
-            results[model][f"mask_{day}"] = mask
+    # spi_ds_180 = SPI(
+    #     pr=pr.chunk({"time": -1, "lat": "auto", "lon": "auto"}),
+    #     freq="D",
+    #     window=180,
+    #     dist="gamma",
+    #     method="APP",
+    #     fitkwargs={"floc": 0}
+    # ).isel(time=slice(180, -1)).to_dataset(name="spi_gamma_180")
 
-            # Calculate the date range based on the model and day
-            if model == "dime":
-                range_dates = pd.date_range(
-                    pd.to_datetime(start),
-                    pd.to_datetime(end)
-                )
-            else:
-                range_dates = pd.date_range(
-                    pd.to_datetime(start) - timedelta(days=1) + timedelta(days=day + 90),
-                    pd.to_datetime(end)
-                )
+    # ---- Plotting function with saving ----
+    def save_plot(plot_func, dataset, years, variable_name=None, suffix=""):
+        years_str = "-".join(str(y) for y in years)
+        if variable_name:
+            filename = f"{suffix}_{variable_name}_{years_str}.png"
+        else:
+            filename = f"{suffix}_{years_str}.png"
+        save_path = os.path.join(output_dir, filename)
 
-            # Store the start and end dates in the nested dictionary
-            results[model][f"start_{day}"] = range_dates[0].strftime("%Y-%m-%d")
-            results[model][f"end_{day}"] = range_dates[-1].strftime("%Y-%m-%d")
+        if variable_name:
+            plot_func(dataset, years=years, variable=variable_name, path=save_path)
+        else:
+            plot_func(dataset, years=years, path=save_path)
 
+        plt.gcf().clear()  # clears the current figure
+        plt.close()
 
-    range_dates = pd.date_range(pd.to_datetime(start) - timedelta(days=1) + timedelta(days=15+90), pd.to_datetime(end))
-    print("For the prediction over 15 days with 90 days of features there are {} samples".format(len(range_dates)))
+    # ---- Plot and Save All ----
 
-    print(results["convlstm"]["y_pred_10"].shape)
-    print(results["dime"]["y_pred_10"].shape)
-    print(results["gwnet"]["y_pred_10"].shape)
+    # # 1. SPI 90
+    # print("Plotting SPI 90...")
+    # save_plot(plot_spi_multiple_years, spi_ds_90, years=[2009, 2010], variable_name="spi_gamma_90", suffix="spi90")
+    # save_plot(plot_spi_multiple_years, spi_ds_90, years=[2008], variable_name="spi_gamma_90", suffix="spi90")
+    # save_plot(plot_spi_multiple_years, spi_ds_90, years=[2013, 2014], variable_name="spi_gamma_90", suffix="spi90")
 
-    print(results["dime"]["start_10"])
-    print(results["dime"]["end_10"])
+    # # 2. SPI 60, 90, 180 for 2016 and 2017
+    # print("Plotting SPI 60, 90, 180 for 2016 and 2017...")
+    # save_plot(plot_spi_multiple_years, spi_ds_60, years=[2016, 2017], variable_name="spi_gamma_60", suffix="spi60")
+    # save_plot(plot_spi_multiple_years, spi_ds_90, years=[2016, 2017], variable_name="spi_gamma_90", suffix="spi90")
+    # save_plot(plot_spi_multiple_years, spi_ds_180, years=[2016, 2017], variable_name="spi_gamma_180", suffix="spi180")
 
+    # # 3. Precipitation
+    # print("Plotting Precipitation...")
+    # save_plot(plot_precp_multiple_years, precp_ds, years=[2009, 2010], variable_name="precipitation", suffix="precip")
+    # save_plot(plot_precp_multiple_years, precp_ds, years=[2008], variable_name="precipitation", suffix="precip")
+    # save_plot(plot_precp_multiple_years, precp_ds, years=[2013, 2014], variable_name="precipitation", suffix="precip")
+    # save_plot(plot_precp_multiple_years, precp_ds, years=[2016, 2017], variable_name="precipitation", suffix="precip")
 
-    res = results["convlstm"]
-    model_name = "convlstm"
+    # # 4. NDVI
+    # print("Plotting NDVI...")
+    # save_plot(plot_veg_multiple_years, ndvi_ds, years=[2009, 2010], suffix="ndvi")
+    # save_plot(plot_veg_multiple_years, ndvi_ds, years=[2008], suffix="ndvi")
+    # save_plot(plot_veg_multiple_years, ndvi_ds, years=[2013, 2014], suffix="ndvi")
+    # save_plot(plot_veg_multiple_years, ndvi_ds, years=[2016, 2017], suffix="ndvi")
 
-    mask = results["dime"]["mask_10"]
-    y = res["y_10"]
-    y_pred = res["y_pred_10"]
-    start = res["start_10"]
+    # 5. VCI
+    # print("Plotting VCI...")
+    # save_plot(plot_vci_multiple_years, vci_ds, years=[2009, 2010], suffix="vci")
+    # save_plot(plot_vci_multiple_years, vci_ds, years=[2008], suffix="vci")
+    # save_plot(plot_vci_multiple_years, vci_ds, years=[2016, 2017], suffix="vci")
 
-    # Process data for different time ranges
-    error_2019 = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month", new_start=start, new_end="2019-12-31", mask=mask)
-    error_2020 = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month", new_start="2020-01-01", new_end="2020-12-31")
-    error_2021 = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month", new_start="2021-01-01", new_end="2021-12-31")
-    error_2022 = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month", new_start="2022-01-01", new_end="2022-12-30")
-    error_tot = plot_yearly_error_by_month(y, y_pred, start, aggregate_by="month")
+    # print("Plotting Soil Types...")
+    # loop_soil(ndvi_ds, precp_ds=pr, ndvi_var="ndvi", one_forest=True, path=output_dir)
 
-    plot_multiple_aggregations(data_dict = { "2019":error_2019, '2020': error_2020, '2021': error_2021, "2022":error_2022, "total": error_tot}, model_name=model_name, aggregate_by="month")
+    # 6. VCI and SPI for the whole period
+    print("Plotting VCI and SPI for the whole period...")
+    plot_whole_period_spi_veg(spi_ds_90, ndvi_ds.to_dataset(name="ndvi"), late=90, var_target="spi_gamma_90", start_date="2005-04-01")
+
+    print("✅ All plots generated and saved into:", output_dir)

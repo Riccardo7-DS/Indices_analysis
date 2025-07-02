@@ -16,6 +16,8 @@ from utils.xarray_functions import ndvi_colormap
 from timm.utils import ModelEmaV3
 import matplotlib.pyplot as plt
 import torch
+from datetime import datetime
+
 import matplotlib
 import gc
 matplotlib.use('Agg')
@@ -34,7 +36,7 @@ parser.add_argument('--attention',type=bool,default=os.getenv("attention", False
 parser.add_argument('--auto_train',type=bool,default=os.getenv("auto_train", False))
 parser.add_argument('--auto_days',type=int,default=os.getenv("auto_days", 180))
 
-parser.add_argument('--feature_days',type=int,default=os.getenv("feature_days", 90))
+parser.add_argument('--feature_days',type=int,default=os.getenv("feature_days", 1))
 parser.add_argument('--auto_ep',type=int,default=os.getenv("auto_ep", 80))
 parser.add_argument('--gen_samples',type=int,default=os.getenv("gen_samples", 1))
 
@@ -66,10 +68,14 @@ args = parser.parse_args()
 _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
 checkpoint_path  = checkpoint_dir + f"/checkpoint_epoch_{args.epoch}"
 
-logger = init_logging(log_file=os.path.join(log_path, 
-    f"dime_days_{args.step_length}_"  \
-    f"features_{args.feature_days}"
-    f"{args.mode}.log"))
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+logger = init_logging(log_file=os.path.join(
+    log_path,
+    f"dime_days_{args.step_length}_"
+    f"features_{args.feature_days}_"
+    f"{args.mode}_{timestamp}.log"
+))
 # writer = init_tb(log_path)
 
 train_data, val_data, train_label, val_label, \
@@ -82,27 +88,28 @@ datagenrator_train = DataGenerator(model_config,
     args,
     train_data, 
     train_label, 
-    autoencoder, 
-    data_split=f"train"
+    autoencoder=autoencoder, 
+    start_date="2005-01-01",
+    data_split=f"train_vae"
 )
 
 dataloader_train = DataLoader(datagenrator_train, 
     shuffle=True, 
     batch_size=model_config.batch_size)
 
-if test_data is not None:
-    datagenrator_test= DataGenerator(model_config, 
-        args,
-        test_data, 
-        test_label, 
-        autoencoder, 
-        data_split=f"test"
-    )
+# if test_data is not None:
+#     datagenrator_test= DataGenerator(model_config, 
+#         args,
+#         test_data, 
+#         test_label, 
+#         autoencoder=autoencoder, 
+#         data_split=f"test"
+#     )
 
-    dataloader_test = DataLoader(datagenrator_test, 
-        shuffle=False, 
-        batch_size=model_config.batch_size
-    )
+#     dataloader_test = DataLoader(datagenrator_test, 
+#         shuffle=False, 
+#         batch_size=model_config.batch_size
+#     )
 
 ########################### Models and training functions #######################
 
@@ -119,7 +126,7 @@ else:
         channels=input_channels+1,
         dim_mults=(1, 2, 4, 8, 16),
         out_dim=model_config.output_channels).to(model_config.device)
-    weight_decay = 1e-3
+    weight_decay = 1e-4
 
 model = DataParallel(model)
 

@@ -228,7 +228,7 @@ class Forward_diffussion_process():
         self.sampling_timesteps = config.sampling_steps if args.diff_sample=="ddim" else None
         self.device = config.device
         self.loss_fn = loss
-        self.eta = 0. if args.diff_sample=="ddim" else 1
+        self.eta = args.eta 
         self._set_alphas_betas(args)
         self._set_post_variance()
         self.model = model
@@ -401,7 +401,7 @@ class Forward_diffussion_process():
         # Algorithm 2 (including returning all images)
     @torch.no_grad()
     def p_sample(self, args, model, x_start, time_steps, prev_steps, x_cond):
-        if args.ensamble:
+        if args.num_ensambles > 1:
             if len(x_start.size()) == 4:
                 b, c, w, h = x_start.size()
             else:
@@ -442,7 +442,7 @@ class Forward_diffussion_process():
         return imgs[-1]
 
     @torch.no_grad()
-    def p_sample_loop(self, args, model, dataloader, img_shape, samples):
+    def p_sample_loop(self, args, model, dataloader,  scaler, img_shape, samples):
         
         def generate_random_samples(shape, to_gpu=True):
             x_cond, y_true = [], []
@@ -450,6 +450,13 @@ class Forward_diffussion_process():
                 idx = random.randint(0, len(dataloader.dataset.data) - 1)
                 x_cond.append(torch.from_numpy(dataloader.dataset.data[idx]).unsqueeze(0))
                 y_true.append(torch.from_numpy(dataloader.dataset.labels[idx]).unsqueeze(0))
+
+                        # Optionally print dates if idx is first or last
+                if _ == 0 or _ == shape - 1:
+                    dates = dataloader.dataset.get_sample_dates(idx, "DIME")
+                    logger.info(f"Index {idx} - Data Window: {dates['data_window']}")
+                    logger.info(f"Index {idx} - Label Window: {dates['label_window']}")
+
             x_cond = torch.concat(x_cond, axis=0)
             y_true = torch.concat(y_true, axis=0)
             if to_gpu:
@@ -475,8 +482,9 @@ class Forward_diffussion_process():
 
         # Preallocate tensors
         imgs = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
-        std = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+        # ci = torch.empty((tot_samples, 2), device=self.device)
         y = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+        ens = torch.empty((model.num_ensambles, *y.shape), device=self.device).transpose(0,1)
 
         if args.gen_samples > 0:
             for s in range(samples):
@@ -493,10 +501,12 @@ class Forward_diffussion_process():
                 
                 start, end = s * img_shape[0], (s + 1) * img_shape[0]
 
-                if args.ensamble:
-                    std_dev = torch.std(img, 0)
+                if args.num_ensambles > 1:
+                    # l_ci, h_ci = self.extract_ci_bounds(img, scaler, model)
+                    # ci[start:end, 0] = l_ci
+                    # ci[start:end, 1] = h_ci
+                    ens[start:end] = img.squeeze().transpose(0,1)
                     img = torch.mean(img, 0)
-                    std[start:end] = std_dev.squeeze()
 
                 imgs[start:end] = img.squeeze()
                 y[start:end] = y_true.squeeze()
@@ -515,7 +525,7 @@ class Forward_diffussion_process():
 
                 with torch.no_grad():
                     if args.conditioning == "none":
-                        x_cond=None
+                        x_cond = None
                     else:
                         x_cond = inputs.squeeze(0).float().to(self.device)
 
@@ -530,26 +540,51 @@ class Forward_diffussion_process():
 
                     start, end = batch_idx * img_shape[0], (batch_idx + 1) * img_shape[0]
 
-                    if args.ensamble:
-                        std_dev = torch.std(img, 0)
+                    if args.num_ensambles > 1:
+                        ens[start:end] = img.squeeze().transpose(0,1)
                         img = torch.mean(img, 0)
-                        std[start:end] = std_dev.squeeze()
 
                     imgs[start:end] = img.squeeze()
                     y[start:end] = targets.squeeze().float().to(self.device)                
 
-        return imgs, y, std
+        return imgs, y, ens
     
-    def diffusion_sampling(self, args, model_config, model, dataloader, samples=1):
+    def diffusion_sampling(self, args, model_config, model, dataloader, scaler=None, samples=1):
         img_shape = (model_config.batch_size, 1, model_config.image_size, model_config.image_size)
         
-        sample_im, y, std = self.p_sample_loop(args, 
+        sample_im, y, ens = self.p_sample_loop(args, 
             model, 
-            dataloader, 
+            dataloader,
+            scaler, 
             img_shape, 
             samples
         )
-        return sample_im, y, std
+        return sample_im, y, ens
+    
+
+    
+    def extract_ci_bounds(self, img, scaler, model):
+        mean_pred = torch.mean(img, (3, 4))
+        std_ci = torch.std(mean_pred, 0).squeeze()
+        mean_ci = torch.mean(mean_pred, 0).squeeze()
+        std_ci = scaler.inverse_transform(std_ci) - scaler.min
+        mean_ci = scaler.inverse_transform(mean_ci)
+        return calculate_confidence_intervals(mean_ci, std_ci, model.num_ensambles)
+                    
+    
+def calculate_confidence_intervals(mean_over_time, std_over_time, n_ensemble,  confidence=0.95):
+    import scipy.stats as stats
+
+    df = n_ensemble - 1  # Degrees of freedom
+    alpha = 1 - confidence
+
+    # Compute t-score for CI (t-distribution for small n, normal approx for large n)
+    t_critical = stats.t.ppf(1 - alpha / 2, df) if n_ensemble < 30 else 1.96  
+    # Compute confidence intervals
+    margin_of_error = t_critical * (std_over_time / np.sqrt(n_ensemble))
+    lower_bound = mean_over_time - margin_of_error
+    upper_bound = mean_over_time + margin_of_error
+    return lower_bound, upper_bound
 
 
 '''

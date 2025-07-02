@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import glob
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import logging
+from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 """
@@ -58,6 +59,7 @@ class CustomConvLSTMDataset(Dataset):
             args:dict, 
             data:xr.DataArray, 
             labels: xr.DataArray, 
+            start_date: str = None,
             save_files:bool=False,
             filename = "dataset"):
         
@@ -78,6 +80,9 @@ class CustomConvLSTMDataset(Dataset):
 
         self.steps_head = args.step_length
         self.learning_window = args.feature_days
+        self.start_date = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None  # <- Convert to datetime
+        # self.end_date = datetime.strptime(start_date + timedelta(days=), "%Y-%m-%d") if start_date else None  # <- Convert to datetime
+
         
         self.output_channels = config.output_channels
         self.output_window = config.num_frames_output
@@ -93,7 +98,11 @@ class CustomConvLSTMDataset(Dataset):
                       if self.lag else "No lag channel added")
         tot_channels = self.num_channels + 1 if self.lag else self.num_channels
 
-        self.available_timesteps = self.num_timesteps - self.learning_window - self.steps_head #- self.output_window
+        if args.model == "DIME":
+            self.available_timesteps = self.num_timesteps - args.auto_days - self.steps_head 
+        else:
+            self.available_timesteps = self.num_timesteps - self.learning_window - self.steps_head
+        
         shape_train = (self.available_timesteps, tot_channels, self.learning_window, self.data.shape[2], self.data.shape[3]) if isinstance(self.input_size, tuple) else \
                       (self.available_timesteps, tot_channels, self.learning_window, self.input_size)
         shape_label = (self.available_timesteps, self.output_channels, self.output_window, self.labels.shape[2], self.labels.shape[3]) if isinstance(self.input_size, tuple) else \
@@ -106,35 +115,39 @@ class CustomConvLSTMDataset(Dataset):
         logger.debug(f"Empty instance matrix has shape {label_data_processed.shape}")
 
         def populate_arrays(args, train_data_processed, label_data_processed):
+            sample_idx = 0
 
-            current_idx = self.learning_window
-            while current_idx < self.num_timesteps - self.steps_head: #- self.output_window:
-                start_idx = current_idx - self.learning_window
-                end_idx = current_idx
+            if args.model == "DIME":
+                current_idx = args.auto_days
+                start_idx = current_idx
+            else:
+                current_idx = self.learning_window
+                start_idx = 0
+            
+            while current_idx + self.steps_head + self.output_window <= self.num_timesteps:
+                if current_idx + self.steps_head + self.output_window == self.num_timesteps:
+                     logger.info(f"Populating training data with {self.available_timesteps} days of data")
+                
+                end_idx = current_idx + self.output_window
 
-                if self.num_channels == 1:
-                    train_data_processed[start_idx, 0] = self.data[0, start_idx:end_idx]
-                    label_data_processed[start_idx, 0, :] = \
-                        self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window ] #
+                for chnl in range(self.num_channels):
+                    train_data_processed[sample_idx, chnl] = self.data[chnl, start_idx:end_idx]
 
-                elif self.num_channels > 1:
-                    for chnl in range(self.num_channels):
-                        train_data_processed[start_idx, chnl ] = self.data[chnl, start_idx:end_idx]
+                if self.lag:
+                    train_data_processed[sample_idx, -1] = self.labels[0, start_idx:end_idx]
 
-                    if self.lag:
-                        train_data_processed[start_idx, -1] = self.labels[0, start_idx:end_idx]
-
-                    label_data_processed[start_idx, 0 ] = \
-                        self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window ] #
+                label_data_processed[sample_idx, 0] = \
+                    self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window]
 
                 current_idx += 1
-            
-            if args.model == "CONVLSTM" or args.model=="DIME":
+                sample_idx += 1
+                start_idx += 1
+
+            if args.model in ["CONVLSTM", "DIME"]:
                 train_data_processed = train_data_processed.swapaxes(1,2)
                 label_data_processed = label_data_processed.swapaxes(1,2)
-            
+
             return train_data_processed, label_data_processed
-        
         
         self.data, self.labels = populate_arrays(args, train_data_processed, label_data_processed)
 
@@ -145,6 +158,42 @@ class CustomConvLSTMDataset(Dataset):
         X = self.data[index]
         y = self.labels[index]
         return X, y
+    
+    def get_sample_dates(self, index:int, model:str) -> dict:
+        """
+        Returns a dictionary with the start and end date of both the input data and label window.
+        """
+        if self.start_date is None:
+            raise ValueError("start_date was not provided during initialization.")
+        
+        # Compute key time indices
+        data_start_idx = index
+
+        if model == "DIME":
+            data_end_idx = data_start_idx
+        else:
+            data_end_idx = self.learning_window + index  # last index of input window
+
+        label_start_idx = data_end_idx + self.steps_head - 1
+        label_end_idx = label_start_idx + self.output_window
+
+        # Convert to dates
+        data_start_date = self.start_date + timedelta(days=data_start_idx)
+        data_end_date = self.start_date + timedelta(days=data_end_idx)
+        
+        label_start_date = self.start_date + timedelta(days=label_start_idx)
+        label_end_date = self.start_date + timedelta(days=label_end_idx - 1)
+
+        return {
+            "data_window": {
+                "start": data_start_date.strftime("%Y-%m-%d"),
+                "end": data_end_date.strftime("%Y-%m-%d")
+            },
+            "label_window": {
+                "start": label_start_date.strftime("%Y-%m-%d"),
+                "end": label_end_date.strftime("%Y-%m-%d")
+            }
+        }
 
     def _save_files(self, data, labels):
         from tqdm.auto import tqdm
@@ -171,10 +220,11 @@ class DataGenerator(CustomConvLSTMDataset):
                 args:dict, 
                 data:np.array, 
                 labels:np.array,
-                autoencoder, 
+                start_date: str = None,
+                autoencoder: Union[torch.nn.Module, None]=None,
                 # past_data: Union[np.ndarray, None]= None,
                 data_split:Union[str, None]=None):
-        super().__init__(config, args, data, labels) 
+        super().__init__(config, args, data, labels, start_date) 
 
         self.device = config.device
         self.time_list = self._add_time_list(data)
@@ -188,6 +238,7 @@ class DataGenerator(CustomConvLSTMDataset):
             if data_split is not None:
                 
                 filepath = os.path.join(config.data_dir, f"autoencoder_output")
+                
                 if not os.path.exists(filepath):
                     os.makedirs(filepath)
                 file = os.path.join(filepath, f"vae_features_{data_split}_{args.step_length}.npy")
@@ -199,7 +250,7 @@ class DataGenerator(CustomConvLSTMDataset):
                 else:
                     autodata = self._collect_autoencoder_data(args, config, data, labels)
                     self.data = self._autoencoder_pipeline(args, 
-                                                           autodata=autodata.data[:, :, -1],
+                                                           autodata=autodata.data[:self.data.shape[0], :, -1],
                                                            file = file, 
                                                            export=True)
                 if args.conditioning == "autoenc":
@@ -207,14 +258,19 @@ class DataGenerator(CustomConvLSTMDataset):
                     if self.data.shape[1]!= auto_channels:
                         logger.warning("Found different number of channels in data "
                                        "compared to autoencoder setting. Removing "
-                                       "climate varaibles...")
+                                       "climate varaibles...")  
                         self.data = self.data[:, -auto_channels:]
+
+                elif args.conditioning == "soil":
+                    self.data = self.data[:, 4:]
+                    logger.warning("Soil data only used as conditioning information. "
+                                      "Removing climate variables...")
             else:
                 logger.info("Avoiding using local autoencoder output and generating"
                             " new one")
                 autodata = self._collect_autoencoder_data(args, config, data, labels)
                 self.data = self._autoencoder_pipeline(args, 
-                    autodata=autodata.data[:, :, -1],
+                    autodata=autodata.data[:self.data.shape[0], :, -1],
                     file = None, 
                     export=False)
                 
@@ -231,9 +287,9 @@ class DataGenerator(CustomConvLSTMDataset):
             file=None, 
             export=True
         ):
-        
+        # calculate the reduced time series for all the n days up to t-1
         vae_output = self._reduce_data_vae(autodata=autodata,
-            output_shape=args.auto_days//5)
+            output_shape=args.auto_days//5) 
         
         extra_features, self.labels = self._align_auto_datasets(self.data, self.labels, vae_output)
         
@@ -361,7 +417,7 @@ class DataGenerator(CustomConvLSTMDataset):
         b, t, h, w = imag_past.size()
         imag_past = imag_past.permute(0, 2, 3, 1)
 
-        batch_size = 512
+        batch_size = int(512/2)
 
         outputs = []
         

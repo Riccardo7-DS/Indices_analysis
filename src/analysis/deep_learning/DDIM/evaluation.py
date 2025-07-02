@@ -29,18 +29,19 @@ def diffusion_arguments():
     parser.add_argument('--auto_train', type=bool, default=os.getenv("auto_train", False))
     parser.add_argument('--save_output', type=bool, default=os.getenv("save_output", True))
     parser.add_argument('--auto_days', type=int, default=os.getenv("auto_days", 180))
-    parser.add_argument('--feature_days', type=int, default=os.getenv("feature_days", 90))
+    parser.add_argument('--feature_days', type=int, default=os.getenv("feature_days", 1))
     parser.add_argument('--auto_ep', type=int, default=os.getenv("auto_ep", 80))
     parser.add_argument('--gen_samples', type=int, default=os.getenv("gen_samples", 0))
-    parser.add_argument('--diff_schedule', type=str, default=os.getenv("diff_schedule", "cosine"))
+    parser.add_argument('--diff_schedule', type=str, default=os.getenv("diff_schedule", "sigmoid"))
     parser.add_argument('--diff_sample', type=str, default=os.getenv("diff_sample", "ddim"))
     parser.add_argument('--epoch', type=int, default=os.getenv("epoch", 0), help="diffusion model trained epochs")
     parser.add_argument("--normalize", type=bool, default=True, help="Input data normalization")
     parser.add_argument("--scatterplot", type=bool, default=True, help="Whether to visualize scatterplot")
     parser.add_argument('--mode', type=str, default=os.getenv("mode", "generate"))
-    parser.add_argument("--ensamble", type=bool, default=os.getenv("ensamble", False), help="if making ensamble predictions")
+    parser.add_argument("--num_ensambles", type=int, default=os.getenv("num_ensambles", 1), help="if making ensamble predictions")
     parser.add_argument("--ema", type=str,choices=["none", "ema", "posthoc"], default=os.getenv("ema", "none"), help="if using ema")
     parser.add_argument("--sigma_rel", type=float, default=os.getenv("sigma_rel", 0.15), help="sigma value for ema")
+    parser.add_argument("--eta", type=float, default=os.getenv("eta", 0.), help="eta value for ddim sampling")
 
     args = parser.parse_args()
     return args
@@ -48,6 +49,7 @@ def diffusion_arguments():
 def diffusion_evaluation(args):
 
     from analysis.configs.config_models import config_ddim as model_config, config_autodime as auto_config
+    from analysis import summarize_metric_across_horizons
     from timm.utils import ModelEmaV3
     cmap = ndvi_colormap("diverging")
 
@@ -67,7 +69,7 @@ def diffusion_evaluation(args):
 
     data, target, scaler, mask = custom_subset_data(args, model_config, data_name, start, end, True, True)
 
-    datagenerator = DataGenerator(model_config, args, data, target, autoencoder, data_split="ema_test") #past_data=dataset_auto.data[:, :, -1]
+    datagenerator = DataGenerator(model_config, args, data, target, start_date=start, autoencoder=autoencoder,) # data_split="ema_test") #past_data=dataset_auto.data[:, :, -1]
     dataloader = DataLoader(datagenerator, shuffle=False, batch_size=model_config.batch_size)
     input_channels = datagenerator.data.shape[1] if args.conditioning != "none" else 0
 
@@ -112,30 +114,29 @@ def diffusion_evaluation(args):
         model = ema.synthesize_ema_model(sigma_rel=args.sigma_rel)
         model.eval()
 
-    if args.ensamble is True:
+    if args.num_ensambles > 1:
         from analysis import ModelEnsamble
-        model = ModelEnsamble(model_config, model)
+        model = ModelEnsamble(args, model, model_config.device)
 
     fdp = Forward_diffussion_process(args, model_config, model, optimizer, scheduler, loss_fn, ema)
     logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
                 f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs")
     
-    if args.mode == "test_model":
+    if args.mode == "test_model":  
         return model
     
-    y_pred, y_true, std = fdp.diffusion_sampling(args, model_config, model, dataloader, samples=args.gen_samples)
+    y_pred, y_true, ens = fdp.diffusion_sampling(args, model_config, model, dataloader, scaler, samples=args.gen_samples)
 
     if args.normalize:
         y_pred = scaler.inverse_transform(y_pred)
         y_true = scaler.inverse_transform(y_true)
-        std = scaler.inverse_transform(std)
 
     y_pred = torch.clamp(y_pred, -1, 1)
     y_true = torch.clamp(y_true, -1, 1)
     mask = torch.from_numpy(mask).to(model_config.device)
 
     # y_corr, _, _ = bias_correction(y_true.detach().cpu(), y_pred.detach().cpu())
-    # y_corr = y_corr.to(model_config.device)
+    # y_corr = y_corr.to(model_config.device)   
 
     y_pred_null = torch.where(torch.isnan(y_pred), torch.tensor(-1.0), y_pred)
     y_true_null = torch.where(torch.isnan(y_true), torch.tensor(-1.0), y_true)
@@ -153,8 +154,10 @@ def diffusion_evaluation(args):
         out_path = os.path.join(img_path, "output_data")
         if not os.path.exists(out_path):
             os.makedirs(out_path)
-        for d, name in zip([y_pred, y_true, mask, std], ['pred_data_dr', 'true_data_dr', 'mask_dr', 'std_dr']):
+        for d, name in zip([y_pred, y_true, mask, ens], ['pred_data_dr', 'true_data_dr', 'mask_dr', 'ens_dr']):
             np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu())
+
+    
 
 def main():
     args = diffusion_arguments()

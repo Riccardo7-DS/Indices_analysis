@@ -56,50 +56,95 @@ def load_with_custom_unpickler(file_path):
     with open(file_path, "rb") as handle:
         return CustomUnpickler(handle).load()
     
+# class ModelEnsamble():
+#     def __init__(self, args, model):
+#         self.num_ensambles = args.num_ensambles
+#         self.models = torch.nn.ModuleList([model for _ in range(args.num_ensambles)])
+
+#     @torch.no_grad()    
+#     def make_predictions(self, x_t, batched_times, x_cond):
+#         """
+#         Perform predictions using an ensemble of models wrapped in DataParallel.
+        
+#         :param x_t: Tensor at timestep t (B x C x H x W)
+#         :param batched_times: Current timestep for each batch (B,)
+#         :param x_cond: Conditioning input (optional)
+#         :return: Aggregated predictions from the ensemble
+#         """
+        
+#         if len(x_t.size()) == 4:
+#             #model_indices = torch.arange(len(self.models), device=x_t.device, dtype=torch.float32).view(-1, 1, 1, 1)
+#             # Initialize z_all_t with random values
+#             z_all_t = torch.randn(
+#                 (len(self.models), *x_t.shape),  # Shape matches x_t for dims 1 to the last
+#                 device=x_t.device,
+#                 dtype=torch.float32
+#             )
+#         else:
+#             z_all_t = x_t
+
+#         # Collect predictions from all models iteratively
+#         predictions = []
+#         for model, z_t in zip(self.models, z_all_t):
+#             prediction = model(z_t, batched_times, x_cond)
+#             predictions.append(prediction)
+
+#         # Aggregate predictions (e.g., mean)
+#         predictions = torch.stack(predictions, dim=0) # Adjust aggregation logic if needed
+#         return z_all_t, predictions
+
+#     def vectorized_predictions(self, config, model):
+#         from torch.func import stack_module_state
+#         self.models = [model for _ in range(self.num_ensambles)]
+#         self.params, self.buffers = stack_module_state(self.models)
+#         import copy
+#         base_model = copy.deepcopy(self.models[0])
+#         self.base_model = base_model.to('meta')
+
 class ModelEnsamble():
-    def __init__(self, config, model):
-        self.num_ensambles = config.num_ensambles
-        self.models = torch.nn.ModuleList([model for _ in range(config.num_ensambles)])
+    def __init__(self, args, model, device=None):
+        self.num_ensambles = args.num_ensambles
+        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Clone and move each model to device
+        self.models = torch.nn.ModuleList([
+            model.to(self.device) for _ in range(self.num_ensambles)
+        ])
 
     @torch.no_grad()    
-    def make_predictions(self, x_t, batched_times, x_cond):
+    def make_predictions(self, x_t, batched_times, x_cond=None):
         """
-        Perform predictions using an ensemble of models wrapped in DataParallel.
+        Perform predictions using an ensemble of models.
         
         :param x_t: Tensor at timestep t (B x C x H x W)
         :param batched_times: Current timestep for each batch (B,)
         :param x_cond: Conditioning input (optional)
         :return: Aggregated predictions from the ensemble
         """
-        
+        # Move input data to device
+        x_t = x_t.to(self.device)
+        batched_times = batched_times.to(self.device)
+        if x_cond is not None:
+            x_cond = x_cond.to(self.device)
+
+        # Initialize input per model
         if len(x_t.size()) == 4:
-            #model_indices = torch.arange(len(self.models), device=x_t.device, dtype=torch.float32).view(-1, 1, 1, 1)
-            # Initialize z_all_t with random values
             z_all_t = torch.randn(
-                (len(self.models), *x_t.shape),  # Shape matches x_t for dims 1 to the last
-                device=x_t.device,
+                (len(self.models), *x_t.shape),  # [E, B, C, H, W]
+                device=self.device,
                 dtype=torch.float32
             )
         else:
-            z_all_t = x_t
+            z_all_t = x_t.to(self.device)
 
-        # Collect predictions from all models iteratively
+        # Collect predictions
         predictions = []
         for model, z_t in zip(self.models, z_all_t):
             prediction = model(z_t, batched_times, x_cond)
             predictions.append(prediction)
 
-        # Aggregate predictions (e.g., mean)
-        predictions = torch.stack(predictions, dim=0) # Adjust aggregation logic if needed
+        predictions = torch.stack(predictions, dim=0)  # [E, B, ...]
         return z_all_t, predictions
-
-    def vectorized_predictions(self, config, model):
-        from torch.func import stack_module_state
-        self.models = [model for _ in range(self.num_ensambles)]
-        self.params, self.buffers = stack_module_state(self.models)
-        import copy
-        base_model = copy.deepcopy(self.models[0])
-        self.base_model = base_model.to('meta')
 
 def vectorized_ensemble_predictions(ensemble_model, x_t, batched_times, x_cond):
     """
@@ -253,6 +298,7 @@ def load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, ema):    
 
         # Load each component
         for key, file_path in metadata['components'].items():
+            file_path = file_path.replace('features_90', 'features_1')
             if key == 'state_dict':
                 model.load_state_dict(torch.load(file_path, weights_only=True))
             elif key == 'optimizer':
@@ -354,11 +400,13 @@ def diffusion_train_loop(args,
             img_shape = (1, 1, model_config.image_size, model_config.image_size)
             sample_im = fdp.p_sample_loop(args, 
                 fdp.model, 
-                dataloader, 
-                img_shape,
-                samples=1
+                dataloader=dataloader, 
+                img_shape=img_shape,
+                samples=1,
+                scaler=None
             )
             saveImage(sample_im, model_config.image_size, epoch, step, results_folder)
+            dataloader.dataset.get_sample_dates(step, "DIME")
 
         log = 'Epoch: {:03d}, Noise Loss: {:.4f}, Noise correlation: {:.4f}'
         logger.info(log.format(epoch, np.mean(noise_loss.item()),

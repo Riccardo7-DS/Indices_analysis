@@ -46,8 +46,11 @@ class PrecipDataPreparation():
                                 precp_format= precp_format,
                                 save=False)
         else:
-            path = os.path.join(config["PRECIP"]["ERA5_land"]["path"],
-                                            "final_vars_filled.zarr")
+            self._load_local_precipitation(precipitation_data)
+            path = os.path.join(self.precp_path, 
+                                precp_filename + ".zarr")
+            # path = os.path.join(config["PRECIP"]["ERA5_land"]["path"],
+            #                                 "final_vars_filled.zarr")
             self.precp_ds = xr.open_zarr(path)\
                 .sel(time=slice(self.time_start, self.time_end))
         

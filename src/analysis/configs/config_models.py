@@ -43,7 +43,7 @@ class ConfigDDIM(BaseConfig):
     num_frames = 1
     output_channels = 1
     num_frames_output = 1
-    num_ensambles = 10
+    # num_ensambles = 10
 
     save_and_sample_every = 10
     update_after_step = 1300 # 130*10
