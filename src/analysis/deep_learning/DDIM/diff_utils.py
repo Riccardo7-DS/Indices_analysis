@@ -101,50 +101,110 @@ def load_with_custom_unpickler(file_path):
 #         base_model = copy.deepcopy(self.models[0])
 #         self.base_model = base_model.to('meta')
 
-class ModelEnsamble():
-    def __init__(self, args, model, device=None):
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP, DataParallel
+import copy
+import torch.multiprocessing as mp
+
+def setup(rank, world_size):
+    dist.init_process_group(
+        backend='nccl',
+        init_method='env://',
+        world_size=world_size,
+        rank=rank
+    )
+    torch.cuda.set_device(rank)
+
+def cleanup():
+    dist.destroy_process_group()
+
+def remove_module_prefix(state_dict):
+    """
+    Removes 'module.' prefix from keys in state_dict.
+    """
+    return {k.replace("module.", ""): v for k, v in state_dict.items()}
+
+class ModelEnsamble(torch.nn.Module):
+    def __init__(self, args, model, local_rank):
+        super().__init__()
         self.num_ensambles = args.num_ensambles
-        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+        # self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(f"cuda:{local_rank}") if local_rank is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # Clone and move each model to device
-        self.models = torch.nn.ModuleList([
-            model.to(self.device) for _ in range(self.num_ensambles)
-        ])
+        # self.models = torch.nn.ModuleList([+
 
-    @torch.no_grad()    
+        #     model.to(self.device) for _ in range(self.num_ensambles)
+        # ])
+        if local_rank is not None:
+            logger.info(f"Using DistributedDataParallel with local rank {local_rank} on device {self.device}")
+            self.models = torch.nn.ModuleList([
+                DDP(copy.deepcopy(model).to(self.device), device_ids=[local_rank])
+                for _ in range(self.num_ensambles)
+            ])
+        else:
+            logger.info(f"Using DataParallel on device {self.device}")
+            self.models = torch.nn.ModuleList([
+                model.to(self.device) for _ in range(self.num_ensambles)
+            ])
+
+    @torch.no_grad()
     def make_predictions(self, x_t, batched_times, x_cond=None):
-        """
-        Perform predictions using an ensemble of models.
-        
-        :param x_t: Tensor at timestep t (B x C x H x W)
-        :param batched_times: Current timestep for each batch (B,)
-        :param x_cond: Conditioning input (optional)
-        :return: Aggregated predictions from the ensemble
-        """
-        # Move input data to device
         x_t = x_t.to(self.device)
         batched_times = batched_times.to(self.device)
         if x_cond is not None:
             x_cond = x_cond.to(self.device)
 
-        # Initialize input per model
         if len(x_t.size()) == 4:
             z_all_t = torch.randn(
-                (len(self.models), *x_t.shape),  # [E, B, C, H, W]
+                (self.num_ensambles, *x_t.shape),
                 device=self.device,
                 dtype=torch.float32
             )
         else:
             z_all_t = x_t.to(self.device)
 
-        # Collect predictions
         predictions = []
         for model, z_t in zip(self.models, z_all_t):
             prediction = model(z_t, batched_times, x_cond)
             predictions.append(prediction)
 
-        predictions = torch.stack(predictions, dim=0)  # [E, B, ...]
+        predictions = torch.stack(predictions, dim=0)
         return z_all_t, predictions
+
+    # @torch.no_grad()    
+    # def make_predictions(self, x_t, batched_times, x_cond=None):
+    #     """
+    #     Perform predictions using an ensemble of models.
+        
+    #     :param x_t: Tensor at timestep t (B x C x H x W)
+    #     :param batched_times: Current timestep for each batch (B,)
+    #     :param x_cond: Conditioning input (optional)
+    #     :return: Aggregated predictions from the ensemble
+    #     """
+    #     # Move input data to device
+    #     x_t = x_t.to(self.device)
+    #     batched_times = batched_times.to(self.device)
+    #     if x_cond is not None:
+    #         x_cond = x_cond.to(self.device)
+
+    #     # Initialize input per model
+    #     if len(x_t.size()) == 4:
+    #         z_all_t = torch.randn(
+    #             (len(self.models), *x_t.shape),  # [E, B, C, H, W]
+    #             device=self.device,
+    #             dtype=torch.float32
+    #         )
+    #     else:
+    #         z_all_t = x_t.to(self.device)
+
+    #     # Collect predictions
+    #     predictions = []
+    #     for model, z_t in zip(self.models, z_all_t):
+    #         prediction = model(z_t, batched_times, x_cond)
+    #         predictions.append(prediction)
+
+    #     predictions = torch.stack(predictions, dim=0)  # [E, B, ...]
+    #     return z_all_t, predictions
 
 def vectorized_ensemble_predictions(ensemble_model, x_t, batched_times, x_cond):
     """
@@ -287,10 +347,20 @@ def plot_noisy_images(image, imgs, with_orig=False, row_title=None, **imshow_kwa
     plt.pause(10)
     plt.close()
 
-def load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, ema):    # Load metadata
-    
+
+def remove_module_prefix(state_dict):
+    """
+    Removes 'module.' prefix from keys in state_dict (if present).
+    """
+    return {k.replace("module.", ""): v for k, v in state_dict.items()}
+
+def load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, ema):
+    import re
+    """
+    Loads model, optimizer, scheduler, and EMA states from metadata checkpoint.
+    Handles 'module.' prefix from DataParallel models if needed.
+    """
     if checkpoint_path is not None:
-        import re
         basepath = os.path.basename(checkpoint_path)
         epoch = int(re.search(r"checkpoint_epoch_(\d+)", basepath).group(1))
         metadata_path = os.path.join(checkpoint_path, f"metadata_epoch_{epoch}.pth")
@@ -299,20 +369,27 @@ def load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, ema):    
         # Load each component
         for key, file_path in metadata['components'].items():
             file_path = file_path.replace('features_90', 'features_1')
-            if key == 'state_dict':
-                model.load_state_dict(torch.load(file_path, weights_only=True))
-            elif key == 'optimizer':
-                optimizer.load_state_dict(torch.load(file_path, weights_only=True))
-            elif key == 'lr_sched':
-                scheduler.load_state_dict(torch.load(file_path, weights_only=True))
-            elif (key == 'ema') and (ema is not None):
-                ema.load_state_dict(torch.load(file_path, weights_only=True))
+            state = torch.load(file_path, weights_only=True)
 
-        # Load epoch if needed
-        
-    start_epoch = 0 if checkpoint_path is None else epoch
+            if key == 'state_dict':
+                try:
+                    model.load_state_dict(state)
+                except RuntimeError as e:
+                    logger.warning("Detected DataParallel 'module.' prefix — attempting fix.")
+                    model.load_state_dict(remove_module_prefix(state))
+            elif key == 'optimizer':
+                optimizer.load_state_dict(state)
+            elif key == 'lr_sched':
+                scheduler.load_state_dict(state)
+            elif key == 'ema' and ema is not None:
+                ema.load_state_dict(state)
+
+        start_epoch = epoch
+    else:
+        start_epoch = 0
 
     return model, optimizer, scheduler, start_epoch, ema
+
 
 
 def load_checkpoint(checkpoint_path, model, optimizer, scheduler):

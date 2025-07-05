@@ -441,18 +441,126 @@ class Forward_diffussion_process():
 
         return imgs[-1]
 
-    @torch.no_grad()
-    def p_sample_loop(self, args, model, dataloader,  scaler, img_shape, samples):
+    # @torch.no_grad()
+    # def p_sample_loop(self, args, model, dataloader,  scaler, img_shape, samples):
         
-        def generate_random_samples(shape, to_gpu=True):
+    #     def generate_random_samples(shape, to_gpu=True):
+    #         x_cond, y_true = [], []
+    #         for _ in range(shape):
+    #             idx = random.randint(0, len(dataloader.dataset.data) - 1)
+    #             x_cond.append(torch.from_numpy(dataloader.dataset.data[idx]).unsqueeze(0))
+    #             y_true.append(torch.from_numpy(dataloader.dataset.labels[idx]).unsqueeze(0))
+
+    #                     # Optionally print dates if idx is first or last
+    #             if _ == 0 or _ == shape - 1:
+    #                 dates = dataloader.dataset.get_sample_dates(idx, "DIME")
+    #                 logger.info(f"Index {idx} - Data Window: {dates['data_window']}")
+    #                 logger.info(f"Index {idx} - Label Window: {dates['label_window']}")
+
+    #         x_cond = torch.concat(x_cond, axis=0)
+    #         y_true = torch.concat(y_true, axis=0)
+    #         if to_gpu:
+    #             x_cond = x_cond.to(self.device)
+    #             y_true = y_true.to(self.device)
+    #         return x_cond, y_true
+        
+    #     if args.diff_sample == "ddim":
+    #         step = self.timesteps // self.sampling_timesteps
+    #         time_steps_list = np.asarray(list(range(0, self.timesteps, step))) + 1
+    #         n_timesteps = self.sampling_timesteps
+
+    #     elif args.diff_sample == "ddpm":
+    #         time_steps_list = np.asarray(list(range(0, self.timesteps, 1)))
+    #         n_timesteps = self.timesteps
+
+    #     if args.gen_samples > 0:
+    #         tot_samples = samples * img_shape[0]
+    #     else:
+    #         tot_samples =  len(dataloader.dataset.data)
+    #         if tot_samples % img_shape[0] != 0:
+    #             tot_samples = math.ceil(tot_samples / img_shape[0]) * img_shape[0]
+
+    #     # Preallocate tensors
+    #     imgs = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+    #     # ci = torch.empty((tot_samples, 2), device=self.device)
+    #     y = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+    #     ens = torch.empty((model.num_ensambles, *y.shape), device=self.device).transpose(0,1)
+
+    #     if args.gen_samples > 0:
+    #         for s in range(samples):
+    #             x_cond, y_true = generate_random_samples(img_shape[0])
+    #             if args.conditioning == "none":
+    #                 x_cond=None
+    #             img = self.reverse_diffusion(args, 
+    #                 model, 
+    #                 x_cond, 
+    #                 img_shape, 
+    #                 n_timesteps, 
+    #                 time_steps_list
+    #             )
+                
+    #             start, end = s * img_shape[0], (s + 1) * img_shape[0]
+
+    #             if args.num_ensambles > 1:
+    #                 # l_ci, h_ci = self.extract_ci_bounds(img, scaler, model)
+    #                 # ci[start:end, 0] = l_ci
+    #                 # ci[start:end, 1] = h_ci
+    #                 ens[start:end] = img.squeeze().transpose(0,1)
+    #                 img = torch.mean(img, 0)
+
+    #             imgs[start:end] = img.squeeze()
+    #             y[start:end] = y_true.squeeze()
+
+    #     else:
+    #         # Standard batch processing logic
+    #         for batch_idx, (inputs, targets) in enumerate(tqdm(dataloader, 
+    #                                                     desc="Processing Batches")):
+    #             if len(inputs) != img_shape[0]:
+    #                 logger.info(f"Adding {img_shape[0] - len(inputs)} "
+    #                             f"extra samples to the dataset to match"
+    #                             f"network required shape")
+    #                 extra_img, extra_y_true = generate_random_samples(img_shape[0] - len(inputs), False)
+    #                 inputs = torch.concat([inputs, extra_img], dim=0)
+    #                 targets = torch.concat([targets, extra_y_true], dim=0)
+
+    #             with torch.no_grad():
+    #                 if args.conditioning == "none":
+    #                     x_cond = None
+    #                 else:
+    #                     x_cond = inputs.squeeze(0).float().to(self.device)
+
+    #                 img = self.reverse_diffusion(
+    #                     args, 
+    #                     model, 
+    #                     x_cond, 
+    #                     img_shape, 
+    #                     n_timesteps, 
+    #                     time_steps_list
+    #                 )
+
+    #                 start, end = batch_idx * img_shape[0], (batch_idx + 1) * img_shape[0]
+
+    #                 if args.num_ensambles > 1:
+    #                     ens[start:end] = img.squeeze().transpose(0,1)
+    #                     img = torch.mean(img, 0)
+
+    #                 imgs[start:end] = img.squeeze()
+    #                 y[start:end] = targets.squeeze().float().to(self.device)                
+
+    #     return imgs, y, ens
+    
+    @torch.no_grad()
+    def p_sample_loop(self, args, model, dataloader, scaler, img_shape, samples):
+        from tqdm.auto import tqdm
+
+        def generate_random_samples_old(batch_size, to_gpu=True):
             x_cond, y_true = [], []
-            for _ in range(shape):
+            for _ in range(batch_size):
                 idx = random.randint(0, len(dataloader.dataset.data) - 1)
                 x_cond.append(torch.from_numpy(dataloader.dataset.data[idx]).unsqueeze(0))
                 y_true.append(torch.from_numpy(dataloader.dataset.labels[idx]).unsqueeze(0))
 
-                        # Optionally print dates if idx is first or last
-                if _ == 0 or _ == shape - 1:
+                if _ == 0 or _ == batch_size - 1:
                     dates = dataloader.dataset.get_sample_dates(idx, "DIME")
                     logger.info(f"Index {idx} - Data Window: {dates['data_window']}")
                     logger.info(f"Index {idx} - Label Window: {dates['label_window']}")
@@ -464,91 +572,94 @@ class Forward_diffussion_process():
                 y_true = y_true.to(self.device)
             return x_cond, y_true
         
+        def generate_random_samples(batch_size, to_gpu=True):
+            # Generate all indices at once
+            indices = torch.randint(0, len(dataloader.dataset.data), (batch_size,))
+            
+            x_cond = [torch.from_numpy(dataloader.dataset.data[i]).unsqueeze(0) for i in indices]
+            y_true = [torch.from_numpy(dataloader.dataset.labels[i]).unsqueeze(0) for i in indices]
+        
+            # Log date info for first and last sample
+            for i in [indices[0].item(), indices[-1].item()]:
+                dates = dataloader.dataset.get_sample_dates(i, "DIME")
+                logger.info(f"Index {i} - Data Window: {dates['data_window']}")
+                logger.info(f"Index {i} - Label Window: {dates['label_window']}")
+        
+            x_cond = torch.cat(x_cond, dim=0)
+            y_true = torch.cat(y_true, dim=0)
+        
+            if to_gpu:
+                x_cond = x_cond.to(self.device)
+                y_true = y_true.to(self.device)
+        
+            return x_cond, y_true
+
+        # Determine diffusion timesteps
         if args.diff_sample == "ddim":
             step = self.timesteps // self.sampling_timesteps
             time_steps_list = np.asarray(list(range(0, self.timesteps, step))) + 1
             n_timesteps = self.sampling_timesteps
-
         elif args.diff_sample == "ddpm":
-            time_steps_list = np.asarray(list(range(0, self.timesteps, 1)))
+            time_steps_list = np.asarray(list(range(0, self.timesteps)))
             n_timesteps = self.timesteps
 
-        if args.gen_samples > 0:
-            tot_samples = samples * img_shape[0]
-        else:
-            tot_samples =  len(dataloader.dataset.data)
-            if tot_samples % img_shape[0] != 0:
-                tot_samples = math.ceil(tot_samples / img_shape[0]) * img_shape[0]
+        batch_size = img_shape[0]
+        tot_samples = samples * batch_size if args.gen_samples > 0 else len(dataloader.dataset)
+        if tot_samples % batch_size != 0:
+            tot_samples = math.ceil(tot_samples / batch_size) * batch_size
 
         # Preallocate tensors
         imgs = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
-        # ci = torch.empty((tot_samples, 2), device=self.device)
         y = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
-        ens = torch.empty((model.num_ensambles, *y.shape), device=self.device).transpose(0,1)
+        ens = torch.empty((model.num_ensambles, *y.shape), device=self.device).transpose(0, 1)
 
         if args.gen_samples > 0:
-            for s in range(samples):
-                x_cond, y_true = generate_random_samples(img_shape[0])
+            # Process in batches
+            n_batches = samples
+            for s in tqdm(range(n_batches), desc="Generating Samples in batches"):
+                x_cond, y_true = generate_random_samples(batch_size)
                 if args.conditioning == "none":
-                    x_cond=None
-                img = self.reverse_diffusion(args, 
-                    model, 
-                    x_cond, 
-                    img_shape, 
-                    n_timesteps, 
-                    time_steps_list
-                )
-                
-                start, end = s * img_shape[0], (s + 1) * img_shape[0]
+                    x_cond = None
 
+                img = self.reverse_diffusion(
+                    args, model, x_cond, img_shape, n_timesteps, time_steps_list
+                )
+
+                start, end = s * batch_size, (s + 1) * batch_size
                 if args.num_ensambles > 1:
-                    # l_ci, h_ci = self.extract_ci_bounds(img, scaler, model)
-                    # ci[start:end, 0] = l_ci
-                    # ci[start:end, 1] = h_ci
-                    ens[start:end] = img.squeeze().transpose(0,1)
-                    img = torch.mean(img, 0)
+                    ens[start:end] = img.squeeze().transpose(0, 1)
+                    img = torch.mean(img, dim=0)
 
                 imgs[start:end] = img.squeeze()
                 y[start:end] = y_true.squeeze()
 
         else:
-            # Standard batch processing logic
-            for batch_idx, (inputs, targets) in enumerate(tqdm(dataloader, 
-                                                        desc="Processing Batches")):
-                if len(inputs) != img_shape[0]:
-                    logger.info(f"Adding {img_shape[0] - len(inputs)} "
-                                f"extra samples to the dataset to match"
-                                f"network required shape")
-                    extra_img, extra_y_true = generate_random_samples(img_shape[0] - len(inputs), False)
+            # Fall back to standard batch iteration
+            for batch_idx, (inputs, targets) in enumerate(tqdm(dataloader, desc="Processing Batches")):
+                if len(inputs) != batch_size:
+                    logger.info(f"Padding batch to {batch_size} samples")
+                    extra_img, extra_y_true = generate_random_samples(batch_size - len(inputs), False)
                     inputs = torch.concat([inputs, extra_img], dim=0)
                     targets = torch.concat([targets, extra_y_true], dim=0)
 
                 with torch.no_grad():
-                    if args.conditioning == "none":
-                        x_cond = None
-                    else:
-                        x_cond = inputs.squeeze(0).float().to(self.device)
+                    x_cond = None if args.conditioning == "none" else inputs.squeeze(0).float().to(self.device)
 
                     img = self.reverse_diffusion(
-                        args, 
-                        model, 
-                        x_cond, 
-                        img_shape, 
-                        n_timesteps, 
-                        time_steps_list
+                        args, model, x_cond, img_shape, n_timesteps, time_steps_list
                     )
 
-                    start, end = batch_idx * img_shape[0], (batch_idx + 1) * img_shape[0]
-
+                    start, end = batch_idx * batch_size, (batch_idx + 1) * batch_size
                     if args.num_ensambles > 1:
-                        ens[start:end] = img.squeeze().transpose(0,1)
-                        img = torch.mean(img, 0)
+                        ens[start:end] = img.squeeze().transpose(0, 1)
+                        img = torch.mean(img, dim=0)
 
                     imgs[start:end] = img.squeeze()
-                    y[start:end] = targets.squeeze().float().to(self.device)                
+                    y[start:end] = targets.squeeze().float().to(self.device)
 
         return imgs, y, ens
-    
+
+
     def diffusion_sampling(self, args, model_config, model, dataloader, scaler=None, samples=1):
         img_shape = (model_config.batch_size, 1, model_config.image_size, model_config.image_size)
         

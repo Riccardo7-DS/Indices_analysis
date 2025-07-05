@@ -127,6 +127,62 @@ def create_copernicus_covermap(dataset:xr.DataArray,
         if level1:
                 ds = xr.apply_ufunc(np.vectorize(convert_level1), ds)
         return ds
+    
+
+def export_copernicus_covermap(crop_strategy: Literal["shapefile", "bbox"] = "shapefile",
+                               countries: list = ['Ethiopia', 'Kenya', 'Somalia', "Djibouti"],
+                               description: str = "copernicus_cover",
+                               folder: str = "earthengine",
+                               scale: int = 100,
+                               export: bool = True):
+    import ee
+    import geemap
+    import geopandas as gpd
+    from utils.function_clns import config
+    import os
+    import time
+
+    # Authenticate and initialize
+    ee.Authenticate()
+    ee.Initialize(project="ee-querying-maps")
+
+    # Define landcover image
+    landcover = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019") \
+        .select("discrete_classification")
+
+    # Select clipping geometry
+    if crop_strategy == "shapefile":
+        shapefile_path = config['SHAPE']['africa']
+        gdf = gpd.read_file(shapefile_path)
+        subset = gdf[gdf["ADM0_NAME"].isin(countries)]
+        fc_poly = geemap.geopandas_to_ee(subset)
+        poly_geometry = fc_poly.geometry()
+    elif crop_strategy == "bbox":
+        poly_geometry = ee.Geometry.Rectangle(
+            coords=[30.288233396779802, -5.949173816626356, 
+                    51.9972177717798, 15.808293611760663],
+            proj="EPSG:4326", geodesic=False)
+    else:
+        raise ValueError("Invalid crop_strategy. Choose 'shapefile' or 'bbox'.")
+
+    # Clip the image
+    landcover_clipped = landcover.clip(poly_geometry)
+
+    if export:
+        task = ee.batch.Export.image.toDrive(
+            image=landcover_clipped,
+            description=description,
+            folder=folder,
+            fileNamePrefix=description,
+            region=poly_geometry,
+            scale=scale,
+            maxPixels=1e13
+        )
+        task.start()
+        logger.info(f"Export started with description: '{description}'. Check your GEE tasks.")
+
+    return landcover_clipped
+
 
 def get_level_colors(ds_cover, level1=True, one_forest:bool=False):
     if isinstance(ds_cover, xr.DataArray):
@@ -180,19 +236,21 @@ def visualize_map(land_proj):
     Map
 
 def export_land_cover(target_resolution:str, 
-                      export_path =r'../data/images'):
+                      crop_strategy :Literal["shapefile", "bbox"] = "bbox",
+                      export_path =r'./output/images',
+                      countries: list = ['Ethiopia', 'Kenya', 'Somalia', "Djibouti"]):
     import ee 
     import geemap
     from osgeo import gdal
     assert target_resolution in ['IMERG','CHIRPS']
     ee.Authenticate()
-    ee.Initialize()
+    ee.Initialize(project="ee-querying-maps")
     landcover = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019").select('discrete_classification')
     
     if target_resolution=="IMERG":
         range = ee.Date('2019-09-03').getRange('month')
         
-        imerg = ee.ImageCollection('NASA/GPM_L3/IMERG_V06').filter(ee.Filter.date(range)).select('precipitationCal').first()
+        imerg = ee.ImageCollection('NASA/GPM_L3/IMERG_V07').filter(ee.Filter.date(range)).select('precipitation').first()
         land_proj = landcover.reproject(imerg.projection(), None, imerg.projection().nominalScale())
 
     elif target_resolution =="CHIRPS":
@@ -203,11 +261,24 @@ def export_land_cover(target_resolution:str,
         land_proj = landcover.reproject(chirps.projection(), None, chirps.projection().nominalScale())
 
     from utils.function_clns import config
-    shapefile_path = config['SHAPE']['HOA']
-    gdf = gpd.read_file(shapefile_path)
+    import os
+    # Select clipping geometry
+    if crop_strategy == "shapefile":
+        shapefile_path = config['SHAPE']['africa']
+        gdf = gpd.read_file(shapefile_path)
+        subset = gdf[gdf["ADM0_NAME"].isin(countries)]
+        fc_poly = geemap.geopandas_to_ee(subset)
+        land_proj = land_proj.updateMask(land_proj.clip(fc_poly).mask())
+        poly_geometry = fc_poly.geometry()
 
-    fc_poly = geemap.geopandas_to_ee(gdf)
-    poly_geometry = fc_poly.geometry()
+    elif crop_strategy == "bbox":
+        poly_geometry = ee.Geometry.Rectangle(
+            coords=[30.288233396779802, -5.949173816626356, 
+                    51.9972177717798, 15.808293611760663],
+            proj="EPSG:4326", geodesic=False)
+        land_proj = land_proj.clip(poly_geometry)
+    else:
+        raise ValueError("Invalid crop_strategy. Choose 'shapefile' or 'bbox'.")
     path_img = export_path
     geemap.ee_export_image(land_proj, 
                            filename = os.path.join(path_img, "esa_cover.tif"),

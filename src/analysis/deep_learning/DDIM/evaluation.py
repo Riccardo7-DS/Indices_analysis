@@ -1,9 +1,11 @@
 import os
 import numpy as np
 import torch
-from torch.nn import MSELoss, DataParallel
+from torch.nn import MSELoss
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
+import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 from utils.function_clns import init_logging, find_checkpoint_path, bias_correction
 from utils.xarray_functions import ndvi_colormap
@@ -46,12 +48,9 @@ def diffusion_arguments():
     args = parser.parse_args()
     return args
 
-def diffusion_evaluation(args):
+def diffusion_evaluation(rank, world_size, args):
 
     from analysis.configs.config_models import config_ddim as model_config, config_autodime as auto_config
-    from analysis import summarize_metric_across_horizons
-    from timm.utils import ModelEmaV3
-    cmap = ndvi_colormap("diverging")
 
     autoencoder = autoencoder_wrapper(args, auto_config, generate_output=False)
     start, end = "2019-01-01", "2022-12-31"
@@ -61,16 +60,23 @@ def diffusion_evaluation(args):
     checkpoint_path = (find_checkpoint_path(model_config, args, True) if args.epoch == 0 else
         os.path.join(checkpoint_dir, f"checkpoint_epoch_{args.epoch}"))
     
-    logger = init_logging(log_file=os.path.join(log_path, 
-        f"dime_days_{args.step_length}_"  \
-        f"features_{args.feature_days}"
-        f"{args.mode}.log")
+    if rank == 0 or rank is None:
+        logger = init_logging(log_file=os.path.join(log_path, 
+            f"dime_days_{args.step_length}_"  \
+            f"features_{args.feature_days}"
+            f"{args.mode}.log")
     )
 
     data, target, scaler, mask = custom_subset_data(args, model_config, data_name, start, end, True, True)
 
-    datagenerator = DataGenerator(model_config, args, data, target, start_date=start, autoencoder=autoencoder,) # data_split="ema_test") #past_data=dataset_auto.data[:, :, -1]
-    dataloader = DataLoader(datagenerator, shuffle=False, batch_size=model_config.batch_size)
+    datagenerator = DataGenerator(model_config, args, data, target, start_date=start, autoencoder=autoencoder, data_split="test") # data_split="ema_test") #past_data=dataset_auto.data[:, :, -1]
+    
+    if is_torchrun():
+        sampler = DistributedSampler(datagenerator, num_replicas=world_size, rank=rank, shuffle=False)
+        dataloader = DataLoader(datagenerator, sampler=sampler, batch_size=model_config.batch_size, shuffle=False,  num_workers=6)
+    else:
+        dataloader = DataLoader(datagenerator, shuffle=False, batch_size=model_config.batch_size)
+
     input_channels = datagenerator.data.shape[1] if args.conditioning != "none" else 0
 
     model_class = TwoResUNet if args.attention else UNET
@@ -79,7 +85,9 @@ def diffusion_evaluation(args):
         dim_mults=(1, 2, 4, 8, 16),
         out_dim=model_config.output_channels).to(model_config.device)
     
-    model = DataParallel(model)
+    if rank is None:
+        from torch.nn.parallel import DataParallel
+        model = DataParallel(model)
 
     if args.ema == "ema":
         ema = EMA(model, 
@@ -115,13 +123,12 @@ def diffusion_evaluation(args):
         model.eval()
 
     if args.num_ensambles > 1:
-        from analysis import ModelEnsamble
-        model = ModelEnsamble(args, model, model_config.device)
+        from analysis import ModelEnsamble, cleanup
+        model = ModelEnsamble(args, model, local_rank=rank)
 
     fdp = Forward_diffussion_process(args, model_config, model, optimizer, scheduler, loss_fn, ema)
     logger.info(f"Starting generating from diffusion model with {args.diff_schedule} schedule " 
                 f"and sampling technique {args.diff_sample} with model trained for {start_epoch} epochs")
-    
     if args.mode == "test_model":  
         return model
     
@@ -147,27 +154,39 @@ def diffusion_evaluation(args):
     test_metrics = CustomMetrics(y_pred, y_true, metric_list, mask, True)
     rmse, losses = test_metrics.losses[0], test_metrics.losses[1]
 
-    log = 'The prediction for {} days ahead: Test SSIM: {:.4f}, Test RMSE: {:.4f}, Test MSE: {:.4f}'
-    logger.info(log.format(args.step_length, ssim_metric, rmse, losses))
-
-    if args.save_output is True:
+    if (rank == 0 or rank is None) and args.save_output is True:
+        log = 'The prediction for {} days ahead: Test SSIM: {:.4f}, Test RMSE: {:.4f}, Test MSE: {:.4f}'
+        logger.info(log.format(args.step_length, ssim_metric, rmse, losses))
         out_path = os.path.join(img_path, "output_data")
         if not os.path.exists(out_path):
             os.makedirs(out_path)
         for d, name in zip([y_pred, y_true, mask, ens], ['pred_data_dr', 'true_data_dr', 'mask_dr', 'ens_dr']):
             np.save(os.path.join(out_path, f"{name}.npy"), d.detach().cpu())
 
-    
+    if rank is not None:
+        cleanup()
+
+def is_torchrun():
+    return 'LOCAL_RANK' in os.environ or 'RANK' in os.environ
 
 def main():
     args = diffusion_arguments()
-    try:
-        diffusion_evaluation(args)
+    if is_torchrun():
+        world_size = torch.cuda.device_count()
+        local_rank = int(os.environ['LOCAL_RANK'])
+        from analysis import setup
+        setup(local_rank, world_size)
+    else:
+        local_rank = None
+        world_size = None
+    try:    
+        diffusion_evaluation(local_rank, world_size, args)
     except Exception as e:
         logger.error("An error occurred during diffusion evaluation.", exc_info=True)
-        # if args.ensamble:
-        #     logger.info("Destroying process group due to an exception.")
-        #     dist.destroy_process_group()
+        
+        if is_torchrun():
+            logger.info("Destroying process group due to an exception.")
+            dist.destroy_process_group()
 
 if __name__ == "__main__":
     main()

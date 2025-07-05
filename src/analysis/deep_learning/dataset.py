@@ -229,6 +229,7 @@ class DataGenerator(CustomConvLSTMDataset):
         self.device = config.device
         self.time_list = self._add_time_list(data)
         self.autoencoder = autoencoder.to(self.device)
+        self.config = config
 
         if args.conditioning == "climate":
             self.data = self.data[:, -1, :-1]
@@ -417,7 +418,7 @@ class DataGenerator(CustomConvLSTMDataset):
         b, t, h, w = imag_past.size()
         imag_past = imag_past.permute(0, 2, 3, 1)
 
-        batch_size = int(512/2)
+        batch_size = int(512/1)
 
         outputs = []
         
