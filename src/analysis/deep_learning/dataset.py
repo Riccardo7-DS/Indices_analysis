@@ -128,7 +128,10 @@ class CustomConvLSTMDataset(Dataset):
                 if current_idx + self.steps_head + self.output_window == self.num_timesteps:
                      logger.info(f"Populating training data with {self.available_timesteps} days of data")
                 
-                end_idx = current_idx #+ self.output_window
+                if args.model == "DIME":
+                    end_idx = current_idx + self.output_window
+                else:
+                    end_idx = current_idx
 
                 for chnl in range(self.num_channels):
                     train_data_processed[sample_idx, chnl] = self.data[chnl, start_idx:end_idx]

@@ -1144,7 +1144,7 @@ def summarize_metric_across_horizons(
     day_list=None,
     feature_str="features_1",
     plot=True,
-    save_path=None,
+    save_figure=True,
     show_plot=False,
     pause_seconds=5,
 ):
@@ -1192,7 +1192,7 @@ def summarize_metric_across_horizons(
     
 
     for day in day_list:
-        print(f"Processing model for days_{day}...")
+        logger.info(f"Processing model for days_{day}...")
 
         base_path = f"{base_output_dir}/days_{day}/{feature_str}/images/output_data"
         ens_path = f"{base_path}/ens_dr.npy"
@@ -1206,8 +1206,8 @@ def summarize_metric_across_horizons(
 
         if metric_name == "SSIM":
             y_pred = np.mean(ens_data, 0)
-            y_pred_null = torch.where(torch.isnan(y_pred), torch.tensor(-1.0), y_pred)
-            y_true_null = torch.where(torch.isnan(real_data), torch.tensor(-1.0), real_data)
+            y_pred_null = np.where(np.isnan(y_pred), -1.0, y_pred)
+            y_true_null = np.where(np.isnan(real_data), -1.0, real_data)
             metric_value = tensor_ssim(y_pred_null, y_true_null, range=2.0)
         else:
             metric_value = metric_fn(real_data, ens_data, mask)
@@ -1225,8 +1225,10 @@ def summarize_metric_across_horizons(
         plt.bar_label(bars, labels=[f"{v:.2f}" for v in metric_results], padding=3)
         plt.tight_layout()
 
-        if save_path:
-            plt.savefig(save_path, dpi=300)
+        if save_figure:
+            plt.savefig(os.path.join(base_path, "..", 
+                                     f"barchart_{metric_name}_{num_ensambles}_{eta}.png"), 
+                                     dpi=300)
 
         if show_plot:
             plt.show(block=False)
