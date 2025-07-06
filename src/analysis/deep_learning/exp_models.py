@@ -47,7 +47,7 @@ if __name__=="__main__":
     if (args.mode == "test") and (args.checkpoint==0):
         raise ValueError("Please chose a checkpoint if in evaluate mode")  
 
-    for feature_days in [90]: 
+    for feature_days in [args.feature_days]: 
         for window in [args.step_length]:
             if args.checkpoint > 0 :
                 checkpoint_path =  model_config.output_dir + f"/{(args.model).lower()}" \

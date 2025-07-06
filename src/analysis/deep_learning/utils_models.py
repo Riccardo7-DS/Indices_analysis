@@ -1135,38 +1135,6 @@ def tensor_ssim(preds, labels, range=1.0):
     return state.metrics['ssim']
 
 
-def compute_ensable_rmse(y, x, mask):
-    """
-    Computes the area-weighted RMSE over time.
-    
-    Args:
-        y: ground truth tensor of shape (batch, height, width)
-        x: predicted tensor of shape (ensemble, batch,  height, width)
-        mask: binary mask of shape (height, width); 1 = valid, 0 = ignore
-
-    Returns:
-        rmse_per_batch: tensor of shape (batch,) containing RMSE values
-    """
-    # 1. Mean over ensemble
-    x_mean = x.mean(axis=0)  # shape: (batch, height, width)
-    # 2. Squared error
-    sq_error = (y - x_mean) ** 2  # shape: (batch, height, width)
-    
-    # 3. Apply mask: broadcast to match sq_error shape
-    mask_bool = mask.astype(bool)  # shape: (height, width)
-    sq_error_masked = np.where(mask_bool[None, :, :], sq_error, np.nan)
-
-    # 4. Mean over spatial dimensions (only valid pixels), shape: (batch,)
-    mse_over_loc = np.nanmean(sq_error_masked, axis=(1, 2))
-    
-    # 6. Root Mean Squared Error per time step
-    rmse_t = np.sqrt(mse_over_loc)  # shape: (batch, time)
-    # 7. Average over time steps
-    rmse = rmse_t.mean(axis=0)  # shape: (batch,)
-    return rmse
-
-
-
 
 def summarize_metric_across_horizons(
     metric_fn,
@@ -1174,15 +1142,12 @@ def summarize_metric_across_horizons(
     num_ensambles,
     metric_name="Metric",
     day_list=None,
-    base_output_dir="./output/dime",
     feature_str="features_1",
     plot=True,
     save_path=None,
     show_plot=False,
     pause_seconds=5,
-):  
-    from analysis import load_stored_data
-    from analysis.configs.config_models import config_ddim as model_config
+):
     """
     Computes and optionally plots a metric (e.g., SSR, SSIM) across forecast horizons.
 
@@ -1210,11 +1175,21 @@ def summarize_metric_across_horizons(
     - metric_results: list of float
         Metric values computed for each forecast day.
     """
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from analysis import load_stored_data
+    from analysis.configs.config_models import config_ddim as model_config
+
+
     if day_list is None:
         day_list = [10, 15, 30, 45, 60]
 
     _, _, scaler, mask = load_stored_data(model_config, "data_gnn_drought")
     metric_results = []
+
+    base_output_dir = os.path.join(model_config.output_dir, "dime")
+    
 
     for day in day_list:
         print(f"Processing model for days_{day}...")
@@ -1230,13 +1205,13 @@ def summarize_metric_across_horizons(
         real_data = np.load(true_path)
 
         if metric_name == "SSIM":
-            ens_data = np.mean(ens_data, axis=0)  # Average over ensemble
-            y_pred_null = np.where(np.isnan(ens_data), -1.0, ens_data)
-            y_true_null = np.where(np.isnan(real_data), -1.0, real_data)
+            y_pred = np.mean(ens_data, 0)
+            y_pred_null = torch.where(torch.isnan(y_pred), torch.tensor(-1.0), y_pred)
+            y_true_null = torch.where(torch.isnan(real_data), torch.tensor(-1.0), real_data)
             metric_value = tensor_ssim(y_pred_null, y_true_null, range=2.0)
-
         else:
             metric_value = metric_fn(real_data, ens_data, mask)
+
         metric_results.append(np.round(metric_value, 4))
 
     if plot:
@@ -1244,14 +1219,14 @@ def summarize_metric_across_horizons(
         plt.figure(figsize=(7, 4))
         bars = plt.bar(x_labels, metric_results, color='steelblue')
         plt.ylabel(metric_name)
-        plt.title(f"{metric_name} vs. Forecast Horizon with {num_ensambles} Ensembles and Eta={eta}")
+        plt.title(f"{metric_name} vs. Forecast Horizon for {num_ensambles} ens and eta {eta}")
         plt.ylim(0, max(metric_results) * 1.2)
         plt.grid(axis="y", linestyle="--", alpha=0.5)
         plt.bar_label(bars, labels=[f"{v:.2f}" for v in metric_results], padding=3)
         plt.tight_layout()
 
         if save_path:
-            plt.savefig(os.path.join(save_path, f"barchart_{metric_name}_{num_ensambles}_{eta}.png"), dpi=300)
+            plt.savefig(save_path, dpi=300)
 
         if show_plot:
             plt.show(block=False)
@@ -1262,60 +1237,68 @@ def summarize_metric_across_horizons(
 
     return metric_results
 
-def compute_ensemble_spread(x, mask):
+
+def compute_ensamble_rmse(y, x, mask):
     """
-    Computes the ensemble spread as per the given formula.
+    Computes RMSE with spatial mask.
     
     Args:
-        x: Tensor of shape (ensemble, batch, height, width)
-        mask: Binary mask of shape (height, width); 1 = valid, 0 = ignore
+        y: ground truth, shape (batch, height, width)
+        x: predictions, shape (ensemble, batch, height, width)
+        mask: boolean mask of shape (height, width)
 
     Returns:
-        spread_per_batch: Tensor of shape (batch,) with the spread value
+        Scalar RMSE averaged over batch, using valid (masked) pixels only
+    """
+    x_mean = x.mean(axis=0)  # (batch, height, width)
+    sq_error = (y - x_mean) ** 2  # (batch, height, width)
+
+    mask_broadcast = mask[None, :, :]  # (1, height, width)
+    sq_error_masked = np.where(mask_broadcast, sq_error, np.nan)
+
+    rmse_per_sample = np.sqrt(np.nanmean(sq_error_masked, axis=(1, 2)))  # (batch,)
+    rmse = np.nanmean(rmse_per_sample)  # scalar
+    return rmse
+
+
+def compute_ensamble_spread(x, mask):
+    """
+    Computes ensemble spread (standard deviation) with spatial mask.
+    
+    Args:
+        x: predictions, shape (ensemble, batch, height, width)
+        mask: boolean mask of shape (height, width)
+
+    Returns:
+        Scalar spread averaged over batch and spatial dimensions (with mask)
     """
     ens, batch, h, w = x.shape
-    # 1. Compute ensemble mean: shape (batch, height, width)
-    x_mean = x.mean(axis=0)
-    # 2. Compute squared differences: (ensemble, batch, height, width)
-    x_mean_1 = np.tile(x_mean, (ens, 1, 1, 1))    
-    sq_diff = (x - x_mean_1) ** 2
-    # 4. Sum over ensemble and divide by (n_ens - 1) — unbiased variance
-    sample_var = sq_diff.sum(axis=0) / (ens - 1)  # shape: (batch, height, width)
+    x_mean = x.mean(axis=0)  # (batch, height, width)
+    sq_diff = (x - x_mean[None, ...]) ** 2  # (ensemble, batch, height, width)
+    sample_var = np.sum(sq_diff, axis=0) / (ens - 1)  # (batch, height, width)
 
-     # 4. Apply mask (broadcast): keep only valid pixels
-    mask_bool = mask.astype(bool)
-    sample_var_masked = np.where(mask_bool[None, :, :], sample_var, np.nan)
+    mask_broadcast = mask[None, :, :]  # (1, height, width)
+    sample_var_masked = np.where(mask_broadcast, sample_var, np.nan)
 
-    # 5. Average over spatial (h, w) and channl dimensions (|I|)
-    mean_over_I = np.nanmean(sample_var_masked, axis=(1, 2))  # shape: (batch, time)
-    # 6. Take square root (std dev across ensemble)
-    spread_t = np.sqrt(mean_over_I)  # shape: (batch, time)
-    # 7. Average over time steps
-    spread = spread_t.mean(axis=0)  # shape: (batch,)
+    spread_per_sample = np.sqrt(np.nanmean(sample_var_masked, axis=(1, 2)))  # (batch,)
+    spread = np.nanmean(spread_per_sample)  # scalar
     return spread
 
-def compute_ssr(y, x, mask, num_ens=None):
+def compute_ssr(y, x, mask):
     """
-    Computes the spread skill ratio (SSR) as per the given formula.
-    
+    Computes spread-skill ratio (SSR) as spread / RMSE.
+
     Args:
-        y: Ground truth tensor of shape (batch, height, width)
-        x: Predicted tensor of shape (ensemble, batch, height, width)
-        mask: Binary mask of shape (height, width); 1 = valid, 0 = ignore
+        y: ground truth, shape (batch, height, width)
+        x: predictions, shape (ensemble, batch, height, width)
+        mask: boolean mask of shape (height, width)
 
     Returns:
-        ssr: Tensor of shape (batch,) with the SSR value
+        SSR (scalar)
     """
-    # Ensure no division by zero
-    if num_ens is None:
-        num_ens = x.shape[0]
-    epsilon = 1e-10
-    spread = compute_ensemble_spread(x, mask) 
-    rmse = compute_ensable_rmse(y, x, mask) + epsilon
-    print(f"Spread: {spread}, RMSE: {rmse}")
-    ssr = np.sqrt((num_ens+1)/num_ens)*spread/rmse
-    return ssr
-
+    rmse = compute_ensamble_rmse(y, x, mask)
+    spread = compute_ensamble_spread(x, mask)
+    return spread / rmse if rmse != 0 else np.nan
 
 def masked_rmse(preds, labels, null_val=np.nan):
     return torch.sqrt(masked_mse(preds, labels, null_val))
