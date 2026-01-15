@@ -118,15 +118,27 @@ def subsetting_whole(df_list_all, months, year=2020):
     int_end = time.strptime(date_end, "%Y-%m-%d").tm_yday
     return  df_list_all[int_st-1:int_end]
 
-def get_xarray_time_subset(ds:xr.DataArray,  year:Union[list, int],month:Union[None, list, int]=None,variable:str="ndvi"):
-    if month ==None:
-        ds_subset = ds.sel(time=ds.time.dt.year.isin([year]))
-        df_list, list_dates= get_subplot_year(ds_subset, year =year, var=variable)
+
+def get_xarray_time_subset(ds: xr.DataArray, year: Union[list, int], months: Union[None, list, int] = None, variable: str = "ndvi"):
+    # Check if year was passed as int
+    single_year = isinstance(year, int)
+    year = [year] if single_year else year
+
+    if months is not None:
+        months = [months] if isinstance(months, int) else months
+
+    if months is None:
+        ds_subset = ds.sel(time=ds.time.dt.year.isin(year))
+        call_year_arg = year[0] if single_year else year  # depends on what get_subplot_year expects
+        df_list, list_dates = get_subplot_year(ds_subset, year=call_year_arg, var=variable)
     else:
-        ds_subset = ds.where(((ds['time.year'].isin([year])) & (ds['time.month'].isin([month]))), drop=True)
-        df_list, list_dates= get_subplot_year(ds_subset, year =year, var=variable, months=month)
+        ds_subset = ds.where(((ds.time.dt.year.isin(year)) & (ds.time.dt.month.isin(months))), drop=True)
+        call_year_arg = year[0] if single_year else year
+        df_list, list_dates = get_subplot_year(ds_subset, year=call_year_arg, var=variable, months=months)
+
     return df_list, list_dates
-    
+
+
 def get_subplot_year(ds, 
                      var:str="ndvi", 
                      year:Union[None, int,list]=None, 
@@ -212,37 +224,183 @@ def get_subplot_year(ds,
 
             return df_list, list_dates
 
-def adjust_full_list(year, df_list_all, months=None):
-    def str_month(month):
-        if month>9:
-            return str(month)
-        else:
-            return "0" + str(month)
+def get_subplot_year(ds, 
+                     var: str = "ndvi", 
+                     year: Union[None, int, list] = None, 
+                     months: Union[None, list, int, list[list]] = None, 
+                     dask_compute: bool = True):
 
+    import dask
+    from dask.diagnostics import ProgressBar
+    import calendar
+    import time
+    import pandas as pd
+    from datetime import datetime
+    from tqdm import tqdm
+
+    def str_month(month):
+        return f"{month:02d}"
+
+    def process_day(day_of_year, ds, var):
+        subset = ds.sel(time=(ds['time.dayofyear'] == day_of_year))
+        df = subset.to_dataframe().reset_index(drop=True)
+        df = df.dropna(subset=[var])
+        return df[var]
+
+    def get_idx_dates_months(year, months):
+        print(f"For year {year} obtaining only months {months[0]} to {months[-1]} for boxplot")
+        last_day = calendar.monthrange(year, months[-1])[1]
+        date_start = f"{year}-{str_month(months[0])}-01"
+        date_end = f"{year}-{str_month(months[-1])}-{last_day}"
+        int_st = time.strptime(date_start, "%Y-%m-%d").tm_yday
+        int_end = time.strptime(date_end, "%Y-%m-%d").tm_yday
+        list_new = pd.date_range(
+            datetime.strptime(date_start, "%Y-%m-%d"), 
+            datetime.strptime(date_end, "%Y-%m-%d"), 
+            freq="D"
+        ).to_series().dt.strftime('%d-%b').values
+        return int_st, int_end, list_new
+
+
+    # Determine number of days
+    if year is None:
+        days = 366
+        is_leap = True
+    elif isinstance(year, list):
+        is_leap = any(calendar.isleap(y) for y in year)
+        days = 366 if is_leap else 365
+    else:
+        is_leap = calendar.isleap(year)
+        days = 366 if is_leap else 365
+
+    list_dates = get_dates(gap_year=is_leap)
+    logger.info(f"days are {days}")
+
+    if dask_compute:
+        ds = ds.chunk({'time': -1})
+        delayed_results = []
+        combined_dates = []
+
+        if months is None:
+            delayed_results = [dask.delayed(process_day)(day, ds, var) for day in range(1, days + 1)]
+            combined_dates = list_dates
+
+        elif isinstance(year, list) and isinstance(months[0], list):
+            for y, m_list in zip(year, months):
+                int_st, int_end, date_strs = get_idx_dates_months(y, m_list)
+                combined_dates.extend(date_strs)
+                delayed_results.extend([dask.delayed(process_day)(day, ds, var) for day in range(int_st, int_end + 1)])
+        else:
+            int_st, int_end, combined_dates = get_idx_dates_months(year, months)
+            delayed_results = [dask.delayed(process_day)(day, ds, var) for day in range(int_st, int_end + 1)]
+
+        with ProgressBar():
+            computed_results = dask.compute(*delayed_results)
+            df_list = list(computed_results)
+
+        return df_list, combined_dates
+
+    else:
+        df_list = []
+        combined_dates = []
+
+        if months is None:
+            logger.info("Calculating the full year for boxplot")
+            for day in tqdm(range(1, days + 1)):
+                df = ds.sel(time=(ds['time.dayofyear'] == day)).to_dataframe().dropna(subset=[var])
+                df_list.append(df[var])
+            combined_dates = list_dates
+
+        elif isinstance(year, list) and isinstance(months[0], list):
+            for y, m_list in zip(year, months):
+                int_st, int_end, date_strs = get_idx_dates_months(y, m_list)
+                combined_dates.extend(date_strs)
+                for day in tqdm(range(int_st, int_end + 1)):
+                    df = ds.sel(time=(ds['time.dayofyear'] == day)).to_dataframe().dropna(subset=[var])
+                    df_list.append(df[var])
+        else:
+            int_st, int_end, combined_dates = get_idx_dates_months(year, months)
+            for day in tqdm(range(int_st, int_end + 1)):
+                df = ds.sel(time=(ds['time.dayofyear'] == day)).to_dataframe().dropna(subset=[var])
+                df_list.append(df[var])
+
+        return df_list, combined_dates
+
+
+# def adjust_full_list(year, df_list_all, months=None):
+#     def str_month(month):
+#         if month>9:
+#             return str(month)
+#         else:
+#             return "0" + str(month)
+
+#     df_list_new = df_list_all.copy()
+
+#     days=366 if calendar.isleap(year) else 365
+
+#     if months!=None:
+#         last_day = calendar.monthrange(year, months[-1])[1]
+#         date_start = f"01-{str_month(months[0])}-{year}"
+#         date_end = f"{last_day}-{str_month(months[-1])}-{year}"
+#         int_st = time.strptime(date_start, "%d-%m-%Y").tm_yday
+#         int_end = time.strptime(date_end, "%d-%m-%Y").tm_yday
+
+#         if (2 in months) & (1 not in months) & (days ==365) :
+#             raise NotImplementedError("Subsetting without January in not leap year not implemented") 
+#         elif (days==365) & (2 in months):
+#             del df_list_new[59]
+#             return df_list_new
+#         else:
+#             return df_list_new
+#     else:
+#         if (days==365):
+#             del df_list_new[59]
+#             return df_list_new
+#         else:
+#             return df_list_new
+
+
+def adjust_full_list(year: int, df_list_all: list, months: list = None) -> list:
+    """
+    Adjusts the full-year daily list (df_list_all) to remove Feb 29 for non-leap years,
+    and filters by specific months if provided.
+
+    Args:
+        year (int): Target year.
+        df_list_all (list): List of 365 or 366 daily values.
+        months (list, optional): List of integer months to retain (1–12). Defaults to None.
+
+    Returns:
+        list: Filtered and adjusted list of daily values.
+    """
+    import calendar
+    from datetime import datetime
+
+    is_leap = calendar.isleap(year)
     df_list_new = df_list_all.copy()
 
-    days=366 if calendar.isleap(year) else 365
+    feb29_removed = False
+    if not is_leap and len(df_list_new) == 366:
+        del df_list_new[59]  # Remove Feb 29
+        feb29_removed = True
 
-    if months!=None:
-        last_day = calendar.monthrange(year, months[-1])[1]
-        date_start = f"01-{str_month(months[0])}-{year}"
-        date_end = f"{last_day}-{str_month(months[-1])}-{year}"
-        int_st = time.strptime(date_start, "%d-%m-%Y").tm_yday
-        int_end = time.strptime(date_end, "%d-%m-%Y").tm_yday
+    if months is not None:
+        doy_indices = []
+        for month in months:
+            num_days = calendar.monthrange(year, month)[1]
+            for day in range(1, num_days + 1):
+                dt = datetime(year, month, day)
+                doy = dt.timetuple().tm_yday
 
-        if (2 in months) & (1 not in months) & (days ==365) :
-            raise NotImplementedError("Subsetting without January in not leap year not implemented") 
-        elif (days==365) & (2 in months):
-            del df_list_new[59]
-            return df_list_new
-        else:
-            return df_list_new
-    else:
-        if (days==365):
-            del df_list_new[59]
-            return df_list_new
-        else:
-            return df_list_new
+                # If Feb 29 was removed, shift DOYs after Feb 28 back by one
+                if feb29_removed and doy > 59:
+                    doy -= 1
+
+                doy_indices.append(doy - 1)  # 0-based indexing
+
+        df_list_new = [df_list_new[i] for i in doy_indices]
+
+    return df_list_new
 
 def get_year_compare(ds:xr.DataArray, var:str, year:list):
 
@@ -831,8 +989,8 @@ def plot_veg_multiple_years(ds, years: list, path=None):
 #     plt.show()
 
 
-def plot_vci_multiple_years(ds: xr.Dataset, years: list, path=None, label_every=30):
-    df_list_all, list_dates_all = get_subplot_year(ds)
+def plot_vci_multiple_years(ds: xr.Dataset, years: list, var:str="ndvi", path=None, label_every=30):
+    df_list_all, list_dates_all = get_subplot_year(ds, var)
     
     fig = plt.figure(figsize=(7 * len(years), 4))
     gs = gridspec.GridSpec(1, len(years), wspace=0.3)
@@ -843,8 +1001,8 @@ def plot_vci_multiple_years(ds: xr.Dataset, years: list, path=None, label_every=
     ]
 
     for idx, year in enumerate(years):
-        df_list, list_dates = get_xarray_time_subset(ds=ds, year=year)
-        df_list_all_year = adjust_full_list(df_list_all=df_list_all, year=year)
+        df_list, list_dates = get_xarray_time_subset(ds=ds, year=year, variable=var)
+        df_list_all_year = adjust_full_list(df_list_all=df_list_all, year=year, )
 
         list_med = pd.Series([p.mean() for p in df_list])
         all_clim = pd.Series([p.mean() for p in df_list_all_year])
@@ -993,7 +1151,91 @@ def get_precp_hist(ds:xr.Dataset, variable):
 #     plt.subplots_adjust(top=0.95)
 #     plt.show()
 
-def plot_precp_multiple_years(ds:xr.Dataset, years:list, variable, path=None, df_list_all:Union[list, None]=None):
+# def plot_precp_multiple_years(ds:xr.Dataset, years:list, variable, months:Union[None, list]=None, path=None, df_list_all:Union[list, None]=None):
+#     import matplotlib.patches as mpatches
+#     import matplotlib.gridspec as gridspec
+#     import matplotlib.pyplot as plt
+#     import numpy as np
+#     import pandas as pd
+
+#     if df_list_all is None:
+#         print("The climatology data was not provided, now proceeding with its computation...")
+#         df_list_all, list_dates_all = get_subplot_year(ds, var=variable)
+
+#     fig = plt.figure(figsize=(6 * len(years), 4))
+#     gs = gridspec.GridSpec(1, len(years)) 
+
+#     colors = ['red', 'navy', 'limegreen', 'lightblue']
+#     # colors = ["mediumblue", "orange", "forestgreen", "indigo" ] 
+#     # colors = ["indianred", "darkgreen", "gold", "royalblue"]
+#     median_color = colors[0]
+#     iqr_color = colors[1]
+#     climatology_median_color = colors[2]
+#     climatology_iqr_color = colors[3]
+
+#     handles = [
+#         mpatches.Patch(color=median_color, label='Median year'),
+#         mpatches.Patch(color=iqr_color, label='IQR year'),
+#         mpatches.Patch(color=climatology_median_color, label='Median climatology'),
+#         mpatches.Patch(color=climatology_iqr_color, label='IQR climatology')
+#     ]
+
+#     axes = []
+#     for idx, year in enumerate(years):
+#         # months = np.arange(9,13) if idx == 0 else np.arange(1,6)
+#         df_list, list_dates = get_xarray_time_subset(ds=ds, year=year, variable=variable, months=months)
+#         df_list_all_year = adjust_full_list(df_list_all=df_list_all, year=year, months=months)
+
+#         ax = fig.add_subplot(gs[idx], sharey=axes[0] if axes else None)
+#         axes.append(ax)
+
+#         box1 = ax.boxplot(df_list, showfliers=False, whis=0, labels=list_dates, patch_artist=True, showcaps=False)
+#         box2 = ax.boxplot(df_list_all_year, showfliers=False, whis=0, labels=list_dates, patch_artist=True, showcaps=False, manage_ticks=False)
+
+#         ax.set_xlabel(f"{year}", fontsize=14)
+#         ax.set_ylim(0, 10)
+#         if idx == 0:
+#             ax.set_ylabel("Precipitation (mm)", fontsize=14)
+#         else:
+#             plt.setp(ax.get_yticklabels(), visible=False)
+
+#         n = 30
+#         ax.set_axisbelow(True)
+#         ax.yaxis.grid(color='grey', linestyle='dashed')
+#         [l.set_visible(False) for (i,l) in enumerate(ax.xaxis.get_ticklabels()) if i % n != 0]
+#         [l.set_visible(False) for (i,l) in enumerate(ax.xaxis.get_gridlines())]
+#         ax.tick_params(labelrotation=45, tick1On=False, labelsize=12)
+
+#         # Custom boxplot styling
+#         for med in box1['medians']:
+#             med.set_color(median_color)
+#             med.set_linewidth(4)
+#         for box in box1['boxes']:
+#             box.set_color(iqr_color)
+#             box.set_alpha(0.8)
+#         for whisk in box1['whiskers']:
+#             whisk.set_color("white")
+#         for med in box2['medians']:
+#             med.set_color(climatology_median_color)
+#             med.set_linewidth(4)
+#         for box in box2['boxes']:
+#             box.set_color(climatology_iqr_color)
+#             box.set_alpha(0.6)
+#         for whisk in box2['whiskers']:
+#             whisk.set_color("white")
+
+#     gs.tight_layout(fig, rect=[0, 0, 1, 0.95])
+#     # plt.suptitle("Daily precipitation boxplot", fontsize=18)
+
+#     # Place legend outside
+#     fig.legend(handles=handles, loc='center left', bbox_to_anchor=(1.05 , 1), fontsize=12)
+#     plt.subplots_adjust(top=0.85)
+
+#     if path:
+#         plt.savefig(path, bbox_inches='tight')
+#     plt.show()
+
+def plot_precp_multiple_years(ds:xr.Dataset, years:list, variable, months:Union[None, list]=None, path=None, df_list_all:Union[list, None]=None):
     import matplotlib.patches as mpatches
     import matplotlib.gridspec as gridspec
     import matplotlib.pyplot as plt
@@ -1008,8 +1250,6 @@ def plot_precp_multiple_years(ds:xr.Dataset, years:list, variable, path=None, df
     gs = gridspec.GridSpec(1, len(years)) 
 
     colors = ['red', 'navy', 'limegreen', 'lightblue']
-    # colors = ["mediumblue", "orange", "forestgreen", "indigo" ] 
-    # colors = ["indianred", "darkgreen", "gold", "royalblue"]
     median_color = colors[0]
     iqr_color = colors[1]
     climatology_median_color = colors[2]
@@ -1018,15 +1258,20 @@ def plot_precp_multiple_years(ds:xr.Dataset, years:list, variable, path=None, df
     handles = [
         mpatches.Patch(color=median_color, label='Median year'),
         mpatches.Patch(color=iqr_color, label='IQR year'),
-        mpatches.Patch(color=climatology_median_color, label='Median climatology 1979-2020'),
-        mpatches.Patch(color=climatology_iqr_color, label='IQR climatology 1979-2020')
+        mpatches.Patch(color=climatology_median_color, label='Median climatology'),
+        mpatches.Patch(color=climatology_iqr_color, label='IQR climatology')
     ]
 
+    # Check if months is a list of lists (one list of months per year)
+    if isinstance(months, list) and all(isinstance(m, list) for m in months) and len(months) == len(years):
+        year_month_pairs = zip(years, months)
+    else:
+        year_month_pairs = ((y, months) for y in years)  # same months (or None) for all years
+
     axes = []
-    for idx, year in enumerate(years):
-        # months = np.arange(9,13) if idx == 0 else np.arange(1,6)
-        df_list, list_dates = get_xarray_time_subset(ds=ds, year=year, variable=variable)
-        df_list_all_year = adjust_full_list(df_list_all=df_list_all, year=year)
+    for idx, (year, month_set) in enumerate(year_month_pairs):
+        df_list, list_dates = get_xarray_time_subset(ds=ds, year=year, variable=variable, months=month_set)
+        df_list_all_year = adjust_full_list(df_list_all=df_list_all, year=year, months=month_set)
 
         ax = fig.add_subplot(gs[idx], sharey=axes[0] if axes else None)
         axes.append(ax)
@@ -1035,7 +1280,7 @@ def plot_precp_multiple_years(ds:xr.Dataset, years:list, variable, path=None, df
         box2 = ax.boxplot(df_list_all_year, showfliers=False, whis=0, labels=list_dates, patch_artist=True, showcaps=False, manage_ticks=False)
 
         ax.set_xlabel(f"{year}", fontsize=14)
-        ax.set_ylim(0, 10)
+        ax.set_ylim(0, 15)
         if idx == 0:
             ax.set_ylabel("Precipitation (mm)", fontsize=14)
         else:
@@ -1067,10 +1312,7 @@ def plot_precp_multiple_years(ds:xr.Dataset, years:list, variable, path=None, df
             whisk.set_color("white")
 
     gs.tight_layout(fig, rect=[0, 0, 1, 0.95])
-    # plt.suptitle("Daily precipitation boxplot", fontsize=18)
-
-    # Place legend outside
-    fig.legend(handles=handles, loc='center left', bbox_to_anchor=(1.05 , 1), fontsize=12)
+    fig.legend(handles=handles, loc='center left', bbox_to_anchor=(1.02 , 0.5), fontsize=12)
     plt.subplots_adjust(top=0.85)
 
     if path:

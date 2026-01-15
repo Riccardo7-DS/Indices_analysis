@@ -100,7 +100,7 @@ class ConfigConvLSTM(BaseConfig):
     epochs = 100
     patience = 10
     learning_rate = 1e-3
-    batch_size= 32#16 
+    batch_size= 4#16 
     null_value = -1
     max_value = 1
 
@@ -143,8 +143,8 @@ class ConfigGWNET(BaseConfig):
     epochs = 300
     patience = 10
     learning_rate = 1e-4
-    batch_size= 32
-    dim = 64
+    batch_size= 16
+    # dim = 64
 
     null_value = -1
     max_value = 1

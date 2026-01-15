@@ -65,7 +65,14 @@ def create_runtime_paths(args:dict):
 
     ### Create all the paths
     if args.model == "GWNET":
-        output_dir = os.path.join(base_dir,
+        if args.last_obs:
+            output_dir = os.path.join(base_dir,
+                    f"gwnet/days_{args.step_length}/features_{args.feature_days}_last_obs")
+        elif args.cross_val:
+            output_dir = os.path.join(base_dir,
+                    f"gwnet/days_{args.step_length}/features_{args.feature_days}_cross_val")          
+        else:
+            output_dir = os.path.join(base_dir,
                     f"gwnet/days_{args.step_length}/features_{args.feature_days}")
     elif args.model == "CONVLSTM": 
         output_dir = os.path.join(base_dir,
@@ -326,7 +333,7 @@ def check_shape_dataloaders(train_dataloader, val_dataloader):
     for batch_idx, (inputs, targets) in enumerate(train_dataloader):
         inputs = inputs.float()
         targets = targets.float()
-        logger.info("Logging data info for train dataloader: "
+        logger.debug("Logging data info for train dataloader: "
             "Input shape: %s, Target shape: %s, "
             "Input max: %s, Input min: %s, "
             "Target max: %s, Target min: %s", 
@@ -338,7 +345,7 @@ def check_shape_dataloaders(train_dataloader, val_dataloader):
     for batch_idx, (inputs, targets) in enumerate(val_dataloader):
         inputs = inputs.float()
         targets = targets.float()
-        logger.info("Logging data info for validation dataloader: "
+        logger.debug("Logging data info for validation dataloader: "
             "Input shape: %s, Target shape: %s, "
             "Input max: %s, Input min: %s, "
             "Target max: %s, Target min: %s", 
@@ -481,7 +488,8 @@ def pipeline_hydro_vars(args:dict,
 
     logger = init_logging(log_file=os.path.join(log_path, 
                         f"pipeline_{(args.model).lower()}_"
-                        f"features_{args.feature_days}.log"), verbose=False)
+                        f"features_{args.feature_days}.log"), 
+                        verbose=args.loglevel)
     
     data_dir = os.path.join(model_config.data_dir, rawdata_name)
 
@@ -569,11 +577,7 @@ def train_loop(config,
     for batch_idx, (inputs, targets) in enumerate(train_loader):
 
         inputs = inputs.float().to(config.device)
-        # logger.info("Feature tensor GPU memory: {:.4f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
         targets = torch.squeeze(targets.float().to(config.device))
-        # logger.info("Label tensor GPU memory: {:.4f} GB".format(get_tensor_memory(targets)/ (1024**3)))
-        # logger.info(get_ram())
-        # logger.info(get_vram())
         outputs = torch.squeeze(model(inputs))
 
         if draw_scatter is True:
@@ -630,9 +634,7 @@ def valid_loop(config, args, model, valid_loader, criterion, scheduler,
     for batch_idx, (inputs, targets) in enumerate(valid_loader):
         with torch.no_grad():
             inputs = inputs.squeeze(0).float().to(config.device)
-            # logger.info("Feature tensor GPU memory: {:.2f} GB".format(get_tensor_memory(inputs)/ (1024**3)))
             targets = torch.squeeze(targets.float().to(config.device))
-            # logger.info("Label tensor GPU memory: {:.2f} GB".format(get_tensor_memory(targets)/ (1024**3)))
             outputs = torch.squeeze(model(inputs))
 
             if draw_scatter is True:
@@ -854,59 +856,57 @@ def get_train_valid_loader(model_config,
                            data, 
                            labels,
                            mask, 
-                           train_split:float=0.7, 
-                           add_lag:bool=True):
-    from scipy.io import loadmat
-    from torch.utils.data import TensorDataset
+                           train_split: float = 0.7, 
+                           add_lag: bool = True):
     from torch.utils.data import DataLoader
-    from torch.utils.data.sampler import SubsetRandomSampler
-    from analysis import CustomConvLSTMDataset
+    from analysis import CustomConvLSTMDataset, CustomTimeSeriesDataset
     from utils.function_clns import CNN_split
 
+    # preprocess arrays
     data = prepare_array_wgcnet(data, mask)
     labels = prepare_array_wgcnet(labels, mask)
     
-
+    # split train/val/test
     train_data, val_data, train_label, val_label, \
-        test_valid, test_label = CNN_split(data, 
-                                           labels, 
-                                           split_percentage=train_split,
-                                        #    val_split=0.5)
-                                           val_split=0.333)
+        test_valid, test_label = CNN_split(
+            data, labels,
+            split_percentage=train_split,
+            val_split=0.333
+        )
+
+    # choose dataset type based on cross-validation flag
+    if getattr(args, "cross_validation", False):
+        dataset_cls = CustomTimeSeriesDataset
+        logger.info("Using CustomTimeSeriesDataset (cross-validation enabled).")
+    else:
+        dataset_cls = CustomConvLSTMDataset
+        logger.info("Using CustomConvLSTMDataset (standard split).")
     
-    train_dataset = CustomConvLSTMDataset(model_config, args, 
-                                          train_data, train_label, 
-                                          save_files=False)
-    logger.info("Generated train dataloader")
+    # create datasets
+    train_dataset = dataset_cls(model_config, args, train_data, train_label, save_files=False)
+    val_dataset   = dataset_cls(model_config, args, val_data, val_label, save_files=False)
+    test_dataset  = dataset_cls(model_config, args, test_valid, test_label, save_files=False)
     
-    val_dataset = CustomConvLSTMDataset(model_config, args, 
-                                        val_data, val_label, 
-                                        save_files=False)
-    
-    logger.info("Generated validation dataloader")
-    
-    test_dataset = CustomConvLSTMDataset(model_config, args, 
-                                        test_valid, test_label, 
-                                        save_files=False)
-    
-    logger.info("Generated test dataloader")
-    
-    # create a DataLoader object that uses the dataset
-    train_dataloader = DataLoader(train_dataset, 
-                                  batch_size=model_config.batch_size, 
-                                  shuffle=True)
-    val_dataloader = DataLoader(val_dataset, 
-                                batch_size=model_config.batch_size, 
-                                shuffle=False)
-    
-    test_dataloader = DataLoader(test_dataset, 
-                                batch_size=model_config.batch_size, 
-                                shuffle=False)
-    
-    
+    logger.info("Generated train, validation, and test datasets")
+
+    # wrap into DataLoaders
+    train_dataloader = DataLoader(
+        train_dataset, 
+        batch_size=model_config.batch_size, 
+        shuffle=True
+    )
+    val_dataloader = DataLoader(
+        val_dataset, 
+        batch_size=model_config.batch_size, 
+        shuffle=False
+    )
+    test_dataloader = DataLoader(
+        test_dataset, 
+        batch_size=model_config.batch_size, 
+        shuffle=False
+    )
 
     return train_dataloader, val_dataloader, test_dataloader, train_dataset
-
 
 
 class DataLoader(object):
@@ -1710,9 +1710,10 @@ class GWNETtrainer():
                 self.checkp_epoch = checkpoint['epoch']
                 logger.info(f"Resuming training from epoch {self.checkp_epoch}")
 
-            except FileNotFoundError:
+            except (FileNotFoundError,IsADirectoryError):
                 from analysis import load_checkp_metadata
-                checkpoint_path = checkpoint_path.removesuffix(".pth.tar")
+                if checkpoint_path.endswith(".pth.tar"):
+                    checkpoint_path = checkpoint_path.removesuffix(".pth.tar")
                 self.model, self.optimizer, self.scheduler, self.checkp_epoch, _ = load_checkp_metadata(checkpoint_path, self.model, self.optimizer, self.scheduler, None)   
 
     def train(self, input, real_val):

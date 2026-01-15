@@ -250,7 +250,8 @@ def training_wavenet(args,
 
     logger = init_logging(log_file=os.path.join(log_path, 
                             f"pipeline_{(args.model).lower()}_"
-                            f"features_{args.feature_days}.log"), verbose=False)
+                            f"features_{args.feature_days}.log"), 
+                            verbose=args.loglevel)
     # writer = init_tb(log_path)
 
     if data is None:

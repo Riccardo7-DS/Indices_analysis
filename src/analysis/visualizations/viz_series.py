@@ -810,7 +810,11 @@ def plot_multiple_aggregations_per_day(results, model_days, model_name, aggregat
     plt.tight_layout()
     plt.show()
 
-def plot_masked_pixel_subset_prediction_vs_real(y, y_pred, start, model_name, mask, n=5, new_start=None, new_end=None):
+def plot_masked_pixel_subset_prediction_vs_real(
+    y, y_pred, start, model_name, mask, n=5, new_start=None, new_end=None, seed=None
+):
+    import seaborn as sns
+
     """
     Plot the prediction vs. real value for a subset of masked pixels over time in individual subplots.
 
@@ -822,6 +826,7 @@ def plot_masked_pixel_subset_prediction_vs_real(y, y_pred, start, model_name, ma
         n (int): Number of random pixels to plot.
         new_start (str, optional): Start date for the subset (e.g., '2021-01-01').
         new_end (str, optional): End date for the subset (e.g., '2021-12-31').
+        seed (int, optional): Random seed for reproducibility of selected pixels.
     """
     # Use Seaborn for styling
     sns.set_theme(style="whitegrid")
@@ -849,8 +854,9 @@ def plot_masked_pixel_subset_prediction_vs_real(y, y_pred, start, model_name, ma
     if len(valid_pixels) < n:
         raise ValueError(f"Mask contains fewer valid pixels ({len(valid_pixels)}) than the requested number ({n}).")
 
-    # Select n random pixels from the valid ones
-    selected_pixels = np.random.choice(len(valid_pixels), size=n, replace=False)
+    # Select n random pixels from the valid ones, reproducibly if seed is given
+    rng = np.random.default_rng(seed)
+    selected_pixels = rng.choice(len(valid_pixels), size=n, replace=False)
     pixel_indices = [valid_pixels[idx] for idx in selected_pixels]
 
     # Determine subplot layout
@@ -862,36 +868,114 @@ def plot_masked_pixel_subset_prediction_vs_real(y, y_pred, start, model_name, ma
     axes = axes.flatten()
 
     for idx, (ax, (row, col)) in enumerate(zip(axes, pixel_indices)):
-        # Plot for each selected pixel
         ax.plot(range_dates, y[:, row, col], label='Real', linestyle='-', linewidth=1, color="green")
         ax.plot(range_dates, y_pred[:, row, col], label='Prediction', linestyle='--', linewidth=1, color="grey")
-
-        # Customize y-axis and add legend
         ax.set_ylabel('Value', fontsize=10)
         ax.legend(fontsize=8, loc='upper left', frameon=True)
         ax.set_title(f'Pixel ({row}, {col})', fontsize=10)
 
-    # Remove unused subplots
+    # Hide unused subplots
     for ax in axes[len(pixel_indices):]:
         ax.set_visible(False)
 
-    # Customize x-axis for all subplots
+    # Customize x-axis ticks
     tick_indices = pd.date_range(range_dates[0], range_dates[-1], freq='180D')
     for ax in axes:
         ax.set_xticks(tick_indices)
         ax.set_xticklabels(tick_indices.strftime('%d-%b'), rotation=45, fontsize=8)
 
-    # Add a common x-axis label
+    # Common labels and title
     fig.text(0.5, 0.04, 'Date', ha='center', fontsize=12)
+    fig.suptitle(f"{model_name} prediction vs Real Value for {n} Masked Pixels Over Time",
+                 fontsize=14, weight='bold')
 
-    # Add title
-    fig.suptitle(f"{model_name} prediction vs Real Value for {n} Masked Pixels Over Time", fontsize=14, weight='bold')
-
-    # Adjust layout to avoid overlap
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-
-    # Show the plot
     plt.show()
+
+
+# def plot_masked_pixel_subset_prediction_vs_real(y, y_pred, start, model_name, mask, n=5, new_start=None, new_end=None, seed=None):
+#     import seaborn as sns
+#     """
+#     Plot the prediction vs. real value for a subset of masked pixels over time in individual subplots.
+
+#     Parameters:
+#         y (numpy.ndarray): Ground truth values of shape [s, h, w].
+#         y_pred (numpy.ndarray): Predicted values of shape [s, h, w].
+#         start (str): Start date for the dataset (e.g., '2000-01-01').
+#         mask (numpy.ndarray): Boolean mask of shape [h, w], where True indicates valid pixels for selection.
+#         n (int): Number of random pixels to plot.
+#         new_start (str, optional): Start date for the subset (e.g., '2021-01-01').
+#         new_end (str, optional): End date for the subset (e.g., '2021-12-31').
+#     """
+#     # Use Seaborn for styling
+#     sns.set_theme(style="whitegrid")
+
+#     # Time setup
+#     days = y.shape[0]
+#     start_pd = pd.to_datetime(start)
+#     end_pd = start_pd + timedelta(days=days - 1)
+#     range_dates = pd.date_range(start_pd, end_pd)
+
+#     # Subset the data if new_start and new_end are provided
+#     if new_start is not None and new_end is not None:
+#         new_start_pd = pd.to_datetime(new_start)
+#         new_end_pd = pd.to_datetime(new_end)
+#         mask_dates = (range_dates >= new_start_pd) & (range_dates <= new_end_pd)
+#         y = y[mask_dates]
+#         y_pred = y_pred[mask_dates]
+#         range_dates = range_dates[mask_dates]
+
+#     # Get valid pixel indices based on the mask
+#     h, w = y.shape[1:]
+#     valid_pixels = [(i, j) for i in range(h) for j in range(w) if mask[i, j]]
+
+#     # Check if there are enough valid pixels
+#     if len(valid_pixels) < n:
+#         raise ValueError(f"Mask contains fewer valid pixels ({len(valid_pixels)}) than the requested number ({n}).")
+
+#     # Select n random pixels from the valid ones
+#     selected_pixels = np.random.choice(len(valid_pixels), size=n, replace=False)
+#     pixel_indices = [valid_pixels[idx] for idx in selected_pixels]
+
+#     # Determine subplot layout
+#     columns = 3
+#     rows = (n + columns - 1) // columns  # Ensure all pixels are plotted
+#     fig, axes = plt.subplots(rows, columns, figsize=(8, 2 * rows), sharex=True, squeeze=False)
+
+#     # Flatten axes for easier iteration
+#     axes = axes.flatten()
+
+#     for idx, (ax, (row, col)) in enumerate(zip(axes, pixel_indices)):
+#         # Plot for each selected pixel
+#         ax.plot(range_dates, y[:, row, col], label='Real', linestyle='-', linewidth=1, color="green")
+#         ax.plot(range_dates, y_pred[:, row, col], label='Prediction', linestyle='--', linewidth=1, color="grey")
+
+#         # Customize y-axis and add legend
+#         ax.set_ylabel('Value', fontsize=10)
+#         ax.legend(fontsize=8, loc='upper left', frameon=True)
+#         ax.set_title(f'Pixel ({row}, {col})', fontsize=10)
+
+#     # Remove unused subplots
+#     for ax in axes[len(pixel_indices):]:
+#         ax.set_visible(False)
+
+#     # Customize x-axis for all subplots
+#     tick_indices = pd.date_range(range_dates[0], range_dates[-1], freq='180D')
+#     for ax in axes:
+#         ax.set_xticks(tick_indices)
+#         ax.set_xticklabels(tick_indices.strftime('%d-%b'), rotation=45, fontsize=8)
+
+#     # Add a common x-axis label
+#     fig.text(0.5, 0.04, 'Date', ha='center', fontsize=12)
+
+#     # Add title
+#     fig.suptitle(f"{model_name} prediction vs Real Value for {n} Masked Pixels Over Time", fontsize=14, weight='bold')
+
+#     # Adjust layout to avoid overlap
+#     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+#     # Show the plot
+#     plt.show()
 
 
 def plot_predicted_vs_real_maps(
@@ -1602,10 +1686,61 @@ if __name__== "__main__":
     output_dir = "output/images/plots" 
     os.makedirs(output_dir, exist_ok=True)
 
-    # ---- Load Data ----
+
+    # # ---- Load Data ----
     variables = ["precipitation"]
 
-    precp_data = PrecipDataPreparation(
+    tamsat_data = PrecipDataPreparation(
+        args,
+        precipitation_data="TAMSTAT",
+        variables=variables,
+        load_local_precp=True,
+        precp_format="nc",
+        interpolate=False,
+    )
+    tamsat_precp = tamsat_data.precp_ds.load()
+
+    chirps_data = PrecipDataPreparation(
+        args,
+        precipitation_data="CHIRPS",
+        variables=variables,
+        load_local_precp=True,
+        precp_format="nc",
+        interpolate=False,
+    )
+    chirps_precp = chirps_data.precp_ds.load()
+
+    imerg_data = PrecipDataPreparation(
+        args,
+        precipitation_data="IMERG",
+        variables=variables,
+        load_local_precp=True,
+        precp_format="nc",
+        interpolate=False,
+    )
+    imerg_precp = imerg_data.precp_ds.load()
+
+    gpcc_data = PrecipDataPreparation(
+        args,
+        precipitation_data="GPCC",
+        variables=variables,
+        load_local_precp=True,
+        precp_format="nc",
+        interpolate=False,
+    )
+    gpcc_precp = gpcc_data.precp_ds.load()
+
+    era5_data = PrecipDataPreparation(
+        args,
+        precipitation_data="ERA5",
+        variables=variables,
+        load_local_precp=True,
+        precp_format="nc",
+        interpolate=False,
+    )
+    era5_precp = era5_data.precp_ds.load()
+
+    mswep_data = PrecipDataPreparation(
         args,
         precipitation_data="MSWEP",
         variables=variables,
@@ -1614,13 +1749,24 @@ if __name__== "__main__":
         precp_filename="mswep_precip",
         interpolate=False,
     )
+    mswep_precp = mswep_data.precp_ds.load()
 
-    ndvi_ds = precp_data.ndvi_ds.load()
-    precp_ds = precp_data.precp_ds.load()
-    pr = precp_ds["precipitation"]
+    # precp_data = PrecipDataPreparation(
+    #     args,
+    #     precipitation_data="MSWEP",
+    #     variables=variables,
+    #     load_local_precp=True,
+    #     load_zarr_features=True,
+    #     precp_filename="mswep_precip",
+    #     interpolate=False,
+    # )
 
-    # Compute VCI
-    vci_ds = compute_vci(ndvi_ds)
+    # # ndvi_ds = precp_data.ndvi_ds.load()
+    # precp_ds = precp_data.precp_ds.load()
+    # pr = precp_ds["precipitation"]
+
+    # # Compute VCI
+    # vci_ds = compute_vci(ndvi_ds)
 
 
     # # Compute SPIs
@@ -1633,14 +1779,14 @@ if __name__== "__main__":
     #     fitkwargs={"floc": 0}
     # ).isel(time=slice(60, -1)).to_dataset(name="spi_gamma_60")
 
-    spi_ds_90 = SPI(
-        pr=pr.chunk({"time": -1, "lat": "auto", "lon": "auto"}),
-        freq="D",
-        window=90,
-        dist="gamma",
-        method="APP",
-        fitkwargs={"floc": 0}
-    ).isel(time=slice(90, -1)).to_dataset(name="spi_gamma_90").load()
+    # spi_ds_90 = SPI(
+    #     pr=pr.chunk({"time": -1, "lat": "auto", "lon": "auto"}),
+    #     freq="D",
+    #     window=90,
+    #     dist="gamma",
+    #     method="APP",
+    #     fitkwargs={"floc": 0}
+    # ).isel(time=slice(90, -1)).to_dataset(name="spi_gamma_90").load()
 
     # spi_ds_180 = SPI(
     #     pr=pr.chunk({"time": -1, "lat": "auto", "lon": "auto"}),
@@ -1706,7 +1852,9 @@ if __name__== "__main__":
     # loop_soil(ndvi_ds, precp_ds=pr, ndvi_var="ndvi", one_forest=True, path=output_dir)
 
     # 6. VCI and SPI for the whole period
-    print("Plotting VCI and SPI for the whole period...")
-    plot_whole_period_spi_veg(spi_ds_90, ndvi_ds.to_dataset(name="ndvi"), late=90, var_target="spi_gamma_90", start_date="2005-04-01")
+    # print("Plotting VCI and SPI for the whole period...")
+    # plot_whole_period_spi_veg(spi_ds_90, ndvi_ds.to_dataset(name="ndvi"), late=90, var_target="spi_gamma_90", start_date="2005-04-01")
 
-    print("✅ All plots generated and saved into:", output_dir)
+    # print("✅ All plots generated and saved into:", output_dir)
+
+ 

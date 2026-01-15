@@ -65,8 +65,10 @@ class CustomConvLSTMDataset(Dataset):
         
         self.batch_size = config.batch_size
         self.num_timesteps = data.shape[0]
+        self.step = args.step
         self.num_channels = data.shape[1]
         self.foldername = filename
+        self.use_last_obs = getattr(args, "last_obs", False)
 
         if (len(labels.shape) == 3) and (len(data.shape)==4):
             labels = np.expand_dims(labels, 1)
@@ -92,27 +94,39 @@ class CustomConvLSTMDataset(Dataset):
         if save_files is True:
             self._save_files(self.data, self.labels)
 
+
     def _generate_traing_data(self, args):
 
-        logger.debug("Adding one channel to features to account for lagged data" \
-                      if self.lag else "No lag channel added")
+        logger.debug("Adding one channel to features to account for lagged data"
+                     if self.lag else "No lag channel added")
+
         tot_channels = self.num_channels + 1 if self.lag else self.num_channels
 
+        # available_timesteps = how many sliding windows we can fit (stride=1 day between windows)
         if args.model == "DIME":
             self.available_timesteps = self.num_timesteps - args.auto_days - self.steps_head 
         else:
             self.available_timesteps = self.num_timesteps - self.learning_window - self.steps_head
-        
-        shape_train = (self.available_timesteps, tot_channels, self.learning_window, self.data.shape[2], self.data.shape[3]) if isinstance(self.input_size, tuple) else \
-                      (self.available_timesteps, tot_channels, self.learning_window, self.input_size)
-        shape_label = (self.available_timesteps, self.output_channels, self.output_window, self.labels.shape[2], self.labels.shape[3]) if isinstance(self.input_size, tuple) else \
-                      (self.available_timesteps, self.output_channels, self.output_window, self.input_size) 
+
+        logger.info(
+            f"Available training windows: {self.available_timesteps}, "
+            f"learning_window={self.learning_window}, step={self.step}"
+        )
+
+        # adjust shape: shrink time dimension by self.step
+        shape_train = (self.available_timesteps, tot_channels, self.learning_window // self.step, self.data.shape[2], self.data.shape[3]) \
+                      if isinstance(self.input_size, tuple) else \
+                      (self.available_timesteps, tot_channels, self.learning_window // self.step, self.input_size)
+
+        shape_label = (self.available_timesteps, self.output_channels, self.output_window, self.labels.shape[2], self.labels.shape[3]) \
+                      if isinstance(self.input_size, tuple) else \
+                      (self.available_timesteps, self.output_channels, self.output_window, self.input_size)
 
         train_data_processed = np.empty(shape_train, dtype=np.float32)
         label_data_processed = np.empty(shape_label, dtype=np.float32)
 
-        logger.debug(f"Empty training matrix has shape {train_data_processed.shape}")
-        logger.debug(f"Empty instance matrix has shape {label_data_processed.shape}")
+        logger.info(f"Empty training matrix has shape {train_data_processed.shape}")
+        logger.info(f"Empty label matrix has shape {label_data_processed.shape}")
 
         def populate_arrays(args, train_data_processed, label_data_processed):
             sample_idx = 0
@@ -123,36 +137,52 @@ class CustomConvLSTMDataset(Dataset):
             else:
                 current_idx = self.learning_window
                 start_idx = 0
-            
+
+
             while current_idx + self.steps_head + self.output_window <= self.num_timesteps:
                 if current_idx + self.steps_head + self.output_window == self.num_timesteps:
-                     logger.info(f"Populating training data with {self.available_timesteps} days of data")
-                
+                    logger.info(f"Reached end of dataset at timestep {current_idx}")
+
                 if args.model == "DIME":
                     end_idx = current_idx + self.output_window
                 else:
                     end_idx = current_idx
 
-                for chnl in range(self.num_channels):
-                    train_data_processed[sample_idx, chnl] = self.data[chnl, start_idx:end_idx]
+                
+                if self.use_last_obs:
+                    # fill with repeated last frame
+                    for chnl in range(self.num_channels):
+                        last_frame = self.data[chnl, end_idx - 1]  # (W, H)
+                        train_data_processed[sample_idx, chnl] = np.repeat(
+                            last_frame[np.newaxis, ...],
+                            self.learning_window // self.step,
+                            axis=0
+                        )
+                else:
+                    # subsample inside the window with self.step
+                    for chnl in range(self.num_channels):
+                        train_data_processed[sample_idx, chnl] = self.data[chnl, start_idx:end_idx:self.step]
 
                 if self.lag:
-                    train_data_processed[sample_idx, -1] = self.labels[0, start_idx:end_idx]
+                    train_data_processed[sample_idx, -1] = self.labels[0, start_idx:end_idx:self.step]
 
+                # labels are NOT subsampled
                 label_data_processed[sample_idx, 0] = \
                     self.labels[0, current_idx + self.steps_head : current_idx + self.steps_head + self.output_window]
 
+                # slide window forward by 1 day
                 current_idx += 1
-                sample_idx += 1
                 start_idx += 1
+                sample_idx += 1
 
             if args.model in ["CONVLSTM", "DIME"]:
-                train_data_processed = train_data_processed.swapaxes(1,2)
-                label_data_processed = label_data_processed.swapaxes(1,2)
+                train_data_processed = train_data_processed.swapaxes(1, 2)
+                label_data_processed = label_data_processed.swapaxes(1, 2)
 
             return train_data_processed, label_data_processed
-        
+
         self.data, self.labels = populate_arrays(args, train_data_processed, label_data_processed)
+
 
     def __len__(self):
         return self.data.shape[0] #- self.learning_window - self.steps_head - self.output_window
@@ -216,6 +246,128 @@ class CustomConvLSTMDataset(Dataset):
             label_batch = labels[num_batches*self.batch_size:]
             batch_dict = {'data': data_batch, 'label': label_batch}
             np.save(os.path.join(dest_path, f'batch_{num_batches}.npy'), batch_dict)
+
+
+class TimeSeriesDataset(Dataset):
+    def __init__(self, data, labels):
+        """
+        Args:
+            data: np.array, shape (samples, channels, timesteps, width, height)
+            labels: np.array, shape (samples, out_channels, timesteps, width, height)
+        """
+        self.data = torch.from_numpy(data).float()
+        self.labels = torch.from_numpy(labels).float()
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.labels[idx]
+
+
+class CustomTimeSeriesDataset:
+    def __init__(self, 
+            config:dict, 
+            args:dict, 
+            data:xr.DataArray, 
+            labels: xr.DataArray, 
+            start_date: str = None,
+            save_files:bool=False,
+            filename="timeseries_dataset"):
+        
+        self.batch_size = config.batch_size
+        self.num_timesteps = data.shape[0]
+        self.step = args.step
+        self.num_channels = data.shape[1]
+        self.foldername = filename
+
+        if (len(labels.shape) == 3) and (len(data.shape)==4):
+            labels = np.expand_dims(labels, 1)
+
+        self.data = np.swapaxes(data, 1,0)
+        self.labels = np.swapaxes(labels, 1,0)
+
+        self.lag = config.include_lag
+        self.input_size = config.input_size if args.model in ["CONVLSTM","DIME","AUTO_DIME"] \
+            else data.shape[-1] if args.model=="GWNET"  or args.model=="WNET" else None
+
+        self.steps_head = args.step_length
+        self.learning_window = args.feature_days
+        self.start_date = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None  # <- Convert to datetime
+        # self.end_date = datetime.strptime(start_date + timedelta(days=), "%Y-%m-%d") if start_date else None  # <- Convert to datetime
+
+        
+        self.output_channels = config.output_channels
+        self.output_window = config.num_frames_output
+        self.save_path = config.data_dir
+        self._generate_traing_data(args)
+
+    def _generate_training_data(self, data_slice, labels_slice):
+        """
+        Generates training tensors from a slice of data/labels.
+        """
+        tot_channels = data_slice.shape[1] + (1 if self.lag else 0)
+        available_timesteps = data_slice.shape[0] - self.learning_window - self.steps_head
+
+        shape_train = (available_timesteps, tot_channels, self.learning_window // self.step,
+                       data_slice.shape[2], data_slice.shape[3])
+        shape_label = (available_timesteps, labels_slice.shape[0], self.output_window,
+                       labels_slice.shape[2], labels_slice.shape[3])
+
+        train_data = np.empty(shape_train, dtype=np.float32)
+        train_labels = np.empty(shape_label, dtype=np.float32)
+    
+        for i in range(available_timesteps):
+            start_idx = i
+            end_idx = start_idx + self.learning_window
+
+            for chnl in range(self.num_channels):
+                train_data[i, :data_slice.shape[1]] = data_slice[:, start_idx:end_idx:self.step]
+
+            if self.lag:
+                # add lagged labels as extra channel
+                train_data[i, -1] = labels_slice[0, start_idx:end_idx:self.step]
+
+            train_labels[i] = labels_slice[:, end_idx:end_idx+self.output_window]
+
+        return TimeSeriesDataset(train_data, train_labels)
+
+    def sliding_window_cv(self, window_size_days, forecast_horizon, stride_days=365):
+        """
+        Generate SWCV folds (train/test slices as indices).
+        """
+        folds = []
+        start_idx = 0
+        while start_idx + window_size_days + forecast_horizon <= self.num_timesteps:
+            train_start = start_idx
+            train_end = start_idx + window_size_days
+            test_start = train_end
+            test_end = train_end + forecast_horizon
+            folds.append((train_start, train_end, test_start, test_end))
+            start_idx += stride_days
+        return folds
+
+    def get_data(self, use_cv=False, window_size_days=None, stride_days=365, forecast_horizon=None):
+        """
+        Returns training (and optionally validation) datasets as PyTorch Datasets.
+        """
+        if use_cv:
+            assert window_size_days is not None and forecast_horizon is not None
+            folds = self.sliding_window_cv(window_size_days, forecast_horizon, stride_days)
+            datasets = []
+            for train_start, train_end, test_start, test_end in folds:
+                train_data_slice = self.data[:, train_start:train_end]
+                train_labels_slice = self.labels[:, train_start:train_end]
+                test_data_slice = self.data[:, test_start:test_end]
+                test_labels_slice = self.labels[:, test_start:test_end]
+
+                train_dataset = self._generate_training_data(train_data_slice, train_labels_slice)
+                test_dataset = self._generate_training_data(test_data_slice, test_labels_slice)
+                datasets.append((train_dataset, test_dataset))
+            return datasets
+        else:
+            return self._generate_training_data(self.data, self.labels)
+
 
 class DataGenerator(CustomConvLSTMDataset):
     def __init__(self, 
@@ -525,7 +677,7 @@ class EarlyStopping:
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = np.Inf
+        self.val_loss_min = np.inf
         self.current_checkpoint = None
 
     def __call__(self, val_loss, model_dict, epoch, save_path):

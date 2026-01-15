@@ -6,18 +6,18 @@ if __name__=="__main__":
     import pyproj
     import torch
     import matplotlib
-    matplotlib.use('Agg')
-
+    matplotlib.use("Agg")
     from analysis.configs.config_models import config_gwnet as model_config
+    from analysis import create_runtime_paths
 
     parser = argparse.ArgumentParser(description='test', conflict_handler="resolve")
     parser.add_argument('-f')
     parser.add_argument('--model', default=os.environ.get('model', "GWNET"))
     parser.add_argument('--mode', default=os.environ.get('mode', "train"))
+    parser.add_argument("--cross_val", default=os.environ.get("cross_val"), action="store_true")
 
-    parser.add_argument('--loglevel', default=os.environ.get('loglevel',False))
+    parser.add_argument('--loglevel', default=os.environ.get("loglevel"), action="store_true")
     parser.add_argument('--save_output', default=os.environ.get('save_output',True))
-
 
     parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
     parser.add_argument('--gcn_bool',default=True,help='whether to add graph convolution layer')
@@ -30,6 +30,8 @@ if __name__=="__main__":
 
     parser.add_argument('--step_length',type=int,default=os.environ.get('step_length', 15),help='days in the future')
     parser.add_argument('--feature_days',type=int,default=os.environ.get('feature_days', 90))
+    parser.add_argument('--step',type=int,default=os.environ.get('step', 1))
+    parser.add_argument('--last_obs', default=bool(os.environ.get("last_obs")), action="store_true")
 
     parser.add_argument('--fillna',type=bool,default=False)
     parser.add_argument("--interpolate", type=bool, default=False, help="Input data interpolation over time")
@@ -50,9 +52,11 @@ if __name__=="__main__":
     for feature_days in [args.feature_days]: 
         for window in [args.step_length]:
             if args.checkpoint > 0 :
-                checkpoint_path =  model_config.output_dir + f"/{(args.model).lower()}" \
-                f"/days_{window}/features_{feature_days}" \
-                f"/checkpoints/checkpoint_epoch_{args.checkpoint}.pth.tar"
+                # checkpoint_path =  model_config.output_dir + f"/{(args.model).lower()}" \
+                # f"/days_{window}/features_{feature_days}" \
+                # f"/checkpoints/checkpoint_epoch_{args.checkpoint}.pth.tar"
+                _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
+                checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{args.checkpoint}.pth.tar")
             else:
                 checkpoint_path = None
 

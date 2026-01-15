@@ -368,7 +368,8 @@ def load_checkp_metadata(checkpoint_path, model, optimizer, scheduler, ema):
 
         # Load each component
         for key, file_path in metadata['components'].items():
-            file_path = file_path.replace('features_90', 'features_1')
+            if "dime" in file_path:
+                file_path = file_path.replace('features_90', 'features_1')
             state = torch.load(file_path, weights_only=True)
 
             if key == 'state_dict':
