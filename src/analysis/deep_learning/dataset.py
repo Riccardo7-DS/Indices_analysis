@@ -183,6 +183,10 @@ class CustomConvLSTMDataset(Dataset):
 
         self.data, self.labels = populate_arrays(args, train_data_processed, label_data_processed)
 
+        if args.only_lag:
+            logger.info("Using only lagged data as input features")
+            self.data[:, :-1, ...] = 0.0
+
 
     def __len__(self):
         return self.data.shape[0] #- self.learning_window - self.steps_head - self.output_window

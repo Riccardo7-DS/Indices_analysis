@@ -10,6 +10,7 @@ if __name__=="__main__":
     from analysis.configs.config_models import config_gwnet as model_config
     from analysis import create_runtime_paths
 
+
     parser = argparse.ArgumentParser(description='test', conflict_handler="resolve")
     parser.add_argument('-f')
     parser.add_argument('--model', default=os.environ.get('model', "GWNET"))
@@ -31,7 +32,7 @@ if __name__=="__main__":
     parser.add_argument('--step_length',type=int,default=os.environ.get('step_length', 15),help='days in the future')
     parser.add_argument('--feature_days',type=int,default=os.environ.get('feature_days', 90))
     parser.add_argument('--step',type=int,default=os.environ.get('step', 1))
-    parser.add_argument('--last_obs', default=bool(os.environ.get("last_obs")), action="store_true")
+    parser.add_argument('--only_lag', default=bool(os.environ.get("only_lag")), action="store_true")
 
     parser.add_argument('--fillna',type=bool,default=False)
     parser.add_argument("--interpolate", type=bool, default=False, help="Input data interpolation over time")
@@ -40,11 +41,11 @@ if __name__=="__main__":
     parser.add_argument('--crop_area',type=bool,default=False)
     parser.add_argument('--plotheatmap', default=False, help="Save adjacency matrix heatmap")
 
-
     parser.add_argument('--checkpoint',type=int,default=os.environ.get('checkpoint', 0))
 
     args = parser.parse_args()
     os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
+
 
     if (args.mode == "test") and (args.checkpoint==0):
         raise ValueError("Please chose a checkpoint if in evaluate mode")  

@@ -65,9 +65,9 @@ def create_runtime_paths(args:dict):
 
     ### Create all the paths
     if args.model == "GWNET":
-        if args.last_obs:
+        if args.only_lag:
             output_dir = os.path.join(base_dir,
-                    f"gwnet/days_{args.step_length}/features_{args.feature_days}_last_obs")
+                    f"gwnet/days_{args.step_length}/features_{args.feature_days}_only_lag")
         elif args.cross_val:
             output_dir = os.path.join(base_dir,
                     f"gwnet/days_{args.step_length}/features_{args.feature_days}_cross_val")          
@@ -339,7 +339,7 @@ def check_shape_dataloaders(train_dataloader, val_dataloader):
             "Target max: %s, Target min: %s", 
             inputs.shape, targets.shape, 
             inputs.max().item(), inputs.min().item(),
-            targets.max().item(), targets.min().item())
+            np.round(targets.max().item(), 2), np.round(targets.min().item(), 2))
     
     
     for batch_idx, (inputs, targets) in enumerate(val_dataloader):
@@ -351,7 +351,7 @@ def check_shape_dataloaders(train_dataloader, val_dataloader):
             "Target max: %s, Target min: %s", 
             inputs.shape, targets.shape, 
             inputs.max().item(), inputs.min().item(),
-            targets.max().item(), targets.min().item())
+            np.round(targets.max().item(), 2), np.round(targets.min().item(), 2))
 
 
 def date_to_sinusoidal_embedding(date_string, h, w):
