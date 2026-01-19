@@ -33,6 +33,7 @@ def run_pipeline(local_args):
                     raise e
 def spawn_worker(local_rank, args):
     import os
+    import traceback
     # set sensible defaults for master address/port if not provided
     os.environ.setdefault('MASTER_ADDR', '127.0.0.1')
     os.environ.setdefault('MASTER_PORT', '29500')
@@ -41,7 +42,20 @@ def spawn_worker(local_rank, args):
     from analysis.deep_learning.utils_models import worker
     device, world_size = worker(args)
     # call the pipeline entrypoint; it will use args and the initialized process group
-    run_pipeline(args)
+    try:
+        run_pipeline(args)
+    except Exception:
+        # Log traceback then re-raise after cleanup
+        traceback.print_exc()
+        raise
+    finally:
+        try:
+            import torch.distributed as dist
+            if dist.is_available() and dist.is_initialized():
+                dist.destroy_process_group()
+        except Exception:
+            # best-effort cleanup; ignore errors here
+            pass
 
 
 
