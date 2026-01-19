@@ -289,8 +289,9 @@ def training_wavenet(args,
     data_dir = os.path.join(model_config.data_dir, dataname)
     # device = model_config.device
 
-    if args.ddp and args.local_rank == 0:
-        logger.info("Starting DDP training")
+    if args.ddp and args.local_rank != 0:
+        logger = init_logging(verbose=False)
+    else:
         logger = init_logging(log_file=os.path.join(log_path, 
                                 f"pipeline_{(args.model).lower()}_"
                                 f"features_{args.feature_days}.log"), 
