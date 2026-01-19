@@ -900,8 +900,7 @@ def get_train_valid_loader(model_config,
             train_dataset,
             batch_size=model_config.batch_size, 
             drop_last=True,
-            sampler=train_sampler,
-            shuffle=True,    
+            sampler=train_sampler
         )
         val_sampler = DistributedSampler(val_dataset,
             num_replicas=args.world_size,
@@ -1692,13 +1691,15 @@ def worker(args):
     world_size = args.num_gpus * args.num_nodes
     global_rank = args.node_id * args.num_gpus + args.local_rank
 
+    device = torch.device(f'cuda:{args.local_rank}')
+    torch.cuda.set_device(device)
+
     dist.init_process_group(
         backend='nccl',
         world_size=world_size,
-        rank= global_rank)
+        rank= global_rank,
+        device_id=device)
     
-    device = torch.device(f'cuda:{args.local_rank}')
-    torch.cuda.set_device(device)
     return device, world_size
 
 
@@ -1751,7 +1752,7 @@ class GWNETtrainer():
         )
 
         if args.ddp:
-            self.model = DDP(self.model)
+            self.model = DDP(self.model.to(self.device))
         else:
             self.model = DataParallel(self.model, device_ids=[args.local_rank])
         
