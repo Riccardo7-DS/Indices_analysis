@@ -1,3 +1,50 @@
+def run_pipeline(local_args):
+    from analysis.deep_learning.ConvLSTM.pipeline_convlstm import pipeline_convlstm
+    from analysis import pipeline_gnn
+    from analysis.configs.config_models import config_gwnet as model_config
+    from analysis import create_runtime_paths
+    import torch
+    for feature_days in [local_args.feature_days]:
+        for window in [local_args.step_length]:
+            if local_args.checkpoint > 0:
+                _, _, _, checkpoint_dir = create_runtime_paths(local_args)
+                checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{local_args.checkpoint}.pth.tar")
+            else:
+                checkpoint_path = None
+            # set these on the args object for downstream code
+            local_args.step_length = window
+            local_args.feature_days = feature_days
+            try:
+                if local_args.model == "CONVLSTM":
+                    pipeline_convlstm(local_args, precipitation_only=False, checkpoint_path=checkpoint_path)
+                elif (local_args.model == "WNET") or (local_args.model == "GWNET"):
+                    pipeline_gnn(local_args,
+                        use_water_mask=True,
+                        load_local_precipitation=True,
+                        precipitation_only=False,
+                        checkpoint_path=checkpoint_path,
+                        add_extra_data=True
+                    )
+            except RuntimeError as e:
+                if 'out of memory' in str(e):
+                    print("CUDA out of memory error caught.")
+                    torch.cuda.empty_cache()
+                else:
+                    raise e
+def spawn_worker(local_rank, args):
+    import os
+    # set sensible defaults for master address/port if not provided
+    os.environ.setdefault('MASTER_ADDR', '127.0.0.1')
+    os.environ.setdefault('MASTER_PORT', '29500')
+    # set the local rank and initialize process group + device
+    args.local_rank = local_rank
+    from analysis.deep_learning.utils_models import worker
+    device, world_size = worker(args)
+    # call the pipeline entrypoint; it will use args and the initialized process group
+    run_pipeline(args)
+
+
+
 if __name__=="__main__":
     from analysis.deep_learning.ConvLSTM.pipeline_convlstm import pipeline_convlstm
     from analysis import pipeline_gnn
@@ -58,62 +105,13 @@ if __name__=="__main__":
 
     if (args.mode == "test") and (args.checkpoint==0):
         raise ValueError("Please chose a checkpoint if in evaluate mode")  
-
-    def run_pipeline(local_args):
-        from analysis.deep_learning.ConvLSTM.pipeline_convlstm import pipeline_convlstm
-        from analysis import pipeline_gnn
-        from analysis.configs.config_models import config_gwnet as model_config
-        from analysis import create_runtime_paths
-        import torch
-
-        for feature_days in [local_args.feature_days]:
-            for window in [local_args.step_length]:
-                if local_args.checkpoint > 0:
-                    _, _, _, checkpoint_dir = create_runtime_paths(local_args)
-                    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{local_args.checkpoint}.pth.tar")
-                else:
-                    checkpoint_path = None
-
-                # set these on the args object for downstream code
-                local_args.step_length = window
-                local_args.feature_days = feature_days
-
-                try:
-                    if local_args.model == "CONVLSTM":
-                        pipeline_convlstm(local_args, precipitation_only=False, checkpoint_path=checkpoint_path)
-                    elif (local_args.model == "WNET") or (local_args.model == "GWNET"):
-                        pipeline_gnn(local_args,
-                            use_water_mask=True,
-                            load_local_precipitation=True,
-                            precipitation_only=False,
-                            checkpoint_path=checkpoint_path,
-                            add_extra_data=True
-                        )
-
-                except RuntimeError as e:
-                    if 'out of memory' in str(e):
-                        print("CUDA out of memory error caught.")
-                        torch.cuda.empty_cache()
-                    else:
-                        raise e
-
-
-    def spawn_worker(local_rank, args):
-        import os
-        # set sensible defaults for master address/port if not provided
-        os.environ.setdefault('MASTER_ADDR', '127.0.0.1')
-        os.environ.setdefault('MASTER_PORT', '29500')
-        # set the local rank and initialize process group + device
-        args.local_rank = local_rank
-        from analysis.deep_learning.utils_models import worker
-        device, world_size = worker(args)
-        # call the pipeline entrypoint; it will use args and the initialized process group
-        run_pipeline(args)
-
+    
     # Launch either spawned processes (DDP) or single-process run
     if args.ddp:
         import torch.multiprocessing as mp
         mp.spawn(spawn_worker, nprocs=args.num_gpus, args=(args,), join=True)
     else:
         run_pipeline(args)
+
+
 
