@@ -33,7 +33,13 @@ def get_ram():
     free_cubes = int(total_cubes * free / total)
     return f'RAM: {total - free:.2f}/{total:.2f}GB\t RAM:[' + (total_cubes - free_cubes) * '▮' + free_cubes * '▯' + ']'
 
+def exists(x):
+    return x is not None
 
+def default(val, d):
+    if exists(val):
+        return val
+    return d() if callable(d) else d
 
 def create_xarray_datarray(var_name:str, data, time, lat, lon):
     return xr.DataArray(
@@ -103,11 +109,31 @@ def handle_unhandled_exception(exc_type, exc_value, exc_traceback):
     logger.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
 
 
+def extract_grid(grid_shape, return_pandas:bool=False):
+
+    min_lat, min_lon, max_lat, max_lon = hoa_bbox()
+
+    lats = np.linspace(min_lat, max_lat, grid_shape[0])
+    lons = np.linspace(min_lon, max_lon, grid_shape[1])
+
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
+
+    lat_lon_grid = np.stack([lat_grid, lon_grid], axis=-1)
+    reshaped_gird = lat_lon_grid.reshape(-1, 2)
+
+    if return_pandas is True:
+        import pandas as pd
+        return pd.DataFrame(reshaped_gird, 
+                            columns=["lon","lat"])
+    else:
+        return reshaped_gird
+
 def hoa_bbox(invert:bool = False):
     minx = -5.48369565
     miny = 32.01630435
     maxx = 15.48369565
     maxy = 51.48369565
+
     if invert is False:
         return [miny, minx, maxy, maxx]
     else:
@@ -482,28 +508,103 @@ def CNN_imputation(ds:Union[xr.DataArray, xr.Dataset],
     return target, data
 
 
-def CNN_split(data:np.array, 
-              target:np.array, 
-              split_percentage:float=0.7,
-              test_split:float=0.5):
-    tot_perc_val = (1 - split_percentage) * test_split
-    tot_perc_test = 1 - tot_perc_val - split_percentage 
-    logger.info(f"Data is divided as {split_percentage :.0%} train," 
-                f" {tot_perc_val :.0%} validation and {tot_perc_test :.0%} independent test")
-    ###splitting test and train
-    n_samples = data.shape[0]
-    train_samples = int(round(split_percentage*n_samples, 0))
-    test_samples = int(round(tot_perc_test*n_samples, 0))
-    val_samples = n_samples - (train_samples + test_samples)
+def find_checkpoint_path(model_config, args, return_latest:bool=False):
+    import os
+    import glob
+    from analysis import create_runtime_paths
 
+    # folder_path =  model_config.output_dir + f"/{(args.model).lower()}" \
+    #             f"/days_{args.step_length}/features_{args.feature_days}" \
+    #             f"/checkpoints"
+
+    _, _, _, checkp_path = create_runtime_paths(args)
+    
+    if return_latest:
+        # Find all files matching the pattern 'checkpoint_*'
+        checkpoint_files = glob.glob(os.path.join(checkp_path, 'checkpoint_epoch_*'))
+
+        # Get the most recently created file
+        most_recent_file = max(checkpoint_files, key=os.path.getctime)
+
+        # Output the most recently created file
+        print(f"The most recently created checkpoint is: {os.path.basename(most_recent_file)}")
+        return most_recent_file
+    else:
+        return checkp_path
+
+
+def CNN_split(data: np.array, 
+              target: np.array, 
+              split_percentage: float = 0.7, 
+              val_split: float = 0.5, 
+              print_actual_days: bool = True):
+    """
+    Splits the data into train, validation, and optionally test sets.
+
+    Args:
+        data (np.array): Input data array.
+        target (np.array): Target labels array.
+        split_percentage (float): Percentage of data to use for training.
+        val_split (float): Fraction of non-training data to allocate to validation (0 to 1).
+        print_actual_days (bool): Whether to print the date ranges for each split.
+
+    Returns:
+        tuple: Train, validation, and optionally test splits for both data and target.
+    """
+    # Adjust validation and test proportions
+    tot_perc_val = (1 - split_percentage) * val_split
+    tot_perc_test = 1 - tot_perc_val - split_percentage
+
+    # Ensure valid splits
+    if tot_perc_val + split_percentage > 1 or tot_perc_test < 0:
+        raise ValueError("Invalid split percentages: ensure val_split and split_percentage are correctly configured.")
+
+    logger.info(f"Data is divided as {split_percentage:.0%} train, "
+                f"{tot_perc_val:.0%} validation, and {tot_perc_test:.0%} independent test")
+
+    # Calculate sample counts
+    n_samples = data.shape[0]
+    train_samples = int(round(split_percentage * n_samples, 0))
+    val_samples = int(round(tot_perc_val * n_samples, 0))
+    test_samples = n_samples - (train_samples + val_samples)
+
+    # Perform the split
     train_data = data[:train_samples]
-    val_data =  data[train_samples:train_samples+val_samples]
-    test_data= data[train_samples+ val_samples:]
+    val_data = data[train_samples:train_samples + val_samples]
+    test_data = None if test_samples <= 0 else data[train_samples + val_samples:]
 
     train_label = target[:train_samples]
-    val_label =  target[train_samples:train_samples+val_samples]
-    test_label = target[train_samples+ val_samples:]
+    val_label = target[train_samples:train_samples + val_samples]
+    test_label = None if test_samples <= 0 else target[train_samples + val_samples:]
 
+    if print_actual_days:
+        from utils.function_clns import config
+        import pandas as pd
+        from datetime import timedelta, datetime
+
+        start_data = config["DEFAULT"]["date_start"]
+        end_data = config["DEFAULT"]["date_end"]
+        start_pd = pd.to_datetime(start_data, format='%Y-%m-%d')
+        end_pd = pd.to_datetime(end_data, format='%Y-%m-%d')
+        # date_range = pd.date_range(start_pd, end_pd)
+
+        end_1 = start_pd + timedelta(days=train_samples - 1)
+        new_start = end_1 + timedelta(days=1)
+
+        if test_samples > 0:
+            end_2 = new_start + timedelta(days=val_samples - 1)
+            new_start_2 = end_2 + timedelta(days=1)
+            final_end = new_start_2 + timedelta(days=test_samples - 1)
+
+            logger.info(f"Training is from {start_data} to {datetime.strftime(end_1, '%Y-%m-%d')}, "
+                        f"validation from {datetime.strftime(new_start, '%Y-%m-%d')} to {datetime.strftime(end_2, '%Y-%m-%d')}, "
+                        f"testing from {datetime.strftime(new_start_2, '%Y-%m-%d')} to {datetime.strftime(final_end, '%Y-%m-%d')}")
+        else:
+            end_2 = new_start + timedelta(days=val_samples - 1)
+            logger.info(f"Training is from {start_data} to {datetime.strftime(end_1, '%Y-%m-%d')}, "
+                        f"validation from {datetime.strftime(new_start, '%Y-%m-%d')} to {datetime.strftime(end_2, '%Y-%m-%d')}")
+
+    
     return train_data, val_data, train_label, val_label, test_data, test_label
 
 
@@ -563,6 +664,29 @@ def drop_extra_vars(dataset):
             if var in dataset.data_vars:
                 dataset = dataset.drop_vars(var)
     return dataset
+
+
+def bias_correction(y_true, y_pred):
+    from sklearn.linear_model import LinearRegression
+
+    s, w, h = y_true.shape
+    # Create linear regression model
+    model = LinearRegression()
+    model.fit(y_pred.reshape( s*w*h).reshape(-1, 1),y_true.reshape(s*w*h).reshape(-1, 1))
+
+    def shift_data(data, intercept, coefficient):
+        return data*coefficient[0] + intercept[0]
+
+    # Compute bias
+    coefficient = model.coef_  # Coefficients of the model
+    intercept = model.intercept_  # Intercept of the model
+
+    # print(f"Coefficients: {coefficient}")
+    # print(f"Intercept: {intercept}")
+
+    y_corr = shift_data(y_pred, intercept, coefficient)
+
+    return y_corr, coefficient, intercept
 
 def interpolate_prepare(input_data:Union[xr.Dataset, xr.DataArray], 
                         target_data:xr.DataArray, 

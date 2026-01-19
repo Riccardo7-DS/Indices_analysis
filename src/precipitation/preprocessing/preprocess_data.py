@@ -3,8 +3,10 @@ from typing import Literal, Union
 import os 
 import xarray as xr
 import numpy as np
+import rasterio
 import sys
 from dask.diagnostics import ProgressBar
+from rasterio.enums import Resampling
 import logging
 import pickle
 from datetime import timedelta
@@ -20,6 +22,8 @@ class PrecipDataPreparation():
                  ndvi_data:str="seviri_full_image_smoothed.zarr",
                  load_zarr_features:bool = False,
                  load_local_precp:bool = False,
+                 precp_filename:str=None,
+                 precp_format:Literal["zarr", "nc"]="zarr",
                  interpolate:bool = False) -> None:
         
         cb = ProgressBar().register()
@@ -30,14 +34,23 @@ class PrecipDataPreparation():
         self.precp_product = precipitation_data
         self.ndvi_filename = ndvi_data
 
+        assert precp_format in ["zarr", "nc"], "Precipitation dataset must be either \"zarr\" or \"nc\"" 
+
         if load_zarr_features is False:
+            if self.model == "ERA5" and precp_filename is None:
+                raise ValueError("ERA5 not implemented in file, specify folder name")
             self.precp_ds = self.process_input_vars(variables, 
                                 load_local_precp, 
                                 interpolate=interpolate, 
+                                precp_folder=precp_filename,
+                                precp_format= precp_format,
                                 save=False)
         else:
-            path = os.path.join(config["PRECIP"]["ERA5_land"]["path"],
-                                            "final_vars_filled.zarr")
+            self._load_local_precipitation(precipitation_data)
+            path = os.path.join(self.precp_path, 
+                                precp_filename + ".zarr")
+            # path = os.path.join(config["PRECIP"]["ERA5_land"]["path"],
+            #                                 "final_vars_filled.zarr")
             self.precp_ds = xr.open_zarr(path)\
                 .sel(time=slice(self.time_start, self.time_end))
         
@@ -45,6 +58,8 @@ class PrecipDataPreparation():
                                             self.ndvi_filename)
         ndvi_ds = self._preprocess_array(ndvi_ds)
         ndvi_ds = self._reproject_odc(ndvi_ds, self.precp_ds)
+        # ndvi_ds = self._reproject_raster(ndvi_ds, self.precp_ds, 
+        #                                  method=Resampling.bilinear)
 
         logger.debug("Proceeding with interpolation of instance over time")
         from utils.xarray_functions import extend_dataset_over_time 
@@ -67,15 +82,20 @@ class PrecipDataPreparation():
             self.ndvi_ds = self._crop_area_for_dl(self.ndvi_ds)
 
         ### Check nulls
-        self._count_nulls(self.precp_ds)
-        self._count_nulls(self.ndvi_ds)
+        # self._count_nulls(self.precp_ds)
+        # self._count_nulls(self.ndvi_ds)
 
     def _estimate_gigs(self, dataset:xr.Dataset, description:str):
         logger.info("{d} dataset has {g} GiB".format(d=description, 
                                                      g=dataset.nbytes * 1e-9))
 
-    def process_input_vars(self, variables:list, load_local_precp:bool, 
-                           interpolate:bool, save:bool=False):
+    def process_input_vars(self, 
+                           variables:list, 
+                           load_local_precp:bool, 
+                           interpolate:bool, 
+                           save:bool=False,
+                           precp_folder:str="batch_final",
+                           precp_format="nc"):
         
         def save_dataset_tozarr(dataset, dest_path):
             logger.debug("Starting exporting processed data to zarr...")
@@ -84,7 +104,9 @@ class PrecipDataPreparation():
             logger.debug("Successfully saved preprocessed variables")
 
         if load_local_precp is True:
-            self._load_local_precipitation(self.precp_product)
+            self._load_local_precipitation(self.precp_product, 
+                                           folder=precp_folder,
+                                           format=precp_format)
             precp_ds = self._preprocess_array(path = self.precp_path,
                                                filename=self.precp_filename, 
                                                interpolate=interpolate)
@@ -139,8 +161,14 @@ class PrecipDataPreparation():
             ds = shift_xarray_overtime(dataset, "1D") 
             return ds.rename({"pev":"potential_evaporation", "e":"evaporation",
                          "t2m":"2m_temperature","tp":"total_precipitation"})
+        else:
+            return dataset
 
-    def _load_local_precipitation(self, precp_dataset:str, format:Literal["nc", "zarr"]="zarr"):
+
+    def _load_local_precipitation(self, 
+                                  precp_dataset:str,
+                                  folder=None, 
+                                  format:Literal["nc", "zarr"]="zarr"):
         import os
         import re
         from utils.function_clns import config
@@ -182,8 +210,12 @@ class PrecipDataPreparation():
                 "ERA5_land": config["PRECIP"]["ERA5_land"]["path"]
             }
         }
+        if folder is not None:
+            path = get_path(config_dict,"PRECIP", precp_dataset)
+            path = os.path.join(path, folder)
+            filename = None
 
-        if "SPI" in precp_dataset:
+        elif "SPI" in precp_dataset:
             precp_dataset = precp_dataset.replace("SPI_","")
             path = get_path(config_dict, "SPI", precp_dataset)
             late =  re.search(r'\d+', path).group()
@@ -246,7 +278,7 @@ class PrecipDataPreparation():
             ds_temp_min, ds_temp_max = self._process_temperature_arco(input_data)
             evap, pot_evap = self._process_evapo_arco(input_data)
             precp_data = precp_data.to_dataset()
-            precp_data = precp_data.assing(evap = evap, potential_evap= pot_evap, 
+            precp_data = precp_data.assing(evap = evap, potential_evap = pot_evap, 
                                     temp_max= ds_temp_max, temp_min = ds_temp_min)
 
         hydro_data = self._process_soil_moisture(precp_data)\
@@ -302,21 +334,27 @@ class PrecipDataPreparation():
 
         ############## 1) Open dataset ############## 
         if dataset is None:
-            if path is None or filename is None:
-                error = ValueError(f"Either 'dataset' must be provided or both 'path'" 
-                                 f" and 'filename' must be provided.")
-                logging.error(error)
-                raise error
+            # if path is None or filename is None:
+            #     error = ValueError(f"Either 'dataset' must be provided or both 'path'" 
+            #                      f" and 'filename' must be provided.")
+            #     logging.error(error)
+            #     raise error
+            # else:
+        # Open the precipitation file with xarray
+            tot_files = len([f for f in os.listdir(path) if f.endswith(".nc")])
+            if (filename is None) and \
+                (tot_files>1):
+                logger.info(f"Found {tot_files} files in directory, proceeding with lazy loading...")
+                dataset = xr.open_mfdataset(os.path.join(path, "*.nc"))
+                logger.info("Success")
+            elif filename.endswith(".nc"):
+                dataset = xr.open_dataset(os.path.join(path, filename))
+            elif filename.endswith(".zarr"):
+                dataset = xr.open_zarr(os.path.join(path, filename))
             else:
-            # Open the precipitation file with xarray
-                if filename.endswith(".nc"):
-                    dataset = xr.open_dataset(os.path.join(path, filename))
-                elif filename.endswith(".zarr"):
-                    dataset = xr.open_zarr(os.path.join(path, filename))
-                else:
-                    err = logger.error(f"Please select a valid file format between "
-                                       f"\"zarr\" or \"netcdf\"")
-                    raise err
+                err = logger.error(f"Please select a valid file format between "
+                                   f"\"zarr\" or \"netcdf\"")
+                raise err
                 
         ############## 2) Clip dataset ##############
 
@@ -358,7 +396,7 @@ class PrecipDataPreparation():
             log(dataset)
 
     def _normalize_datasets(self, *datasets):
-        from analysis.deep_learning.utils_gwnet import StandardNormalizer
+        from analysis.deep_learning.utils_models import StandardNormalizer
 
         normalized_datasets = []
         scalers = []
@@ -404,6 +442,10 @@ class PrecipDataPreparation():
             idx_lat, lat_max, idx_lon, lon_min = crop_image_left(dataset, self.dim)
             sub_dataset = dataset.sel(lat=slice(lat_max, idx_lat), 
                                       lon=slice(lon_min, idx_lon))
+            
+        else:
+            from utils.function_clns import subsetting_pipeline
+            sub_dataset = subsetting_pipeline(dataset)
 
         return sub_dataset
     
@@ -413,6 +455,7 @@ class PrecipDataPreparation():
                        resampling:str = "bilinear"):
         
         from utils.xarray_functions import odc_reproject
+        logger.info(f"Proceeding with reprojection of source dataset with {resampling} resampling...")
         ds_repr = odc_reproject(resample_ds, target_ds, resampling=resampling)\
                 .rename({"longitude": "lon", "latitude": "lat"})
         ds_repr["lat"] = target_ds["lat"]
@@ -421,15 +464,16 @@ class PrecipDataPreparation():
     
     def _reproject_raster(self, 
                           resample_ds:xr.DataArray,
-                          target_ds:Union[xr.Dataset, xr.DataArray]):
+                          target_ds:Union[xr.Dataset, xr.DataArray],
+                          method:rasterio.enums.Resampling):
         if type(target_ds) == xr.Dataset:
             var_target = [var for var in target_ds.data_vars][0]
             target_ds = prepare(target_ds[var_target])
 
         # elif type(target_ds)== xr.DataArray:
             
-        ds_repr = resample_ds.rio.reproject_match(
-            target_ds).rename({'x':'lon','y':'lat'})
+        ds_repr = resample_ds.transpose("time","lat","lon").rio.reproject_match(
+            target_ds, resampling=method).rename({'x':'lon','y':'lat'})
         return prepare(ds_repr)
     
     def _process_precp_arco(self, 

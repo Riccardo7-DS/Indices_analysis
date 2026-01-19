@@ -10,6 +10,8 @@ class nconv(nn.Module):
         super(nconv,self).__init__()
 
     def forward(self,x, A):
+        device = x.device  # Get the device of `x`
+        A = A.to(device)
         x = torch.einsum('ncvl,vw->ncwl',(x,A))
         return x.contiguous()
 
@@ -47,10 +49,23 @@ class gcn(nn.Module):
 
 
 class gwnet(nn.Module):
-    def __init__(self, device, num_nodes, dropout=0.3, supports=None, 
-                 gcn_bool=True, addaptadj=True, aptinit=None, 
-                 in_dim=2,out_dim=12,residual_channels=32,dilation_channels=32,
-                 skip_channels=256,end_channels=512,kernel_size=2,blocks=5,layers=2):
+    def __init__(self, device, 
+        num_nodes, 
+        dropout=0.3, 
+        supports=None, 
+        gcn_bool=True, 
+        addaptadj=True, 
+        aptinit=None, 
+        in_dim=2,
+        out_dim=12,
+        residual_channels=32,
+        dilation_channels=32,
+        skip_channels=256,
+        end_channels=512,
+        kernel_size=2,
+        blocks=5,
+        layers=2):
+        
         super(gwnet, self).__init__()
         self.dropout = dropout
         self.blocks = blocks
@@ -80,8 +95,10 @@ class gwnet(nn.Module):
             if aptinit is None:
                 if supports is None:
                     self.supports = []
-                self.nodevec1 = nn.Parameter(torch.randn(num_nodes, 10).to(device), requires_grad=True).to(device)
-                self.nodevec2 = nn.Parameter(torch.randn(10, num_nodes).to(device), requires_grad=True).to(device)
+                self.nodevec1 = nn.Parameter(torch.randn(num_nodes, 10).to(device), 
+                                             requires_grad=True).to(device)
+                self.nodevec2 = nn.Parameter(torch.randn(10, num_nodes).to(device), 
+                                             requires_grad=True).to(device)
                 self.supports_len +=1
             else:
                 if supports is None:
@@ -169,9 +186,6 @@ class gwnet(nn.Module):
             #                                          |
             # ---------------------------------------> + ------------->	*skip*
 
-            #(dilation, init_dilation) = self.dilations[i]
-
-            #residual = dilation_func(x, dilation, init_dilation, i)
             residual = x
             # dilated convolution
             filter = self.filter_convs[i](residual)

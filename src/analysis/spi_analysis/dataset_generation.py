@@ -104,7 +104,7 @@ def generate_dataset():
     xr_df = xr_df.sel(time=time_slice)
 
     res_w = xr_df.resample(time='1W').mean()
-    res_w = subsetting_pipeline(CONFIG_PATH, res_w)
+    res_w = subsetting_pipeline(res_w)
 
     df = res_w.drop(['crs','spatial_ref']).to_dataframe()
     df = df.dropna(how='all')

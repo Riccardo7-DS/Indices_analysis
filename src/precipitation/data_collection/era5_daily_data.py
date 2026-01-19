@@ -103,6 +103,81 @@ def process_era5_precp(ds: xr.Dataset, var:str = "tp"):
     return datarray
 
 
+
+
+
+def download_chirps_v3(start_year=2001, end_year=2021):
+    import os
+    import gc
+    import pandas as pd
+    import xarray as xr
+    import rioxarray
+    import fsspec
+    from tqdm.auto import tqdm
+    from utils.function_clns import prepare, config, hoa_bbox
+    # Define CHIRPS base URL
+    base_url = 'https://data.chc.ucsb.edu/products/CHIRPS/v3.0/daily/final/IMERGlate-v07'
+
+
+    bbox = hoa_bbox()
+    min_lon, min_lat = bbox[0], bbox[1]
+    max_lon, max_lat = bbox[2], bbox[3]
+
+    # Output directory
+    dest_path = os.path.join(config['PRECIP']['CHIRPS']["path"], "CHIRPS_03")
+    os.makedirs(dest_path, exist_ok=True)
+
+    fs = fsspec.filesystem('https')
+
+    for year in range(start_year, end_year + 1):
+        print(f"Processing year: {year}")
+        dates = pd.date_range(f"{year}-01-01", f"{year}-12-31")
+
+        dataarrays = []
+
+        for d in tqdm(dates, desc=f"Year {year}"):
+            url = f"{base_url}/{d.year}/chirps-v3.0.{d:%Y.%m.%d}.tif"
+            try:
+                with fs.open(url) as f:
+                    da = rioxarray.open_rasterio(f)
+                    da = da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+                    da = da.rio.write_crs("EPSG:4326", inplace=True)
+
+                    # Crop to bounding box
+                    da_crop = da.rio.clip_box(
+                        minx=min_lon, miny=min_lat, maxx=max_lon, maxy=max_lat
+                    )
+
+                    # Add time dimension
+                    da_crop = da_crop.squeeze().assign_coords(time=d).expand_dims("time")
+                    dataarrays.append(da_crop)
+
+            except FileNotFoundError:
+                print(f"Missing file: {url}")
+            except Exception as e:
+                print(f"Error reading {url}: {e}")
+
+        if dataarrays:
+            combined = xr.concat(dataarrays, dim="time")
+
+            # Apply correction and preparation
+            combined = xr.where(combined < 0, 0, combined)
+            combined = prepare(combined)
+
+            # Save to NetCDF
+            out_file = os.path.join(dest_path, f"chirps_v03_{year}.nc")
+            combined.to_netcdf(out_file, mode='w', format='NETCDF4', engine='netcdf4')
+            print(f"Saved: {out_file}")
+
+            # Free memory
+            del combined
+            del dataarrays
+            gc.collect()
+        else:
+            print(f"No data found for year {year}")
+
+
+
 def load_arco_precipitation(time_start:str, time_end:str, 
                             variables:Union[list, str]):
     """

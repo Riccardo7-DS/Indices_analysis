@@ -35,22 +35,33 @@ def prepare_covermask(dataset:xr.Dataset):
         cover_ds["lon"] = dataset["lon"]
         return get_level_1(cover_ds, name="band_data").isel(band=0)
 
+def convert_level1(x):
+    if 100 <= x < 200:
+        val = int(str(int(x))[:2])
+        if val == 12:
+            return 11
+    else:
+        return x
+
 def create_copernicus_covermap(dataset:xr.DataArray, 
                                crop_strategy:Literal["shapefile", "geometry","dataset", None]="shapefile",
                                countries:Union[list, None] = ['Ethiopia','Kenya', 'Somalia',"Djibouti"],
-                               export:bool=True):
+                               export:bool=True,
+                               level1:bool=False,
+                               one_forest:bool=False):
     import geemap    
     import ee
     from utils.function_clns import config, prepare
     import geopandas as gpd
     from utils.xarray_functions import geobox_from_rio
     import logging
+    import numpy as np
 
     def generate_new_data(dataset, crop_strategy:str):
         logger.info("Generating new landcover dataset")
 
         ee.Authenticate()
-        ee.Initialize()
+        ee.Initialize(project="ee-querying-maps")
         geemap.ee_initialize()
         epsg_coords ='EPSG:4326'
 
@@ -90,6 +101,7 @@ def create_copernicus_covermap(dataset:xr.DataArray,
             repr_ds =  prepare(ds.discrete_classification.transpose("time","lat","lon"))\
                 .rio.reproject_match(prepare(dataset)).isel(time=0)
             return prepare(repr_ds)
+        
     
     shapefile_path = config['SHAPE']['africa']
     path_img = config["DEFAULT"]["images"]
@@ -102,16 +114,81 @@ def create_copernicus_covermap(dataset:xr.DataArray,
         if ds.rio.resolution()[0] == prepare(dataset).rio.resolution()[0] and \
             len(ds["lat"])==len(dataset["lat"]) and len(ds["lon"])==len(dataset["lon"]):
             logger.info("Loading extisting landcover dataset")
+            if level1:
+                ds = xr.apply_ufunc(np.vectorize(convert_level1), ds)
             return ds
         else:
             ds = generate_new_data(dataset, crop_strategy)
+            if level1:
+                ds = xr.apply_ufunc(np.vectorize(convert_level1), ds)
             return ds
     else:
         ds = generate_new_data(dataset, crop_strategy)
+        if level1:
+                ds = xr.apply_ufunc(np.vectorize(convert_level1), ds)
         return ds
+    
 
-def get_level_colors(ds_cover, level1=True):
-    df = ds_cover.to_dataframe()
+def export_copernicus_covermap(crop_strategy: Literal["shapefile", "bbox"] = "shapefile",
+                               countries: list = ['Ethiopia', 'Kenya', 'Somalia', "Djibouti"],
+                               description: str = "copernicus_cover",
+                               folder: str = "earthengine",
+                               scale: int = 100,
+                               export: bool = True):
+    import ee
+    import geemap
+    import geopandas as gpd
+    from utils.function_clns import config
+    import os
+    import time
+
+    # Authenticate and initialize
+    ee.Authenticate()
+    ee.Initialize(project="ee-querying-maps")
+
+    # Define landcover image
+    landcover = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019") \
+        .select("discrete_classification")
+
+    # Select clipping geometry
+    if crop_strategy == "shapefile":
+        shapefile_path = config['SHAPE']['africa']
+        gdf = gpd.read_file(shapefile_path)
+        subset = gdf[gdf["ADM0_NAME"].isin(countries)]
+        fc_poly = geemap.geopandas_to_ee(subset)
+        poly_geometry = fc_poly.geometry()
+    elif crop_strategy == "bbox":
+        poly_geometry = ee.Geometry.Rectangle(
+            coords=[30.288233396779802, -5.949173816626356, 
+                    51.9972177717798, 15.808293611760663],
+            proj="EPSG:4326", geodesic=False)
+    else:
+        raise ValueError("Invalid crop_strategy. Choose 'shapefile' or 'bbox'.")
+
+    # Clip the image
+    landcover_clipped = landcover.clip(poly_geometry)
+
+    if export:
+        task = ee.batch.Export.image.toDrive(
+            image=landcover_clipped,
+            description=description,
+            folder=folder,
+            fileNamePrefix=description,
+            region=poly_geometry,
+            scale=scale,
+            maxPixels=1e13
+        )
+        task.start()
+        logger.info(f"Export started with description: '{description}'. Check your GEE tasks.")
+
+    return landcover_clipped
+
+
+def get_level_colors(ds_cover, level1=True, one_forest:bool=False):
+    if isinstance(ds_cover, xr.DataArray):
+        df = ds_cover.to_dataframe(name="Band1")
+    elif isinstance(ds_cover, xr.Dataset):
+        df = ds_cover.to_dataframe()
     df = df.reset_index()
     df = df.dropna(subset=['Band1'])
     df['Band1'] = df['Band1'].astype(int)
@@ -121,8 +198,8 @@ def get_level_colors(ds_cover, level1=True):
         values_land_cover = {0	:'Unknown', 20:	'Shrubs',30:	'Herbaceous vegetation',40:	'Cultivated and managed vegetation/agriculture',
                         50:	'Urban',60:	'Bare',70:	'Snow and ice',80:	'Permanent water bodies',90:	'Herbaceous wetland',100: 'Moss and lichen',111: 'Closed forest, evergreen needle leaf',
                         112: 'Closed forest, evergreen broad leaf',115: 'Closed forest, mixed',125: 'Open forest, mixed',113: 'Closed forest, deciduous needle leaf',
-                        114: 'Closed forest, deciduous broad leaf',116: 'Closed forest, not matching any of the others',121: 'Open forest, evergreen needle leaf',122: 'Open forest, evergreen broad leaf',
-                        123: 'Open forest, deciduous needle leaf',124: 'Open forest, deciduous broad leaf',126: 'Open forest, not matching any of the others',200: 'Oceans, seas'}
+                        114: 'Closed forest, deciduous broad leaf',116: 'Closed forest, not matching any of the others',121: 'Open forest, evergreen needle leaf', 122: 'Open forest, evergreen broad leaf',
+                        123: 'Open forest, deciduous needle leaf',124: 'Open forest, deciduous broad leaf',126: 'Open forest, not matching any of the others', 200: 'Oceans, seas'}
 
         colors = {0:'#282828',20:'#FFBB22',30:'#FFFF4C',40:'#F096FF',50:'#FA0000',60:'#B4B4B4',70:'#F0F0F0',80:'#0032C8',90:'#0096A0',100:'#FAE6A0',111:'#58481F',112:'#009900',113:'#70663E',
         114:'#00CC00',115:'#4E751F',116:'#007800',121:'#666000',122:'#8DB400',123:'#8D7400',124:'#A0DC00',125:'#929900',126:'#648C00',200:'#000080'}
@@ -135,6 +212,13 @@ def get_level_colors(ds_cover, level1=True):
 
         colors = {0:'#282828',20:'#FFBB22',30:'#FFFF4C',40:'#F096FF',50:'#FA0000',60:'#B4B4B4',70:'#F0F0F0',80:'#0032C8',90:'#0096A0',100:'#FAE6A0',11:'#58481F',
                   12:'#666000', 200:'#000080'}
+        
+        df['Band1'] = df['Band1'].astype(str).apply(lambda x: x[:2] if len(x) == 3 else x).astype(int)
+
+        if one_forest:
+            values_land_cover[11]= "Forest"
+            df.loc[df['Band1']==12, 'Band1'] = 11
+
         
     df['colors'] = df['Band1'].replace(colors.keys(),colors.values())
     df['description'] = df['Band1'].replace(values_land_cover.keys(),values_land_cover.values())
@@ -152,19 +236,21 @@ def visualize_map(land_proj):
     Map
 
 def export_land_cover(target_resolution:str, 
-                      export_path =r'../data/images'):
+                      crop_strategy :Literal["shapefile", "bbox"] = "bbox",
+                      export_path =r'./output/images',
+                      countries: list = ['Ethiopia', 'Kenya', 'Somalia', "Djibouti"]):
     import ee 
     import geemap
     from osgeo import gdal
     assert target_resolution in ['IMERG','CHIRPS']
     ee.Authenticate()
-    ee.Initialize()
+    ee.Initialize(project="ee-querying-maps")
     landcover = ee.Image("COPERNICUS/Landcover/100m/Proba-V-C3/Global/2019").select('discrete_classification')
     
     if target_resolution=="IMERG":
         range = ee.Date('2019-09-03').getRange('month')
         
-        imerg = ee.ImageCollection('NASA/GPM_L3/IMERG_V06').filter(ee.Filter.date(range)).select('precipitationCal').first()
+        imerg = ee.ImageCollection('NASA/GPM_L3/IMERG_V07').filter(ee.Filter.date(range)).select('precipitation').first()
         land_proj = landcover.reproject(imerg.projection(), None, imerg.projection().nominalScale())
 
     elif target_resolution =="CHIRPS":
@@ -175,11 +261,24 @@ def export_land_cover(target_resolution:str,
         land_proj = landcover.reproject(chirps.projection(), None, chirps.projection().nominalScale())
 
     from utils.function_clns import config
-    shapefile_path = config['SHAPE']['HOA']
-    gdf = gpd.read_file(shapefile_path)
+    import os
+    # Select clipping geometry
+    if crop_strategy == "shapefile":
+        shapefile_path = config['SHAPE']['africa']
+        gdf = gpd.read_file(shapefile_path)
+        subset = gdf[gdf["ADM0_NAME"].isin(countries)]
+        fc_poly = geemap.geopandas_to_ee(subset)
+        land_proj = land_proj.updateMask(land_proj.clip(fc_poly).mask())
+        poly_geometry = fc_poly.geometry()
 
-    fc_poly = geemap.geopandas_to_ee(gdf)
-    poly_geometry = fc_poly.geometry()
+    elif crop_strategy == "bbox":
+        poly_geometry = ee.Geometry.Rectangle(
+            coords=[30.288233396779802, -5.949173816626356, 
+                    51.9972177717798, 15.808293611760663],
+            proj="EPSG:4326", geodesic=False)
+        land_proj = land_proj.clip(poly_geometry)
+    else:
+        raise ValueError("Invalid crop_strategy. Choose 'shapefile' or 'bbox'.")
     path_img = export_path
     geemap.ee_export_image(land_proj, 
                            filename = os.path.join(path_img, "esa_cover.tif"),
@@ -238,15 +337,17 @@ def get_level_1(ds:xr.DataArray, name:str="Band1")->xr.Dataset:
     ds = df["level1"].to_xarray().to_dataset()
     return ds.rename({"level1":name})
 
-def get_cover_dataset(datarray:xr.DataArray, img_path:str, 
-                      img_name:str="esa_cover.nc",level1=True, 
+def get_cover_dataset(datarray:xr.DataArray, 
+                      img_path:str, 
+                      img_name:str="esa_cover.nc",
+                      level1=True, 
                       resample=True)->xr.Dataset:
     
     ds_cover = prepare(xr.open_dataset(os.path.join(img_path, img_name)))
     if level1==True:
         ds_cover = get_level_1(ds_cover)
     ds_cover = subsetting_pipeline(ds_cover)
-    if resample ==True:
+    if resample == True:
         logger.info(f"Starting reprojection to destionation resolution of {ds_cover.rio.resolution()}")
         ds = datarray.rio.reproject_match(ds_cover["Band1"],
                     resampling = Resampling.mode).rename({"x":"lon","y":"lat"})

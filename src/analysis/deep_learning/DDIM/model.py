@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 import torchvision.transforms.functional as TF
 import logging
 from tqdm.auto import tqdm
+import random
+from typing import Literal, Union
+from utils.function_clns import default
 
 logger = logging.getLogger(__name__)
 
@@ -207,34 +210,29 @@ class TwoResUNet(nn.Module):
 
         return self.final_conv(x)
 
-class BlockAttention(nn.Module):
-    def __init__(self, gate_in_channel, residual_in_channel, scale_factor):
-        super().__init__()
-        self.gate_conv = nn.Conv2d(gate_in_channel, gate_in_channel, kernel_size=1, stride=1)
-        self.residual_conv = nn.Conv2d(residual_in_channel, gate_in_channel, kernel_size=1, stride=1)
-        self.in_conv = nn.Conv2d(gate_in_channel, 1, kernel_size=1, stride=1)
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
-        in_attention = self.relu(self.gate_conv(g) + self.residual_conv(x))
-        in_attention = self.in_conv(in_attention)
-        in_attention = self.sigmoid(in_attention)
-        return in_attention * x
-
 class Forward_diffussion_process():
-    def __init__(self, args, config, model,  optimizer, scheduler, loss, eta=0):
+    def __init__(self, 
+        args, 
+        config, 
+        model,  
+        optimizer, 
+        scheduler, 
+        loss,
+        ema = None
+    ):
         self.start = config.beta_start
         self.end = config.beta_end
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.timesteps = config.timesteps
+        self.sampling_timesteps = config.sampling_steps if args.diff_sample=="ddim" else None
         self.device = config.device
         self.loss_fn = loss
-        self.eta = 0.
+        self.eta = args.eta 
         self._set_alphas_betas(args)
         self._set_post_variance()
         self.model = model
+        self.ema = ema
 
     def _set_schedule(self, args, timesteps):
         if args.diff_schedule == "linear":
@@ -364,91 +362,340 @@ class Forward_diffussion_process():
         return x_t_minus_one
     
     @torch.no_grad()
-    def p_sample_ddim(self, model, x_t, t:int, x_cond=None, clip=True):
+    def p_sample_ddim(self, model, x_t, t, prev_t, x_cond=None, epsilon_theta_t=None, clip=True):
+        """
+        Sample x_(t-1) given x_t and noise predicted by model or ensemble.
 
-        r""" Sample x_(t-1) given x_t and noise predicted
-             by model.
-             
-             :param xt: Image tensor at timestep t of shape -> B x C x H x W
-             :param noise_pred: Noise Predicted by model of shape -> B x C x H x W
-             :param t: Current time step
-
+        :param epsilon_theta_t: Precomputed noise prediction (optional)
         """
         epsilon_t = torch.randn_like(x_t)
-
         b = x_t.shape[0]
-        prev_time_step = (t-1)
 
         batched_times = torch.full((b,), t, device=self.device, dtype=torch.long)
-        batched_prev_t =  torch.full((b,), prev_time_step, device=self.device, dtype=torch.long)
+        batched_prev_t = torch.full((b,), prev_t, device=self.device, dtype=torch.long)
 
-        # get current and previous alpha_cumprod
+        # Get current and previous alpha_cumprod
         alpha_t = self._extract(self.alpha_bars, batched_times, x_t.shape)
         alpha_t_prev = self._extract(self.alpha_bars, batched_prev_t, x_t.shape)
 
-        epsilon_theta_t = model(x_t, batched_times, x_cond)
+        # Calculate epsilon_theta_t if not precomputed
+        if epsilon_theta_t is None:
+            epsilon_theta_t = model(x_t, batched_times, x_cond)
+
         sigma_t = self.eta * torch.sqrt((1 - alpha_t_prev) / (1 - alpha_t) * (1 - alpha_t / alpha_t_prev))
-        
+
         # Original Image Prediction at timestep t
         x_t_minus_one = (
-                torch.sqrt(alpha_t_prev / alpha_t) * x_t +
-                (torch.sqrt(1 - alpha_t_prev - sigma_t ** 2) - torch.sqrt(
-                    (alpha_t_prev * (1 - alpha_t)) / alpha_t)) * epsilon_theta_t +
-                sigma_t * epsilon_t
+            torch.sqrt(alpha_t_prev / alpha_t) * x_t +
+            (torch.sqrt(1 - alpha_t_prev - sigma_t**2) - 
+             torch.sqrt((alpha_t_prev * (1 - alpha_t)) / alpha_t)) * epsilon_theta_t +
+            sigma_t * epsilon_t
         )
-        if clip is True:
+
+        if clip:
             x_t_minus_one = torch.clip(x_t_minus_one, -1, 1)
+
         return x_t_minus_one
+
 
         # Algorithm 2 (including returning all images)
     @torch.no_grad()
-    def p_sample(self, args, model, x_start, time_steps, x_cond):
-        if args.diff_sample == "ddpm":
+    def p_sample(self, args, model, x_start, time_steps, prev_steps, x_cond):
+        if args.num_ensambles > 1:
+            if len(x_start.size()) == 4:
+                b, c, w, h = x_start.size()
+            else:
+                m, b, c, w, h = x_start.size()
+
+            results = torch.empty((model.num_ensambles, b, c, w, h), device=self.device)
+            batched_times = torch.full((b,), time_steps, device=self.device, dtype=torch.long)
+            z_t, preds = model.make_predictions(x_start, batched_times, x_cond)
+
+            for idx, (theta_pred, z_t_val) in enumerate(zip(preds, z_t)): 
+                pred = self.p_sample_ddim(model, z_t_val, time_steps, prev_steps, x_cond, theta_pred)
+                results[idx] = pred
+            return results
+        
+        elif args.diff_sample == "ddpm":
             return self.p_sample_ddpm( model, x_start, time_steps, x_cond)
         elif args.diff_sample =="ddim":
-            return self.p_sample_ddim( model, x_start, time_steps, x_cond)
+            return self.p_sample_ddim( model, x_start, time_steps, prev_steps, x_cond)
         
     @torch.no_grad()
-    def reverse_diffusion(self, args, model, dataloader, shape, timesteps, time_steps_list):
-        import random
-        idx = random.randint(0, len(dataloader.data)-1)
-        x_cond = torch.from_numpy(dataloader.data[idx]).unsqueeze(0).to(self.device)
-        y_true = torch.from_numpy(dataloader.labels[idx]).unsqueeze(0).to(self.device)
-         # generate Gaussian noise
+    def reverse_diffusion(self, args, model, x, shape, timesteps, time_steps_list):
+        time_steps_prev = np.concatenate([[0], time_steps_list[:-1]])
+        # generate Gaussian noise
         z_t = torch.randn(shape, device=self.device, dtype=torch.float32)
         imgs = [z_t]
         x_start = None
         with tqdm(reversed(range(0, timesteps)), desc='sampling loop time step', total=timesteps) as sampling_steps:
             for t in sampling_steps:
                 x_start = z_t if x_start is None else x_start
-                x_start = self.p_sample(args, model, x_start, time_steps_list[t], x_cond)
+                x_start = self.p_sample(args, 
+                    model,
+                    x_start, 
+                    time_steps_list[t], 
+                    time_steps_prev[t],
+                    x)
                 imgs.append(x_start)
+
+        return imgs[-1]
+
+    # @torch.no_grad()
+    # def p_sample_loop(self, args, model, dataloader,  scaler, img_shape, samples):
+        
+    #     def generate_random_samples(shape, to_gpu=True):
+    #         x_cond, y_true = [], []
+    #         for _ in range(shape):
+    #             idx = random.randint(0, len(dataloader.dataset.data) - 1)
+    #             x_cond.append(torch.from_numpy(dataloader.dataset.data[idx]).unsqueeze(0))
+    #             y_true.append(torch.from_numpy(dataloader.dataset.labels[idx]).unsqueeze(0))
+
+    #                     # Optionally print dates if idx is first or last
+    #             if _ == 0 or _ == shape - 1:
+    #                 dates = dataloader.dataset.get_sample_dates(idx, "DIME")
+    #                 logger.info(f"Index {idx} - Data Window: {dates['data_window']}")
+    #                 logger.info(f"Index {idx} - Label Window: {dates['label_window']}")
+
+    #         x_cond = torch.concat(x_cond, axis=0)
+    #         y_true = torch.concat(y_true, axis=0)
+    #         if to_gpu:
+    #             x_cond = x_cond.to(self.device)
+    #             y_true = y_true.to(self.device)
+    #         return x_cond, y_true
+        
+    #     if args.diff_sample == "ddim":
+    #         step = self.timesteps // self.sampling_timesteps
+    #         time_steps_list = np.asarray(list(range(0, self.timesteps, step))) + 1
+    #         n_timesteps = self.sampling_timesteps
+
+    #     elif args.diff_sample == "ddpm":
+    #         time_steps_list = np.asarray(list(range(0, self.timesteps, 1)))
+    #         n_timesteps = self.timesteps
+
+    #     if args.gen_samples > 0:
+    #         tot_samples = samples * img_shape[0]
+    #     else:
+    #         tot_samples =  len(dataloader.dataset.data)
+    #         if tot_samples % img_shape[0] != 0:
+    #             tot_samples = math.ceil(tot_samples / img_shape[0]) * img_shape[0]
+
+    #     # Preallocate tensors
+    #     imgs = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+    #     # ci = torch.empty((tot_samples, 2), device=self.device)
+    #     y = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+    #     ens = torch.empty((model.num_ensambles, *y.shape), device=self.device).transpose(0,1)
+
+    #     if args.gen_samples > 0:
+    #         for s in range(samples):
+    #             x_cond, y_true = generate_random_samples(img_shape[0])
+    #             if args.conditioning == "none":
+    #                 x_cond=None
+    #             img = self.reverse_diffusion(args, 
+    #                 model, 
+    #                 x_cond, 
+    #                 img_shape, 
+    #                 n_timesteps, 
+    #                 time_steps_list
+    #             )
+                
+    #             start, end = s * img_shape[0], (s + 1) * img_shape[0]
+
+    #             if args.num_ensambles > 1:
+    #                 # l_ci, h_ci = self.extract_ci_bounds(img, scaler, model)
+    #                 # ci[start:end, 0] = l_ci
+    #                 # ci[start:end, 1] = h_ci
+    #                 ens[start:end] = img.squeeze().transpose(0,1)
+    #                 img = torch.mean(img, 0)
+
+    #             imgs[start:end] = img.squeeze()
+    #             y[start:end] = y_true.squeeze()
+
+    #     else:
+    #         # Standard batch processing logic
+    #         for batch_idx, (inputs, targets) in enumerate(tqdm(dataloader, 
+    #                                                     desc="Processing Batches")):
+    #             if len(inputs) != img_shape[0]:
+    #                 logger.info(f"Adding {img_shape[0] - len(inputs)} "
+    #                             f"extra samples to the dataset to match"
+    #                             f"network required shape")
+    #                 extra_img, extra_y_true = generate_random_samples(img_shape[0] - len(inputs), False)
+    #                 inputs = torch.concat([inputs, extra_img], dim=0)
+    #                 targets = torch.concat([targets, extra_y_true], dim=0)
+
+    #             with torch.no_grad():
+    #                 if args.conditioning == "none":
+    #                     x_cond = None
+    #                 else:
+    #                     x_cond = inputs.squeeze(0).float().to(self.device)
+
+    #                 img = self.reverse_diffusion(
+    #                     args, 
+    #                     model, 
+    #                     x_cond, 
+    #                     img_shape, 
+    #                     n_timesteps, 
+    #                     time_steps_list
+    #                 )
+
+    #                 start, end = batch_idx * img_shape[0], (batch_idx + 1) * img_shape[0]
+
+    #                 if args.num_ensambles > 1:
+    #                     ens[start:end] = img.squeeze().transpose(0,1)
+    #                     img = torch.mean(img, 0)
+
+    #                 imgs[start:end] = img.squeeze()
+    #                 y[start:end] = targets.squeeze().float().to(self.device)                
+
+    #     return imgs, y, ens
     
-        return imgs[-1], y_true
-
     @torch.no_grad()
-    def p_sample_loop(self, args, model, dataloader, shape, timesteps, samples):
+    def p_sample_loop(self, args, model, dataloader, scaler, img_shape, samples):
+        from tqdm.auto import tqdm
+
+        def generate_random_samples_old(batch_size, to_gpu=True):
+            x_cond, y_true = [], []
+            for _ in range(batch_size):
+                idx = random.randint(0, len(dataloader.dataset.data) - 1)
+                x_cond.append(torch.from_numpy(dataloader.dataset.data[idx]).unsqueeze(0))
+                y_true.append(torch.from_numpy(dataloader.dataset.labels[idx]).unsqueeze(0))
+
+                if _ == 0 or _ == batch_size - 1:
+                    dates = dataloader.dataset.get_sample_dates(idx, "DIME")
+                    logger.info(f"Index {idx} - Data Window: {dates['data_window']}")
+                    logger.info(f"Index {idx} - Label Window: {dates['label_window']}")
+
+            x_cond = torch.concat(x_cond, axis=0)
+            y_true = torch.concat(y_true, axis=0)
+            if to_gpu:
+                x_cond = x_cond.to(self.device)
+                y_true = y_true.to(self.device)
+            return x_cond, y_true
         
+        def generate_random_samples(batch_size, to_gpu=True):
+            # Generate all indices at once
+            indices = torch.randint(0, len(dataloader.dataset.data), (batch_size,))
+            
+            x_cond = [torch.from_numpy(dataloader.dataset.data[i]).unsqueeze(0) for i in indices]
+            y_true = [torch.from_numpy(dataloader.dataset.labels[i]).unsqueeze(0) for i in indices]
+        
+            # Log date info for first and last sample
+            for i in [indices[0].item(), indices[-1].item()]:
+                dates = dataloader.dataset.get_sample_dates(i, "DIME")
+                logger.info(f"Index {i} - Data Window: {dates['data_window']}")
+                logger.info(f"Index {i} - Label Window: {dates['label_window']}")
+        
+            x_cond = torch.cat(x_cond, dim=0)
+            y_true = torch.cat(y_true, dim=0)
+        
+            if to_gpu:
+                x_cond = x_cond.to(self.device)
+                y_true = y_true.to(self.device)
+        
+            return x_cond, y_true
+
+        # Determine diffusion timesteps
         if args.diff_sample == "ddim":
-            a = self.timesteps // timesteps
-            time_steps = np.asarray(list(range(0, self.timesteps, a))) + 1
-        
+            step = self.timesteps // self.sampling_timesteps
+            time_steps_list = np.asarray(list(range(0, self.timesteps, step))) + 1
+            n_timesteps = self.sampling_timesteps
         elif args.diff_sample == "ddpm":
-            timesteps = self.timesteps
-            time_steps = np.asarray(list(range(0, self.timesteps, 1)))
+            time_steps_list = np.asarray(list(range(0, self.timesteps)))
+            n_timesteps = self.timesteps
 
-        imgs = torch.empty(shape)
-        y = torch.empty(shape)
-        img_shape = (1, *shape[1:])
-        for s in range(samples):
-            img,  y_true = self.reverse_diffusion(args, model, dataloader, img_shape, timesteps, time_steps)
-            imgs[s] = img.squeeze()
-            y[s] = y_true.squeeze()
-        return imgs, y 
+        batch_size = img_shape[0]
+        tot_samples = samples * batch_size if args.gen_samples > 0 else len(dataloader.dataset)
+        if tot_samples % batch_size != 0:
+            tot_samples = math.ceil(tot_samples / batch_size) * batch_size
 
-    @torch.no_grad()
-    def sample(self, args, model, dataloader, shape, timesteps=300, samples=1):
-        return self.p_sample_loop(args, model, dataloader, shape, timesteps, samples)
+        # Preallocate tensors
+        imgs = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+        y = torch.empty((tot_samples, *img_shape[-2:]), device=self.device)
+        ens = torch.empty((model.num_ensambles, *y.shape), device=self.device).transpose(0, 1)
+
+        if args.gen_samples > 0:
+            # Process in batches
+            n_batches = samples
+            for s in tqdm(range(n_batches), desc="Generating Samples in batches"):
+                x_cond, y_true = generate_random_samples(batch_size)
+                if args.conditioning == "none":
+                    x_cond = None
+
+                img = self.reverse_diffusion(
+                    args, model, x_cond, img_shape, n_timesteps, time_steps_list
+                )
+
+                start, end = s * batch_size, (s + 1) * batch_size
+                if args.num_ensambles > 1:
+                    ens[start:end] = img.squeeze().transpose(0, 1)
+                    img = torch.mean(img, dim=0)
+
+                imgs[start:end] = img.squeeze()
+                y[start:end] = y_true.squeeze()
+
+        else:
+            # Fall back to standard batch iteration
+            for batch_idx, (inputs, targets) in enumerate(tqdm(dataloader, desc="Processing Batches")):
+                if len(inputs) != batch_size:
+                    logger.info(f"Padding batch to {batch_size} samples")
+                    extra_img, extra_y_true = generate_random_samples(batch_size - len(inputs), False)
+                    inputs = torch.concat([inputs, extra_img], dim=0)
+                    targets = torch.concat([targets, extra_y_true], dim=0)
+
+                with torch.no_grad():
+                    x_cond = None if args.conditioning == "none" else inputs.squeeze(0).float().to(self.device)
+
+                    img = self.reverse_diffusion(
+                        args, model, x_cond, img_shape, n_timesteps, time_steps_list
+                    )
+
+                    start, end = batch_idx * batch_size, (batch_idx + 1) * batch_size
+                    if args.num_ensambles > 1:
+                        ens[start:end] = img.squeeze().transpose(0, 1)
+                        img = torch.mean(img, dim=0)
+
+                    imgs[start:end] = img.squeeze()
+                    y[start:end] = targets.squeeze().float().to(self.device)
+
+        return imgs, y, ens
+
+
+    def diffusion_sampling(self, args, model_config, model, dataloader, scaler=None, samples=1):
+        img_shape = (model_config.batch_size, 1, model_config.image_size, model_config.image_size)
+        
+        sample_im, y, ens = self.p_sample_loop(args, 
+            model, 
+            dataloader,
+            scaler, 
+            img_shape, 
+            samples
+        )
+        return sample_im, y, ens
+    
+
+    
+    def extract_ci_bounds(self, img, scaler, model):
+        mean_pred = torch.mean(img, (3, 4))
+        std_ci = torch.std(mean_pred, 0).squeeze()
+        mean_ci = torch.mean(mean_pred, 0).squeeze()
+        std_ci = scaler.inverse_transform(std_ci) - scaler.min
+        mean_ci = scaler.inverse_transform(mean_ci)
+        return calculate_confidence_intervals(mean_ci, std_ci, model.num_ensambles)
+                    
+    
+def calculate_confidence_intervals(mean_over_time, std_over_time, n_ensemble,  confidence=0.95):
+    import scipy.stats as stats
+
+    df = n_ensemble - 1  # Degrees of freedom
+    alpha = 1 - confidence
+
+    # Compute t-score for CI (t-distribution for small n, normal approx for large n)
+    t_critical = stats.t.ppf(1 - alpha / 2, df) if n_ensemble < 30 else 1.96  
+    # Compute confidence intervals
+    margin_of_error = t_critical * (std_over_time / np.sqrt(n_ensemble))
+    lower_bound = mean_over_time - margin_of_error
+    upper_bound = mean_over_time + margin_of_error
+    return lower_bound, upper_bound
 
 
 '''
@@ -471,6 +718,7 @@ from einops import reduce, rearrange
 from einops.layers.torch import Rearrange
 from torch import nn, einsum
 from torch.nn import Module
+from utils.function_clns import default, exists
 
 class PreNorm(nn.Module):
     def __init__(self, channels, fn):
@@ -483,16 +731,6 @@ class PreNorm(nn.Module):
         x = self.fn(x)
 
         return x
-
-
-def exists(val):
-    return val is not None
-
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if isfunction(d) else d
 
 class SinusoidalPosEmb(Module):
     def __init__(self, dim, theta = 10000):
@@ -535,14 +773,14 @@ class Residual(nn.Module):
         return self.fn(x, *args, **kwargs) + x
 
 
-def Upsample(dim, dim_out=None):
+def Upsample_block(dim, dim_out=None):
     return nn.Sequential(
         nn.Upsample(scale_factor=2, mode="nearest"),
         nn.Conv2d(dim, default(dim_out, dim), 3, padding=1),
     )
 
 
-def Downsample(dim, dim_out=None):
+def Downsample_block(dim, dim_out=None):
     # No More Strided Convolutions or Pooling
     return nn.Sequential(
         Rearrange("b c (h p1) (w p2) -> b (c p1 p2) h w", p1=2, p2=2),
@@ -700,7 +938,7 @@ class UNET(nn.Module):
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
                         Residual(PreNorm(dim_in, LinearAttention(dim_in))),  # input x; apply group norm, then attention to x, then add x to it.
-                        Downsample(dim_in, dim_out) if not is_last
+                        Downsample_block(dim_in, dim_out) if not is_last
                         else nn.Conv2d(dim_in, dim_out, 3, padding=1),
                     ]
                 )
@@ -720,7 +958,7 @@ class UNET(nn.Module):
                         block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         Residual(PreNorm(dim_out, LinearAttention(dim_out))),
-                        Upsample(dim_out, dim_in)
+                        Upsample_block(dim_out, dim_in)
                         if not is_last
                         else nn.Conv2d(dim_out, dim_in, 3, padding=1),
                     ]
