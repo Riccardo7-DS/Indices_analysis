@@ -3,7 +3,7 @@ import xarray as xr
 import os
 import numpy as np
 from scipy.sparse import linalg
-
+import threading
 import scipy.sparse as sp
 import torch
 import time
@@ -16,6 +16,7 @@ import pickle
 import matplotlib.pyplot as plt
 import pandas as pd
 import logging
+import torch.distributed as dist 
 
 logger = logging.getLogger(__name__)
 
@@ -889,22 +890,57 @@ def get_train_valid_loader(model_config,
     
     logger.info("Generated train, validation, and test datasets")
 
-    # wrap into DataLoaders
-    train_dataloader = DataLoader(
-        train_dataset, 
-        batch_size=model_config.batch_size, 
-        shuffle=True
-    )
-    val_dataloader = DataLoader(
-        val_dataset, 
-        batch_size=model_config.batch_size, 
-        shuffle=False
-    )
-    test_dataloader = DataLoader(
-        test_dataset, 
-        batch_size=model_config.batch_size, 
-        shuffle=False
-    )
+    if args.ddp:
+        from torch.utils.data.distributed import DistributedSampler
+        train_sampler = DistributedSampler(train_dataset, 
+            num_replicas=args.world_size, 
+            rank=args.node_id * args.num_gpus + args.local_rank
+        )
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=model_config.batch_size, 
+            drop_last=True,
+            sampler=train_sampler,
+            shuffle=True,    
+        )
+        val_sampler = DistributedSampler(val_dataset,
+            num_replicas=args.world_size,
+            rank=args.node_id * args.num_gpus + args.local_rank
+        )
+        val_dataloader = DataLoader(
+            val_dataset,
+            batch_size=model_config.batch_size, 
+            drop_last=True,
+            sampler=val_sampler,
+        )        
+        test_sampler = DistributedSampler(test_dataset,
+            num_replicas=args.world_size,
+            rank=args.node_id * args.num_gpus + args.local_rank
+        )
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=model_config.batch_size, 
+            drop_last=True,
+            sampler=test_sampler
+        )
+    
+    else:
+        # wrap into DataLoaders
+        train_dataloader = DataLoader(
+            train_dataset, 
+            batch_size=model_config.batch_size, 
+            shuffle=True
+        )
+        val_dataloader = DataLoader(
+            val_dataset, 
+            batch_size=model_config.batch_size, 
+            shuffle=False
+        )
+        test_dataloader = DataLoader(
+            test_dataset, 
+            batch_size=model_config.batch_size, 
+            shuffle=False
+        )
 
     return train_dataloader, val_dataloader, test_dataloader, train_dataset
 
@@ -1652,6 +1688,21 @@ def update_tensorboard_scalars(writer, recorder:MetricsRecorder):
     writer.add_scalars('lr', {'learning rate': recorder.lr[-1]}, recorder.epoch[-1])
 
 
+def worker(args):
+    world_size = args.num_gpus * args.num_nodes
+    global_rank = args.node_id * args.num_gpus + args.local_rank
+
+    dist.init_process_group(
+        backend='nccl',
+        world_size=world_size,
+        rank= global_rank)
+    
+    device = torch.device(f'cuda:{args.local_rank}')
+    torch.cuda.set_device(device)
+    return device, world_size
+
+
+
 class GWNETtrainer():
     def __init__(self, 
                  args, 
@@ -1665,8 +1716,23 @@ class GWNETtrainer():
         
         from analysis import gwnet
         from torch.nn import DataParallel
+        from torch.nn.parallel import DistributedDataParallel as DDP
 
-        self.device = model_config.device
+        # keep a reference to args
+        self.args = args
+        # Determine device and world size. If distributed is already initialized (spawn called worker), use it;
+        # otherwise call worker to initialize the process group when needed.
+        import torch.distributed as dist
+        if args.ddp:
+            if dist.is_available() and dist.is_initialized():
+                self.device = torch.device(f'cuda:{args.local_rank}')
+                self.world_size = dist.get_world_size()
+            else:
+                self.device, self.world_size = worker(args)
+        else:
+            self.device = model_config.device
+            self.world_size = None
+
         self.model = gwnet(self.device, 
             num_nodes, 
             model_config.dropout, 
@@ -1684,7 +1750,10 @@ class GWNETtrainer():
             layers=model_config.layers
         )
 
-        self.model = DataParallel(self.model)
+        if args.ddp:
+            self.model = DDP(self.model)
+        else:
+            self.model = DataParallel(self.model, device_ids=[args.local_rank])
         
         self.learning_rate = model_config.learning_rate
         self.model.to(self.device)
@@ -1700,7 +1769,6 @@ class GWNETtrainer():
         self.scaler = scaler
         self.clip = 5
 
-    
         if checkpoint_path is not None:
             try:
                 checkpoint = torch.load(checkpoint_path)
@@ -1794,7 +1862,7 @@ class GWNETtrainer():
         rmse = masked_rmse(pred,real, 0.0).item()
         return mae,mape,rmse
 
-    def gwnet_train_loop(self, model_config, engine, train_dl):
+    def gwnet_train_loop(self, model_config, train_dl):
         epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
         for iter, (x, y) in enumerate(train_dl):
             trainx = torch.Tensor(x).to(model_config.device)
@@ -1803,19 +1871,44 @@ class GWNETtrainer():
             trainy = trainy.transpose(3, 2)
             loss, mape, rmse = self.train(trainx, trainy[:, 0,:,:])
 
+            # If distributed, average scalars across ranks
+            try:
+                import torch.distributed as dist
+                if getattr(self, 'args', None) is not None and self.args.ddp and dist.is_initialized():
+                    t = torch.tensor([loss, mape, rmse], dtype=torch.float32, device=self.device)
+                    dist.all_reduce(t, op=dist.ReduceOp.SUM)
+                    t = t / dist.get_world_size()
+                    loss, mape, rmse = t[0].item(), t[1].item(), t[2].item()
+            except Exception:
+                # fallback to local scalars if reduction fails
+                pass
+
             epoch_records["loss"].append(loss)
             epoch_records["rmse"].append(rmse)
             epoch_records["mape"].append(mape)
+            
         return epoch_records
 
-    def gwnet_val_loop(self, model_config, engine, val_dl):
+    def gwnet_val_loop(self, model_config, val_dl):
         epoch_records = {'loss': [], "mape":[], "rmse":[], "lr":[]}
         for iter, (x, y) in enumerate(val_dl):
             trainx = torch.Tensor(x).to(model_config.device)
             trainx= trainx.transpose(2, 3)
             trainy = torch.Tensor(y).to(model_config.device)
             trainy = trainy.transpose(2, 3)
-            loss, rmse, mape = self.eval(trainx, trainy[:, 0,:,:])
+            # Eval returns (loss, mape, rmse)
+            loss, mape, rmse = self.eval(trainx, trainy[:, 0,:,:])
+
+            # If distributed, average scalars across ranks
+            try:
+                import torch.distributed as dist
+                if getattr(self, 'args', None) is not None and self.args.ddp and dist.is_initialized():
+                    t = torch.tensor([loss, mape, rmse], dtype=torch.float32, device=self.device)
+                    dist.all_reduce(t, op=dist.ReduceOp.SUM)
+                    t = t / dist.get_world_size()
+                    loss, mape, rmse = t[0].item(), t[1].item(), t[2].item()
+            except Exception:
+                pass
 
             epoch_records["loss"].append(loss)
             epoch_records["rmse"].append(rmse)
@@ -1823,9 +1916,9 @@ class GWNETtrainer():
 
         ##### Step learning rate
         mean_loss = sum(epoch_records['loss']) / len(epoch_records['loss'])
-        engine.scheduler.step(mean_loss)
-        engine.learning_rate = engine.scheduler.get_last_lr()[0]
-        epoch_records["lr"].append(engine.learning_rate)
+        self.scheduler.step(mean_loss)
+        self.learning_rate = self.scheduler.get_last_lr()[0]
+        epoch_records["lr"].append(self.learning_rate)
 
         return epoch_records
     
@@ -1875,10 +1968,65 @@ class GWNETtrainer():
         if img_path is not None and draw_scatter is True:
             plot_scatter_hist(n,  bin0, img_path)
 
-        target = torch.cat(target,dim=0)
-        outputs = torch.cat(outputs,dim=0)
+        target = torch.cat(target,dim=0) if len(target) > 0 else torch.tensor([], device=self.device)
+        outputs = torch.cat(outputs,dim=0) if len(outputs) > 0 else torch.tensor([], device=self.device)
+
+        # Distributed reductions: average scalar metrics and gather outputs/targets across ranks
+        try:
+            import torch.distributed as dist
+            if getattr(self, 'args', None) is not None and self.args.ddp and dist.is_initialized():
+
+                # Average scalar metrics across ranks
+                t = torch.tensor([
+                    sum(epoch_records['loss']),
+                    sum(epoch_records['mape']),
+                    sum(epoch_records['rmse']),
+                    len(epoch_records['loss'])
+                ], dtype=torch.float32, device=self.device)
+                dist.all_reduce(t, op=dist.ReduceOp.SUM)
+                total_loss_sum, total_mape_sum, total_rmse_sum, total_count = t.tolist()
+                if total_count > 0:
+                    mean_loss = total_loss_sum / total_count
+                    mean_mape = total_mape_sum / total_count
+                    mean_rmse = total_rmse_sum / total_count
+                else:
+                    mean_loss = mean_mape = mean_rmse = 0.0
+                epoch_records = {'loss': [mean_loss], 'mape': [mean_mape], 'rmse': [mean_rmse]}
+
+                # Gather outputs and targets from all ranks (pad to max first-dim)
+
+                outputs = self.all_gather_first_dim(outputs)
+                target = self.all_gather_first_dim(target)
+
+        except Exception:
+            # if distributed not available or gathering fails, continue with local results
+            pass
 
         return epoch_records, outputs, target
+
+    def all_gather_first_dim(self, tensor):
+        local_count = torch.tensor([tensor.shape[0]], device=self.device)
+        counts = [torch.tensor([0], device=self.device) for _ in range(self.world_size)]
+        dist.all_gather(counts, local_count)
+        counts = [int(c.item()) for c in counts]
+        max_count = max(counts)
+        if max_count == 0:
+            return tensor
+        # pad if necessary
+        if tensor.shape[0] < max_count:
+            pad_shape = list(tensor.shape)
+            pad_shape[0] = max_count - tensor.shape[0]
+            pad = torch.zeros(*pad_shape, dtype=tensor.dtype, device=self.device)
+            tensor_padded = torch.cat([tensor, pad], dim=0)
+        else:
+            tensor_padded = tensor
+        gathered = [torch.zeros_like(tensor_padded) for _ in range(self.world_size)]
+        dist.all_gather(gathered, tensor_padded)
+        parts = []
+        for i, g in enumerate(gathered):
+            parts.append(g[:counts[i]])
+        return torch.cat(parts, dim=0)
+
 
 def draw_adj_heatmap(engine, img_path):
     import seaborn as sns

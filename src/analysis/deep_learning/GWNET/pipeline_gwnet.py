@@ -29,7 +29,48 @@ class StandardNormalizer():
             return transf
         else:
             return transf
-        
+
+
+def _load_data_and_scaler(data_dir, data, target, ndvi_scaler, mask):
+    """Load data/target and scaler if not provided, then apply mask.
+
+    Returns: (data, target, scaler, combined_mask)
+    """
+    import pickle
+    from analysis import mask_gnn_pixels
+
+    if data is None:
+        data = np.load(os.path.join(data_dir, "data.npy"))
+        target = np.load(os.path.join(data_dir, "target.npy"))
+
+    if ndvi_scaler is None:
+        with open(os.path.join(data_dir, "ndvi_scaler.pickle"), "rb") as handle:
+            scaler = pickle.loads(handle.read())
+    else:
+        scaler = ndvi_scaler
+
+    data, target, combined_mask = mask_gnn_pixels(data, target, mask)
+    return data, target, scaler, combined_mask
+
+
+def _prepare_adj_and_supports(adj_mx_path, data, combined_mask, args, device):
+    """Ensure adjacency file exists (rank 0 creates it), load it, and convert to tensors on `device`.
+
+    Returns: (adj_mx, supports)
+    """
+    from analysis import generate_adj_matrix, load_adj
+    import torch.distributed as dist
+
+    if args.ddp and args.local_rank == 0:
+        if not os.path.exists(adj_mx_path):
+            generate_adj_matrix(data, combined_mask, save_dir=os.path.dirname(adj_mx_path), save_plot=False)
+
+    if args.ddp:
+        dist.barrier()
+
+    adj_mx = load_adj(adj_mx_path, args.adjtype)
+    supports = [torch.tensor(i).to(device) for i in adj_mx]
+    return adj_mx, supports
   
 def training_weatherGCNet(args, 
                           dataname,
@@ -240,79 +281,70 @@ def training_wavenet(args,
                     checkpoint_path=None):
     import pickle
     from analysis.configs.config_models import config_gwnet as model_config
-    from analysis import check_shape_dataloaders, mask_gnn_pixels, GWNETtrainer, init_tb, update_tensorboard_scalars
-    import sys
+    from analysis import check_shape_dataloaders, GWNETtrainer
+    import torch.distributed as dist
     from utils.function_clns import init_logging, config
 
     _, log_path, img_path, checkpoint_dir = create_runtime_paths(args)
     data_dir = os.path.join(model_config.data_dir, dataname)
-    device = model_config.device
+    # device = model_config.device
 
-    logger = init_logging(log_file=os.path.join(log_path, 
-                            f"pipeline_{(args.model).lower()}_"
-                            f"features_{args.feature_days}.log"), 
-                            verbose=args.loglevel)
-    # writer = init_tb(log_path)
-
-    if data is None:
-        
-        logger.info(f"Starting training WaveNet model for {args.step_length}"
-                    f" days in the future with {args.feature_days} days of features")
-        data = np.load(os.path.join(data_dir, "data.npy"))
-        target = np.load(os.path.join(data_dir, "target.npy"))
+    if args.ddp and args.local_rank == 0:
+        logger.info("Starting DDP training")
+        logger = init_logging(log_file=os.path.join(log_path, 
+                                f"pipeline_{(args.model).lower()}_"
+                                f"features_{args.feature_days}.log"), 
+                                verbose=args.loglevel)
     
-    if ndvi_scaler is None:
-        with open(os.path.join(data_dir, "ndvi_scaler.pickle"), "rb") as handle:
-            scaler = pickle.loads(handle.read())
-    else:
-        scaler = ndvi_scaler
+    ################################  Adjacency matrix and data ################################ 
 
-    data, target, combined_mask = mask_gnn_pixels(data, target, mask)
-
-    ################################  Adjacency matrix  ################################ 
-    
     adj_mx_path = os.path.join(data_dir, "adj_dist.pkl")
 
-    if not os.path.exists(adj_mx_path):
-        generate_adj_matrix(data, 
-        combined_mask, 
-        save_dir=data_dir, 
-        save_plot=False)
+    # writer = init_tb(log_path)
 
-    adj_mx = load_adj(adj_mx_path, args.adjtype)
+    # Load data/scaler/mask and prepare adjacency/supports in helper functions
+    data, target, scaler, combined_mask = _load_data_and_scaler(data_dir, data, target, ndvi_scaler, mask)
 
-    train_dl, valid_dl, test_dl, dataset = get_train_valid_loader(model_config, 
-        args, 
-        data, 
-        target,
-        combined_mask,
-        config["MODELS"]["split"])
-    
-    if logging.getLevelName(logger.level) == "DEBUG":
-        check_shape_dataloaders(train_dl, valid_dl)
+    # device for this rank
+    device = torch.device(f'cuda:{args.local_rank}') if args.ddp else model_config.device
 
-    num_nodes = dataset.data.shape[-1]                         
-    supports = [torch.tensor(i).to(device) for i in adj_mx]
-    metrics_recorder = MetricsRecorder()
+    adj_mx, supports = _prepare_adj_and_supports(adj_mx_path, data, combined_mask, args, device)
 
-    if args.randomadj:
-        adjinit = None
-    else:
-        adjinit = supports[0]
-
+    # choose initial adjacency
+    adjinit = None if args.randomadj else supports[0]
     if args.aptonly:
         supports = None
 
+    # create dataloaders (DistributedSampler expected inside)
+    train_dl, valid_dl, test_dl, dataset = get_train_valid_loader(
+        model_config,
+        args,
+        data,
+        target,
+        combined_mask,
+        config["MODELS"]["split"],
+    )
+
+    if logging.getLevelName(logger.level) == "DEBUG":
+        check_shape_dataloaders(train_dl, valid_dl)
+
+    num_nodes = dataset.data.shape[-1]
+
     loss = torch.nn.MSELoss()
 
-    engine = GWNETtrainer(args, 
-        model_config, 
+    # Now create the engine using the prepared supports and adjinit
+    engine = GWNETtrainer(
+        args,
+        model_config,
         scaler,
-        loss,  
-        num_nodes, 
-        supports, 
+        loss,
+        num_nodes,
+        supports,
         adjinit,
-        checkpoint_path)
+        checkpoint_path,
+    )
+
+    metrics_recorder = MetricsRecorder()
     
     start_epoch = 0 if checkpoint_path is None else engine.checkp_epoch
     early_stopping = EarlyStopping(model_config, verbose=True)
@@ -324,12 +356,15 @@ def training_wavenet(args,
 
         for epoch in range(start_epoch+1, model_config.epochs+1):
 
-            train_records = engine.gwnet_train_loop(model_config, engine, train_dl)
+            train_records = engine.gwnet_train_loop(model_config, train_dl)
+
+            dist.barrier()
+
             metrics_recorder.add_train_metrics(train_records, epoch)
 
         ################################  Validation ###############################
 
-            val_records = engine.gwnet_val_loop(model_config, engine, valid_dl)
+            val_records = engine.gwnet_val_loop(model_config, valid_dl)
             metrics_recorder.add_val_metrics(val_records)
 
             mtrain_loss = np.mean(train_records["loss"])
@@ -337,30 +372,33 @@ def training_wavenet(args,
             mvalid_loss = np.mean(val_records["loss"])
             mvalid_rmse = np.mean(val_records["rmse"])
 
-            save_figures(epoch=epoch-start_epoch, 
-                         path=img_path, 
-                         metrics_recorder=metrics_recorder)
 
-            log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train RMSE: {:.4f}, ' \
-                  'Valid Loss: {:.4f}, Valid RMSE: {:.4f}'
-            logger.info(log.format(epoch, mtrain_loss, mtrain_rmse, mvalid_loss, mvalid_rmse))
+            if args.local_rank == 0:
 
-            model_dict = {
-                'epoch': epoch,
-                'state_dict': engine.model.state_dict(),
-                'optimizer': engine.optimizer.state_dict(),
-                "lr_sched": engine.scheduler.state_dict()
-            }
+                save_figures(epoch=epoch-start_epoch, 
+                             path=img_path, 
+                             metrics_recorder=metrics_recorder)
 
-            early_stopping(mvalid_loss, model_dict, epoch, checkpoint_dir)
-            # update_tensorboard_scalars(writer, metrics_recorder)
+                log = 'Epoch: {:03d}, Train Loss: {:.4f}, Train RMSE: {:.4f}, ' \
+                      'Valid Loss: {:.4f}, Valid RMSE: {:.4f}'
+                logger.info(log.format(epoch, mtrain_loss, mtrain_rmse, mvalid_loss, mvalid_rmse))
 
-            if early_stopping.early_stop:
-                logger.info("Early stopping")
-                if args.plotheatmap is True:
-                    from analysis import draw_adj_heatmap
-                    draw_adj_heatmap(engine, img_path)
-                break
+                model_dict = {
+                    'epoch': epoch,
+                    'state_dict': engine.model.state_dict(),
+                    'optimizer': engine.optimizer.state_dict(),
+                    "lr_sched": engine.scheduler.state_dict()
+                }
+
+                early_stopping(mvalid_loss, model_dict, epoch, checkpoint_dir)
+                # update_tensorboard_scalars(writer, metrics_recorder)
+
+                if early_stopping.early_stop:
+                    logger.info("Early stopping")
+                    if args.plotheatmap is True:
+                        from analysis import draw_adj_heatmap
+                        draw_adj_heatmap(engine, img_path)
+                    break
 
     elif args.mode== "test":
         from analysis import reverse_reshape_gnn,tensor_ssim
@@ -399,8 +437,6 @@ def training_wavenet(args,
             for d, name in zip([corr_output, corr_real, mask], ['pred_data_dr', 'true_data_dr', 'mask_dr']):
                 np.save(os.path.join(out_path, f"{name}.npy"), d)
 
-
-
 def pipeline_gnn(args:dict,
                 use_water_mask:bool = True,
                 precipitation_only: bool = True,
@@ -413,7 +449,7 @@ def pipeline_gnn(args:dict,
     from analysis import pipeline_hydro_vars
     from analysis.configs.config_models import config_gwnet as model_config
     from utils.function_clns import find_checkpoint_path
-
+    
     rawdata_name = "data_gnn_full"
 
     data, target, mask, ndvi_scaler = pipeline_hydro_vars(args,
