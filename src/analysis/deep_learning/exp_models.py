@@ -60,12 +60,10 @@ def spawn_worker(local_rank, args):
 
 
 if __name__=="__main__":
-    from analysis.deep_learning.ConvLSTM.pipeline_convlstm import pipeline_convlstm
-    from analysis import pipeline_gnn
+
     import argparse
     import os
     import pyproj
-    import torch
     import matplotlib
     matplotlib.use("Agg")
     from analysis.configs.config_models import config_gwnet as model_config
@@ -106,7 +104,6 @@ if __name__=="__main__":
 
 
     ### Arguments for DDP training
-    parser.add_argument('--local_rank', type=int, default=os.environ.get('local_rank', 0))
     parser.add_argument('--ddp', default=bool(os.environ.get('ddp', False)), action="store_true",
                         help="Use Distributed Data Parallel training")
     parser.add_argument("--num_nodes", type=int, default=os.environ.get("num_nodes", 1), help="Number of available nodes for DDP")
@@ -116,6 +113,7 @@ if __name__=="__main__":
     args = parser.parse_args()
     os.environ['PROJ_LIB'] = pyproj.datadir.get_data_dir()
 
+    args.world_size = args.num_gpus * args.num_nodes
 
     if (args.mode == "test") and (args.checkpoint==0):
         raise ValueError("Please chose a checkpoint if in evaluate mode")  

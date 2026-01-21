@@ -143,7 +143,7 @@ class ConfigGWNET(BaseConfig):
     epochs = 300
     patience = 10
     learning_rate = 1e-4
-    batch_size= 16
+    batch_size= 4 #16
     # dim = 64
 
     null_value = -1
