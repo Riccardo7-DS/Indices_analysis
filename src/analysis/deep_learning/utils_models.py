@@ -1751,9 +1751,9 @@ class GWNETtrainer():
         )
 
         if args.ddp:
-            self.model = DDP(self.model)
+            self.model = DDP(self.model, device_ids=[args.local_rank])
         else:
-            self.model = DataParallel(self.model, device_ids=[args.local_rank])
+            self.model = DataParallel(self.model.to(self.device))
         
         self.learning_rate = model_config.learning_rate
         self.model.to(self.device)

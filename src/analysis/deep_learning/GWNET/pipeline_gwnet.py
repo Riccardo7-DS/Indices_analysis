@@ -359,7 +359,8 @@ def training_wavenet(args,
 
             train_records = engine.gwnet_train_loop(model_config, train_dl)
 
-            dist.barrier()
+            if args.ddp:
+                dist.barrier()
 
             metrics_recorder.add_train_metrics(train_records, epoch)
 
@@ -374,7 +375,7 @@ def training_wavenet(args,
             mvalid_rmse = np.mean(val_records["rmse"])
 
 
-            if args.local_rank == 0:
+            if args.local_rank == 0 or not args.ddp:
 
                 save_figures(epoch=epoch-start_epoch, 
                              path=img_path, 
